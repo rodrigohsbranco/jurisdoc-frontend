@@ -13,8 +13,7 @@
     { title: 'Dashboard', icon: 'mdi-view-dashboard', to: { name: 'dashboard' } },
     { title: 'Usuários', icon: 'mdi-account-cog', to: { name: 'usuarios' } },
     { title: 'Clientes', icon: 'mdi-account-group', to: { name: 'clientes' } },
-  // { title: 'Clientes',  icon: 'mdi-account-group', to: { name: 'clientes' } },
-  // { title: 'Templates', icon: 'mdi-file-word',     to: { name: 'templates' } },
+    { title: 'Templates', icon: 'mdi-file-word', to: { name: 'templates' } },
   // { title: 'Petições',  icon: 'mdi-file-document', to: { name: 'peticoes' } },
   ]
 

@@ -16,6 +16,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'usuarios', name: 'usuarios', component: () => import('../views/UsersView.vue'), meta: { title: 'Usuários' } },
       { path: 'clientes', name: 'clientes', component: () => import('../views/ClientesView.vue'), meta: { title: 'Clientes' } },
       { path: 'clientes/:id/contas', name: 'contas', component: () => import('@/views/ContasView.vue'), meta: { title: 'Contas bancárias' } },
+      { path: 'templates', name: 'templates', component: () => import('../views/TemplatesView.vue'), meta: { title: 'Templates' } },
 
       // { path: 'clientes', name: 'clientes', component: () => import('../views/ClientesView.vue'), meta: { title: 'Clientes' } },
     ],

@@ -28,7 +28,7 @@
       to: { name: 'clientes' },
     },
     { label: 'Nova Petição', icon: 'mdi-file-plus', color: 'secondary' },
-    { label: 'Novo Template', icon: 'mdi-file-word', color: 'indigo' },
+    { label: 'Novo Template', icon: 'mdi-file-word', color: 'indigo', to: { name: 'templates' } },
     { label: 'Relatórios', icon: 'mdi-chart-bar', color: 'success' },
   ]
 </script>
