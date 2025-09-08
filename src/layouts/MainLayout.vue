@@ -15,6 +15,7 @@
     { title: 'Clientes', icon: 'mdi-account-group', to: { name: 'clientes' } },
     { title: 'Templates', icon: 'mdi-file-word', to: { name: 'templates' } },
     { title: 'Petições', icon: 'mdi-file-document', to: { name: 'peticoes' } },
+    { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' } },
   ]
 
   function logout () {

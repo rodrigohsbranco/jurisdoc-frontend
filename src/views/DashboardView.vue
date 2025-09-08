@@ -75,7 +75,12 @@
       color: 'indigo',
       to: { name: 'templates' },
     },
-    { label: 'Relatórios', icon: 'mdi-chart-bar', color: 'success' },
+    {
+      label: 'Relatórios',
+      icon: 'mdi-chart-bar',
+      color: 'success',
+      to: { name: 'reports' },
+    },
   ]
 
   // ---------- helpers ----------
