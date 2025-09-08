@@ -121,26 +121,26 @@
   const renderFilename = ref('')
   const rendering = ref(false)
 
-  async function openRender (item: TemplateItem) {
-    try {
-      const f = await templates.fetchFields(item.id) // usa cache se tiver
-      if (f.syntax && f.syntax.toLowerCase().includes('angle')) {
-        templates.lastError
-          = 'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
-        return
-      }
-      renderItem.value = item
-      renderFields.value = f.fields
-      renderContext.value = {}
-      renderFilename.value = `${item.name}.docx`
-      dialogRender.value = true
-    } catch (error_: any) {
-      templates.lastError
-        = error_?.response?.data?.detail
-          || error_?.message
-          || 'Não foi possível abrir a geração.'
-    }
-  }
+  // async function openRender (item: TemplateItem) {
+  //   try {
+  //     const f = await templates.fetchFields(item.id) // usa cache se tiver
+  //     if (f.syntax && f.syntax.toLowerCase().includes('angle')) {
+  //       templates.lastError
+  //         = 'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
+  //       return
+  //     }
+  //     renderItem.value = item
+  //     renderFields.value = f.fields
+  //     renderContext.value = {}
+  //     renderFilename.value = `${item.name}.docx`
+  //     dialogRender.value = true
+  //   } catch (error_: any) {
+  //     templates.lastError
+  //       = error_?.response?.data?.detail
+  //         || error_?.message
+  //         || 'Não foi possível abrir a geração.'
+  //   }
+  // }
 
   async function doRender () {
     if (!renderItem.value) return
@@ -241,9 +241,9 @@
             <v-btn icon size="small" variant="text" @click="openFields(item)">
               <v-icon icon="mdi-code-braces" />
             </v-btn>
-            <v-btn icon size="small" variant="text" @click="openRender(item)">
+            <!-- <v-btn icon size="small" variant="text" @click="openRender(item)">
               <v-icon icon="mdi-download" />
-            </v-btn>
+            </v-btn> -->
             <v-btn icon size="small" variant="text" @click="openEdit(item)">
               <v-icon icon="mdi-pencil" />
             </v-btn>

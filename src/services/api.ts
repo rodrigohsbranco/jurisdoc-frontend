@@ -1,28 +1,36 @@
-import type {
-  AxiosError,
-  AxiosRequestConfig,
-  InternalAxiosRequestConfig } from 'axios'
-import axios, {
-  AxiosHeaders,
-} from 'axios'
+import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
+import axios, { AxiosHeaders } from 'axios'
 import { useAuthStore } from '@/stores/auth'
 
-const BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+const BASE_URL
+  = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 const api = axios.create({
   baseURL: BASE_URL,
   withCredentials: false,
 })
 
-// injeta Authorization se houver token
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+// injeta Authorization e tenta refresh se necessário
+api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   const auth = useAuthStore()
-  if (auth?.accessToken) {
-    (config.headers ||= new AxiosHeaders()).set(
-      'Authorization',
-      `Bearer ${auth.accessToken}`,
-    )
+
+  try {
+    await auth.refreshIfNeeded()
+  } catch {
+    // segue; se der 401, o response interceptor tenta 1x
   }
+
+  if (auth?.accessToken) {
+    // Garante que headers é uma instância de AxiosHeaders
+    const headers
+      = config.headers instanceof AxiosHeaders
+        ? config.headers
+        : AxiosHeaders.from((config.headers || {}) as any)
+
+    headers.set('Authorization', `Bearer ${auth.accessToken}`)
+    config.headers = headers
+  }
+
   return config
 })
 
@@ -31,26 +39,36 @@ api.interceptors.response.use(
   resp => resp,
   async (error: AxiosError) => {
     const auth = useAuthStore()
-    const original = error.config as (AxiosRequestConfig & { _retry?: boolean }) | undefined
+    const original = error.config as
+      | (AxiosRequestConfig & { _retry?: boolean })
+      | undefined
 
     if (!error.response || !original) {
       throw error
     }
 
-    const is401 = error.response.status === 401
-
-    if (is401 && auth.refreshToken && !original._retry) {
+    if (error.response.status === 401 && auth.refreshToken && !original._retry) {
       original._retry = true
       try {
         await auth.refresh()
+
+        // Normaliza headers como AxiosHeaders e reatribui Authorization
+        const headers
+          = original.headers instanceof AxiosHeaders
+            ? (original.headers as AxiosHeaders)
+            : AxiosHeaders.from((original.headers || {}) as any)
+
+        headers.set('Authorization', `Bearer ${auth.accessToken}`)
+        original.headers = headers
+
         return api.request(original)
       } catch (error_) {
         await auth.logout()
-        throw error_ // <- em vez de Promise.reject(e)
+        throw error_
       }
     }
 
-    throw error // <- em vez de Promise.reject(error)
+    throw error
   },
 )
 

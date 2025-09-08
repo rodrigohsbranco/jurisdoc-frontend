@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
+  import bg from '@/assets/bg-login.jpg' // <= coloque sua imagem em src/assets/bg-login.jpg
   import { useAuthStore } from '@/stores/auth'
 
   const username = ref('')
@@ -11,6 +12,11 @@
   const router = useRouter()
   const route = useRoute()
   const auth = useAuthStore()
+
+  // background inline (garante resolução correta do path pelo bundler)
+  const bgCss = computed(() => ({
+    backgroundImage: `url(${bg})`,
+  }))
 
   // Regras Vuetify (retornam true ou string com a mensagem)
   const rules = {
@@ -28,7 +34,6 @@
   }
 
   function mapError (e: any): string {
-    // Axios style errors
     const status = e?.response?.status
     const detail = e?.response?.data?.detail
     if (detail) return String(detail)
@@ -50,14 +55,12 @@
     } catch (error_: any) {
       error.value = mapError(error_)
     } finally {
-      // segurança/conveniência
       password.value = ''
       loading.value = false
     }
   }
 
   onMounted(() => {
-    // Se já estiver logado e caiu no /login, manda pro destino
     if (auth.isAuthenticated) {
       const redirect = (route.query.redirect as string) || '/'
       router.replace(redirect)
@@ -67,13 +70,15 @@
 
 <template>
   <v-app>
-    <v-main
-      class="d-flex align-center justify-center"
-      style="min-height: 100vh"
-    >
-      <v-card width="420">
+    <v-main class="login-main d-flex align-center justify-center">
+      <!-- background + scrim -->
+      <div class="login-bg" :style="bgCss" />
+      <div class="login-scrim" />
+
+      <!-- card -->
+      <v-card class="login-card rounded-xl" elevation="8" width="420">
         <v-toolbar color="transparent" flat>
-          <v-toolbar-title>Entrar</v-toolbar-title>
+          <v-toolbar-title>Azevedo Lima & Rebonatto</v-toolbar-title>
         </v-toolbar>
 
         <v-card-text>
@@ -123,3 +128,41 @@
     </v-main>
   </v-app>
 </template>
+
+<style scoped>
+.login-main {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* imagem de fundo */
+.login-bg {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  transform: scale(1.02); /* leve zoom para evitar bordas em telas grandes */
+  will-change: transform;
+}
+
+/* véu suave para legibilidade do card */
+.login-scrim {
+  position: absolute;
+  inset: 0;
+  /* background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(255, 255, 255, 0.75)
+  ); */
+}
+
+/* card translúcido com leve blur – chique porém discreto */
+.login-card {
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: saturate(1.1) blur(2px);
+}
+</style>

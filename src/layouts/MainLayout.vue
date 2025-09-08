@@ -14,7 +14,7 @@
     { title: 'Usuários', icon: 'mdi-account-cog', to: { name: 'usuarios' } },
     { title: 'Clientes', icon: 'mdi-account-group', to: { name: 'clientes' } },
     { title: 'Templates', icon: 'mdi-file-word', to: { name: 'templates' } },
-  // { title: 'Petições',  icon: 'mdi-file-document', to: { name: 'peticoes' } },
+    { title: 'Petições', icon: 'mdi-file-document', to: { name: 'peticoes' } },
   ]
 
   function logout () {
@@ -56,7 +56,7 @@
           </v-avatar>
         </template>
         <v-list-item-title class="font-weight-bold">
-          ALR JurisDoc
+          Azevedo Lima & Rebonatto
         </v-list-item-title>
       </v-list-item>
 
