@@ -2,7 +2,11 @@
   import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { type Cliente, useClientesStore } from '@/stores/clientes'
-  import { type ContaBancaria, useContasStore } from '@/stores/contas'
+  import {
+    type BankDescricao,
+    type ContaBancaria,
+    useContasStore,
+  } from '@/stores/contas'
 
   const route = useRoute()
   const router = useRouter()
@@ -16,9 +20,22 @@
   const error = computed(() => contas.error)
 
   // === Bancos (autocomplete com fallback offline) ===
-  const bankItems = ref<{ label: string }[]>([])
+  const bankItems = ref<{ label: string, code?: string, ispb?: string }[]>([])
   const bankSearch = ref('')
   const bankLoading = ref(false)
+
+  // === Identificador do banco escolhido (ISPB preferido; ou COMPE/slug) ===
+  const bankIspb = ref<string>('') // chave para backend (banco_id)
+  const CUSTOM_BANKS = [
+    { label: 'DEPÓSITO DIRETO NO CARTÃO', ispb: 'CARD-DEP' },
+    // 👇 Adicione seus extras aqui (use um ID curto, <=32, estável)
+    { label: 'BANCO OLE BONSUCESSO CONSIGNADO S.A.', ispb: 'CARD-OLE' },
+    // { label: 'AGIPLAN S.A.', ispb: 'CARD-AGI' },
+  ] as const
+
+  // === Variações de descrição por banco (no servidor) ===
+  const bankNotes = ref<BankDescricao[]>([])
+  const selectedNoteId = ref<number | null>(null)
 
   // lista mínima para funcionar offline
   const FALLBACK_BANKS = [
@@ -63,7 +80,11 @@
   function onlyDigits (v: string) {
     return (v || '').replace(/\D/g, '')
   }
-
+  function bankLabel (): string {
+    return typeof form.value.banco_nome === 'string'
+      ? (form.value.banco_nome || '').trim()
+      : (form.value as any).banco_nome?.label?.trim?.() || ''
+  }
   function resetForm () {
     form.value = {
       banco_nome: '',
@@ -79,12 +100,86 @@
     editing.value = null
     resetForm()
     dialog.value = true
+    // reseta variações
+    bankIspb.value = ''
+    bankNotes.value = []
+    selectedNoteId.value = null
   }
 
-  function openEdit (c: ContaBancaria) {
+  async function openEdit (c: ContaBancaria) {
     editing.value = c
     form.value = { ...c }
     dialog.value = true
+    await loadBankCatalog()
+    await onBankChange(String(form.value.banco_nome || ''))
+  }
+
+  function findBankMetaByLabel (label: string) {
+    return bankItems.value.find(i => i.label === label) || null
+  }
+
+  function extractCompeFromLabel (label: string): string {
+    const m = /\((\d{3})\)\s*$/.exec(label)
+    return m ? m[1] : ''
+  }
+
+  function ensureCustomBanks (list: { label: string, code?: string, ispb?: string }[]) {
+    // unshift na ordem inversa para manter a ordem definida acima no topo
+    for (const cb of [...CUSTOM_BANKS].reverse()) {
+      if (!list.some(i => i.label === cb.label)) {
+        list.unshift({ label: cb.label, ispb: cb.ispb })
+      }
+    }
+  }
+
+  function normalizeBankId (input: string): string {
+    // Uppercase + remove acentos
+    let v = (input || '').toUpperCase()
+    v = v.normalize('NFD').replace(/[\u0300-\u036F]/g, '')
+    // Espaços/pontos -> hífen; remove o que não for A-Z/0-9/_/-
+    v = v.replace(/[\s\.]+/g, '-').replace(/[^A-Z0-9_-]/g, '')
+    // Compacta múltiplos hífens/underscores e tira das pontas
+    v = v.replace(/[-_]{2,}/g, '-').replace(/^[-_]+|[-_]+$/g, '')
+    // Limita a 32 chars e evita terminar em hífen
+    if (v.length > 32) v = v.slice(0, 32).replace(/[-_]+$/g, '')
+    // Garante algo minimamente válido
+    if (v.length < 3) v = (v + '-BANK').slice(0, 3)
+    return v
+  }
+
+  async function refreshNotes () {
+    bankNotes.value = []
+    selectedNoteId.value = null
+    if (!bankIspb.value) return
+    const list = await contas.listDescricoes(bankIspb.value)
+    bankNotes.value = list
+    const ativa = list.find(n => n.is_ativa)
+    selectedNoteId.value = ativa ? ativa.id : list[0]?.id ?? null
+  }
+
+  // dispara ao trocar o banco no combobox
+  async function onBankChange (val: any) {
+    const label = typeof val === 'string' ? val : val?.label ?? ''
+    // limpa estado
+    bankIspb.value = ''
+    bankNotes.value = []
+    selectedNoteId.value = null
+
+    if (!label) return
+
+    await loadBankCatalog() // garante catálogo em memória quando vindo de "Editar"
+    const meta = findBankMetaByLabel(label)
+    const compe = meta?.code || extractCompeFromLabel(label)
+
+    // prioriza ISPB; se não houver, usa COMPE ou o próprio label como slug
+    bankIspb.value = meta?.ispb || compe || normalizeBankId(label)
+
+    // carrega variações do servidor (ativa primeiro)
+    try {
+      await refreshNotes()
+    } catch {
+    // erro já vai para store.error; não bloqueia o formulário
+    }
   }
 
   async function loadBankCatalog () {
@@ -95,6 +190,7 @@
       const cached = localStorage.getItem('br_banks_v1')
       if (cached) {
         bankItems.value = JSON.parse(cached)
+        ensureCustomBanks(bankItems.value)
         return
       }
       const resp = await fetch('https://brasilapi.com.br/api/banks/v1')
@@ -102,15 +198,56 @@
       const data = await resp.json()
       const mapped = (data as any[]).map(b => ({
         label: `${b.fullName || b.name}${b.code ? ` (${b.code})` : ''}`,
+        code: b.code ? String(b.code) : undefined,
+        ispb: b.ispb ? String(b.ispb) : undefined,
       }))
       mapped.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
+      ensureCustomBanks(mapped) // garante opção especial mesmo online
       bankItems.value = mapped
       localStorage.setItem('br_banks_v1', JSON.stringify(mapped))
     } catch {
       // offline / erro de rede → fallback local
       bankItems.value = FALLBACK_BANKS
+      ensureCustomBanks(bankItems.value)
     } finally {
       bankLoading.value = false
+    }
+  }
+
+  async function addNote () {
+    const nomeBanco = bankLabel()
+    if (!bankIspb.value || !nomeBanco) return
+    try {
+      await contas.createDescricaoBanco({
+        banco_id: bankIspb.value,
+        banco_nome: nomeBanco,
+        descricao: '',
+        is_ativa: false,
+      })
+      await refreshNotes()
+    // não altera a ativa automaticamente — usuário decide com o radio
+    } catch {
+    /* erro já vai para store.error */
+    }
+  }
+
+  async function setActiveNote (id: number | null) {
+    if (!id) return
+    try {
+      await contas.setDescricaoAtiva(id)
+      // refreshNotes já chamado em store.setDescricaoAtiva; ainda assim garantimos estado:
+      await refreshNotes()
+    } catch {
+    /* erro já vai para store.error */
+    }
+  }
+
+  async function updateNoteText (note: BankDescricao) {
+    try {
+      await contas.updateDescricaoBanco(note.id, { descricao: note.descricao })
+    // cache já é atualizado via listDescricoes no store; aqui mantemos responsivo
+    } catch {
+    /* erro já vai para store.error */
     }
   }
 
@@ -123,15 +260,19 @@
           : (form.value as any).banco_nome?.label?.trim?.() || ''
 
       // validações simples
-      if (!nomeBanco) {
-        throw new Error('Informe o nome do banco.')
-      }
-      if (!form.value.agencia || !String(form.value.agencia).trim()) {
+      if (!nomeBanco) throw new Error('Informe o nome do banco.')
+      if (!form.value.agencia || !String(form.value.agencia).trim())
         throw new Error('Informe a agência.')
-      }
-      if (!form.value.conta || !String(form.value.conta).trim()) {
+      if (!form.value.conta || !String(form.value.conta).trim())
         throw new Error('Informe a conta.')
-      }
+
+      // extras: apenas o banco_id (descrições são geridas pelas ações acima)
+      const safeBankId
+        = bankIspb.value
+          || extractCompeFromLabel(nomeBanco)
+          || normalizeBankId(nomeBanco)
+
+      const extras = { banco_id: safeBankId }
 
       // sanitização
       const payload: any = {
@@ -144,15 +285,15 @@
         tipo: form.value.tipo || 'corrente',
       }
 
-      // eslint-disable-next-line unicorn/prefer-ternary
-      if (editing.value) {
-        await contas.update(editing.value.id, payload)
-      } else {
-        await contas.create(payload)
-      // se marcou principal, o store já ajusta as demais localmente
-      }
+      await (editing.value
+        ? contas.update(editing.value.id, { ...payload, ...extras })
+        : contas.create(payload, extras))
 
       dialog.value = false
+      // limpa estado
+      bankNotes.value = []
+      selectedNoteId.value = null
+      bankIspb.value = ''
     } catch (error_: any) {
       contas.error
         = error_?.response?.data?.detail || error_?.message || 'Erro ao salvar.'
@@ -179,7 +320,6 @@
   async function makePrincipal (acc: ContaBancaria) {
     try {
       await contas.setPrincipal(acc.id)
-    // o store já garante que só uma fica principal localmente
     } catch (error_: any) {
       contas.error
         = error_?.response?.data?.detail
@@ -210,7 +350,6 @@
     try {
       cliente.value = await clientes.getDetail(clienteId.value)
     } catch {
-      // se falhar, segue sem nome (a rota ainda funciona)
       cliente.value = {
         id: clienteId.value,
         nome_completo: 'Cliente',
@@ -305,9 +444,7 @@
               color="secondary"
               size="small"
               variant="elevated"
-            >
-              Principal
-            </v-chip>
+            >Principal</v-chip>
             <v-btn
               v-else
               color="secondary"
@@ -344,7 +481,7 @@
     </v-card>
 
     <!-- Dialog criar/editar -->
-    <v-dialog v-model="dialog" max-width="680">
+    <v-dialog v-model="dialog" max-width="840">
       <v-card>
         <v-card-title>{{
           editing ? "Editar conta" : "Nova conta"
@@ -374,6 +511,7 @@
                       'Obrigatório',
                   ]"
                   @focus="loadBankCatalog"
+                  @update:model-value="onBankChange"
                 />
               </v-col>
 
@@ -431,6 +569,78 @@
                 />
                 <div class="text-caption text-medium-emphasis mt-1">
                   Apenas uma conta principal por cliente.
+                </div>
+              </v-col>
+
+              <!-- ===== Variações de descrição por banco ===== -->
+              <v-col cols="12">
+                <div class="d-flex align-center mb-2">
+                  <div class="text-subtitle-2">Descrições do banco</div>
+                  <v-spacer />
+                  <v-btn
+                    :disabled="!bankIspb || !bankLabel()"
+                    prepend-icon="mdi-plus"
+                    size="small"
+                    variant="text"
+                    @click="addNote"
+                  >
+                    Adicionar
+                  </v-btn>
+                </div>
+
+                <div v-if="!bankIspb" class="text-body-2 text-medium-emphasis">
+                  Selecione um banco para ver/criar descrições.
+                </div>
+
+                <div v-else>
+                  <div
+                    v-if="bankNotes.length === 0"
+                    class="text-body-2 text-medium-emphasis"
+                  >
+                    Nenhuma descrição cadastrada para este banco. Clique em
+                    <strong>Adicionar</strong> para criar uma.
+                  </div>
+
+                  <v-radio-group
+                    v-model="selectedNoteId"
+                    class="mt-1"
+                    hide-details
+                    inline
+                    @update:model-value="(v: any) => setActiveNote(Number(v))"
+                  >
+                    <v-row dense>
+                      <v-col v-for="note in bankNotes" :key="note.id" cols="12">
+                        <div class="d-flex align-start ga-2">
+                          <v-radio
+                            aria-label="Selecionar descrição"
+                            class="mt-3"
+                            density="comfortable"
+                            :ripple="false"
+                            :value="note.id"
+                          />
+
+                          <v-textarea
+                            v-model="note.descricao"
+                            auto-grow
+                            :class="
+                              note.id !== selectedNoteId ? 'opacity-60' : ''
+                            "
+                            :hint="
+                              note.is_ativa
+                                ? 'Esta variação está ativa e será usada por padrão.'
+                                : 'Para usar esta variação agora, selecione o rádio ao lado.'
+                            "
+                            :label="
+                              note.is_ativa ? 'Descrição (ativa)' : 'Descrição'
+                            "
+                            persistent-hint
+                            rows="2"
+                            @blur="updateNoteText(note)"
+                          />
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-radio-group>
                 </div>
               </v-col>
             </v-row>
