@@ -219,10 +219,10 @@
           return composeEndereco(c)
         }
         case 'cidadeuf': {
-          const left = [c.cidade, (c.uf || '')?.toUpperCase()]
-            .filter(Boolean)
-            .join('/')
-          return left || ''
+          return (
+            [c.cidade, (c.uf || '')?.toUpperCase()].filter(Boolean).join('/')
+            || ''
+          )
         }
       }
     }
@@ -231,7 +231,8 @@
     if (acc) {
       switch (canon) {
         case 'banco': {
-          return acc.banco_nome || ''
+          // Agora busca a descrição ativa (se existir) ou o nome do banco
+          return (acc as any).descricao_ativa || acc.banco_nome || ''
         }
         case 'agencia': {
           return acc.agencia || ''

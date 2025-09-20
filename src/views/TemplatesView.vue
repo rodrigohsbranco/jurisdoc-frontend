@@ -9,7 +9,9 @@
 
   const templates = useTemplatesStore()
 
-  // tabela (client-side; DRF já pagina, mas mantemos UX semelhante às outras telas)
+  // =============================
+  // Tabela
+  // =============================
   const search = ref('')
   const page = ref(1)
   const itemsPerPage = ref(10)
@@ -24,7 +26,9 @@
     { title: 'Ações', key: 'actions', sortable: false, align: 'end' as const },
   ]
 
-  // === Dialogo: criar/editar ===
+  // =============================
+  // Criar/editar
+  // =============================
   const dialogUpsert = ref(false)
   const editing = ref<TemplateItem | null>(null)
   const form = reactive<{ name: string, active: boolean, file: File | null }>({
@@ -45,7 +49,7 @@
     editing.value = item
     form.name = item.name
     form.active = item.active
-    form.file = null // só substitui se o usuário enviar novo arquivo
+    form.file = null
     dialogUpsert.value = true
   }
 
@@ -66,11 +70,10 @@
           file: form.file as File,
           active: form.active,
         }))
-
       dialogUpsert.value = false
-    } catch (error_: any) {
-      templates.lastError
-        = error_?.response?.data?.detail || error_?.message || 'Erro ao salvar.'
+    } catch (error_) {
+      // store já preenche lastError
+      console.error(error_)
     }
   }
 
@@ -79,18 +82,21 @@
     form.file = files && files.length > 0 ? files[0] : null
   }
 
-  // === Remover ===
+  // =============================
+  // Remover
+  // =============================
   async function removeTemplate (item: TemplateItem) {
     if (!confirm(`Excluir o template "${item.name}"?`)) return
     try {
       await templates.remove(item.id)
-    } catch (error_: any) {
-      templates.lastError
-        = error_?.response?.data?.detail || 'Não foi possível excluir.'
+    } catch (error_) {
+      console.error(error_)
     }
   }
 
-  // === Campos (fields) ===
+  // =============================
+  // Campos
+  // =============================
   const dialogFields = ref(false)
   const fieldsLoading = ref(false)
   const fieldsOf = ref<FieldsResponse | null>(null)
@@ -103,17 +109,16 @@
     dialogFields.value = true
     try {
       fieldsOf.value = await templates.fetchFields(item.id, { force: true })
-    } catch (error_: any) {
-      templates.lastError
-        = error_?.response?.data?.detail
-          || error_?.message
-          || 'Falha ao carregar campos.'
+    } catch (error_) {
+      console.error(error_)
     } finally {
       fieldsLoading.value = false
     }
   }
 
-  // === Render (gerar .docx) ===
+  // =============================
+  // Render
+  // =============================
   const dialogRender = ref(false)
   const renderItem = ref<TemplateItem | null>(null)
   const renderFields = ref<TemplateField[]>([])
@@ -121,12 +126,13 @@
   const renderFilename = ref('')
   const rendering = ref(false)
 
+  // Caso queira ativar no futuro
   // async function openRender (item: TemplateItem) {
   //   try {
-  //     const f = await templates.fetchFields(item.id) // usa cache se tiver
+  //     const f = await templates.fetchFields(item.id)
   //     if (f.syntax && f.syntax.toLowerCase().includes('angle')) {
-  //       templates.lastError
-  //         = 'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
+  //       templates.lastError =
+  //         'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
   //       return
   //     }
   //     renderItem.value = item
@@ -134,11 +140,8 @@
   //     renderContext.value = {}
   //     renderFilename.value = `${item.name}.docx`
   //     dialogRender.value = true
-  //   } catch (error_: any) {
-  //     templates.lastError
-  //       = error_?.response?.data?.detail
-  //         || error_?.message
-  //         || 'Não foi possível abrir a geração.'
+  //   } catch (e) {
+  //     console.error(e)
   //   }
   // }
 
@@ -152,17 +155,16 @@
       })
       templates.downloadRendered(result)
       dialogRender.value = false
-    } catch (error_: any) {
-      templates.lastError
-        = error_?.response?.data?.detail
-          || error_?.message
-          || 'Falha ao gerar documento.'
+    } catch (error_) {
+      console.error(error_)
     } finally {
       rendering.value = false
     }
   }
 
-  // computed/flags
+  // =============================
+  // Computed & inicialização
+  // =============================
   const loadingList = computed(() => templates.loadingList)
   const error = computed(() => templates.lastError)
   const items = computed(() => templates.items)
@@ -176,7 +178,7 @@
 
 <template>
   <v-container fluid>
-    <!-- Cabeçalho / ações -->
+    <!-- Cabeçalho -->
     <v-card class="rounded-xl mb-4" elevation="2">
       <v-card-title class="d-flex align-center">
         <div>
@@ -207,9 +209,9 @@
       </v-card-title>
 
       <v-card-text>
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">{{
-          error
-        }}</v-alert>
+        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
+          {{ error }}
+        </v-alert>
 
         <v-data-table
           v-model:items-per-page="itemsPerPage"
@@ -224,7 +226,16 @@
           :search="search"
         >
           <template #item.file="{ item }">
-            <a :href="item.file" rel="noopener" target="_blank">download</a>
+            <v-btn
+              :href="item.file"
+              prepend-icon="mdi-download"
+              rel="noopener"
+              size="small"
+              target="_blank"
+              variant="text"
+            >
+              Download
+            </v-btn>
           </template>
 
           <template #item.active="{ item }">
@@ -241,7 +252,8 @@
             <v-btn icon size="small" variant="text" @click="openFields(item)">
               <v-icon icon="mdi-code-braces" />
             </v-btn>
-            <!-- <v-btn icon size="small" variant="text" @click="openRender(item)">
+            <!-- Para ativar depois:
+            <v-btn icon size="small" variant="text" @click="openRender(item)">
               <v-icon icon="mdi-download" />
             </v-btn> -->
             <v-btn icon size="small" variant="text" @click="openEdit(item)">
@@ -259,13 +271,15 @@
           </template>
 
           <template #no-data>
-            <v-sheet class="pa-6 text-center text-medium-emphasis">Nenhum template cadastrado.</v-sheet>
+            <v-sheet class="pa-6 text-center text-medium-emphasis">
+              Nenhum template cadastrado.
+            </v-sheet>
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
 
-    <!-- Dialog: criar/editar -->
+    <!-- Dialog criar/editar -->
     <v-dialog v-model="dialogUpsert" max-width="720">
       <v-card>
         <v-card-title>{{
@@ -310,7 +324,7 @@
       </v-card>
     </v-dialog>
 
-    <!-- Dialog: fields -->
+    <!-- Dialog campos -->
     <v-dialog v-model="dialogFields" max-width="760">
       <v-card>
         <v-card-title class="d-flex align-center">
@@ -322,7 +336,6 @@
           </div>
         </v-card-title>
         <v-card-text>
-          <!-- ALERTA DE MIGRAÇÃO -->
           <v-alert
             v-if="
               fieldsOf?.syntax &&
@@ -334,7 +347,7 @@
           >
             Este arquivo ainda possui marcadores no formato
             <code>&lt;&lt; &gt;&gt;</code>. Atualize para Jinja
-            <code>{{ "{" }}{{ "}" }}</code> antes de gerar documentos.
+            <code>{{ "{" }}{{ "}" }}</code>.
           </v-alert>
 
           <v-skeleton-loader v-if="fieldsLoading" type="table" />
@@ -373,7 +386,7 @@
       </v-card>
     </v-dialog>
 
-    <!-- Dialog: render -->
+    <!-- Dialog render -->
     <v-dialog v-model="dialogRender" max-width="840">
       <v-card>
         <v-card-title>Gerar documento</v-card-title>
@@ -384,18 +397,15 @@
               class="mb-4"
               label="Nome do arquivo (.docx)"
             />
-
             <div class="text-subtitle-2 mb-2">Preencha os campos</div>
             <v-row dense>
               <template v-for="f in renderFields" :key="f.name">
-                <!-- heurística simples por tipo -->
                 <v-col cols="12" md="6">
                   <component
                     :is="f.type === 'bool' ? 'v-switch' : 'v-text-field'"
                     v-model="renderContext[f.name]"
                     :hide-details="f.type === 'bool'"
                     :label="f.raw || f.name"
-                    :persistent-hint="true"
                     :type="f.type === 'int' ? 'number' : 'text'"
                   />
                 </v-col>
@@ -406,9 +416,11 @@
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="dialogRender = false">Cancelar</v-btn>
-          <v-btn color="primary" :loading="rendering" @click="doRender">
-            Gerar & baixar
-          </v-btn>
+          <v-btn
+            color="primary"
+            :loading="rendering"
+            @click="doRender"
+          >Gerar & baixar</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -416,5 +428,5 @@
 </template>
 
 <style scoped>
-/* ajustes visuais suaves para alinhar ao restante do app */
+/* ajustes visuais suaves */
 </style>

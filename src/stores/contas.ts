@@ -12,6 +12,8 @@ export type ContaBancaria = {
   is_principal: boolean
   criado_em?: string
   atualizado_em?: string
+  descricao_ativa?: string | null
+  banco_codigo?: string | null
 }
 
 export type Paginated<T> = {
@@ -96,16 +98,52 @@ export const useContasStore = defineStore('contas', {
       this.params = { ...this.params, ...p }
     },
 
-    async fetchForCliente (cliente: number, overrides?: Partial<{ page: number, page_size: number, ordering?: string }>) {
+    async fetchForCliente (
+      cliente: number,
+      overrides?: Partial<{ page: number, page_size: number, ordering?: string }>,
+    ) {
       this.loading = true
       this.error = ''
       try {
         const params = { ...this.params, ...overrides, cliente }
         const { data } = await api.get<Paginated<ContaBancaria>>(BASE, { params })
-        // substitui as contas daquele cliente no cache local
+
+        // 🔹 Substitui as contas do cliente no cache local
         this.items = this.items.filter(i => i.cliente !== cliente).concat(data.results)
         this.count = data.count
         this.clienteId = cliente
+
+        // 🔹 Para cada conta, tenta hidratar descricao_ativa priorizando banco_id (banco_codigo)
+        for (const conta of this.items.filter(i => i.cliente === cliente)) {
+          const bankId = (conta.banco_codigo || '').trim()
+
+          if (bankId) {
+            // 1) cache por banco_id
+            const cached = this.notesByBank[bankId]
+            if (cached) {
+              const ativa = cached.find(d => d.is_ativa)
+              conta.descricao_ativa = ativa ? ativa.descricao : null
+              continue
+            }
+            // 2) sem cache → carrega variações por banco_id
+            try {
+              const list = await this.listDescricoes(bankId)
+              const ativa = list.find(d => d.is_ativa)
+              conta.descricao_ativa = ativa ? ativa.descricao : null
+              continue
+            } catch {
+              // segue para fallback por nome
+            }
+          }
+
+          // Fallback: não há banco_id → tenta lookup por nome
+          try {
+            const found = await this.lookupDescricaoBanco({ banco_nome: conta.banco_nome })
+            conta.descricao_ativa = found?.descricao ?? null
+          } catch {
+            conta.descricao_ativa = null
+          }
+        }
       } catch (error: any) {
         this.error = toMessage(error)
         throw error

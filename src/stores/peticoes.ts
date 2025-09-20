@@ -10,8 +10,8 @@ export interface Petition {
   context: Record<string, any>
   created_at: string
   updated_at: string | null
-  cliente_nome?: string | null // <-- NOVO (vem do serializer)
-  output?: string | null // <-- OPCIONAL (se você quiser usar)
+  cliente_nome?: string | null // vem do serializer
+  output?: string | null // opcional
 }
 
 export interface CreatePetitionPayload {
@@ -29,7 +29,7 @@ export interface UpdatePetitionPayload {
 export interface ListParams {
   page?: number
   page_size?: number
-  search?: string // se o back suportar filtering por search
+  search?: string
   ordering?: string
   cliente?: number
   template?: number
@@ -44,7 +44,7 @@ export interface Paginated<T> {
 
 export interface RenderOptions {
   filename?: string
-  context_override?: Record<string, any>
+  context_override?: Record<string, any> // pode incluir "banco"
   strict?: boolean // default true no backend
 }
 
@@ -53,7 +53,13 @@ export interface RenderResult {
   filename: string
 }
 
-// adicione depois dos tipos
+export interface RenderError {
+  detail: string
+  missing?: string[]
+  required?: string[]
+}
+
+// ===== Helpers =====
 function normalize (p: Petition): Petition {
   return {
     ...p,
@@ -82,6 +88,7 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
   return q
 }
 
+// ===== Store =====
 export const usePeticoesStore = defineStore('peticoes', {
   state: () => ({
     items: [] as Petition[],
@@ -115,12 +122,10 @@ export const usePeticoesStore = defineStore('peticoes', {
             template: params.template,
           }),
         })
-        // eslint-disable-next-line unicorn/no-array-callback-reference
-        this.items = res.data.results.map(normalize)
+        this.items = res.data.results.map(p => normalize(p))
         this.count = res.data.count
         this.next = res.data.next
         this.previous = res.data.previous
-        // hydrate cache
         for (const it of this.items) {
           this.byIdCache.set(it.id, it)
         }
@@ -133,7 +138,7 @@ export const usePeticoesStore = defineStore('peticoes', {
       }
     },
 
-    // DETALHE (útil para view individual)
+    // DETALHE
     async getDetail (id: number): Promise<Petition> {
       this.loading = true
       this.error = null
@@ -223,16 +228,22 @@ export const usePeticoesStore = defineStore('peticoes', {
           context_override: opts.context_override,
           strict: opts.strict,
         }, { responseType: 'blob' })
+
         const cd = res.headers['content-disposition'] as string | undefined
         const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'peticao'}.docx`
         return { blob: res.data as Blob, filename: fname }
       } catch (error) {
         const e = error as AxiosError<any>
-        // Se o back retornou JSON de erro mas com responseType blob, tentamos ler o texto
         if (e.response && e.response.data instanceof Blob) {
           try {
             const txt = await (e.response.data as Blob).text()
-            this.error = txt
+            try {
+              const parsed: RenderError = JSON.parse(txt)
+              this.error = parsed.detail
+              console.warn('Campos ausentes:', parsed.missing)
+            } catch {
+              this.error = txt
+            }
           } catch {
             this.error = e.message
           }

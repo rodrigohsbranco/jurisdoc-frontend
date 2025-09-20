@@ -63,7 +63,6 @@ function toFormData (payload: Record<string, unknown>): FormData {
     if (v === undefined || v === null) {
       continue
     }
-    // Suporta File/Blob e valores primitivos
     if (v instanceof Blob) {
       fd.append(k, v)
     } else if (Array.isArray(v)) {
@@ -81,7 +80,6 @@ function parseContentDispositionFilename (value?: string | null): string | null 
   if (!value) {
     return null
   }
-  // Ex.: attachment; filename="arquivo.docx"
   const m = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(value)
   const raw = decodeURIComponent(m?.[1] ?? m?.[2] ?? '')
   return raw || null
@@ -96,6 +94,24 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
     q[k] = v
   }
   return q
+}
+
+function toMessage (e: any): string {
+  if (!e?.response) {
+    return 'Falha de rede. Verifique se a API está no ar.'
+  }
+  const d = e.response.data
+  if (d?.detail) {
+    return d.detail
+  }
+  if (d && typeof d === 'object') {
+    const k = Object.keys(d)[0]
+    const msg = Array.isArray(d[k]) ? d[k][0] : d[k]
+    if (msg) {
+      return String(msg)
+    }
+  }
+  return e.message || 'Ocorreu um erro inesperado.'
 }
 
 export const useTemplatesStore = defineStore('templates', {
@@ -115,7 +131,7 @@ export const useTemplatesStore = defineStore('templates', {
   },
 
   actions: {
-    // LISTAR (paginado DRF)
+    // LISTAR
     async fetch (params: ListParams = {}): Promise<void> {
       this.loadingList = true
       this.lastError = null
@@ -134,8 +150,7 @@ export const useTemplatesStore = defineStore('templates', {
         this.next = res.data.next
         this.previous = res.data.previous
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.lastError = e.response?.data?.detail || e.message || 'Falha ao listar templates'
+        this.lastError = toMessage(error)
         throw error
       } finally {
         this.loadingList = false
@@ -151,26 +166,23 @@ export const useTemplatesStore = defineStore('templates', {
         const res = await api.post<TemplateItem>('/api/templates/', fd, {
           headers: { 'Content-Type': 'multipart/form-data' },
         })
-        // Recarrega a lista de forma otimista
         this.items = [res.data, ...this.items]
         this.count += 1
         return res.data
       } catch (error) {
-        const e = error as AxiosError<any>
-        // DRF ValidationError mapeado
         this.lastError
-                    = e.response?.data?.file?.[0]
-                      || e.response?.data?.name?.[0]
-                      || e.response?.data?.detail
-                      || e.message
-                      || 'Falha ao criar template'
+          = (error as AxiosError<any>).response?.data?.file?.[0]
+            || (error as AxiosError<any>).response?.data?.name?.[0]
+            || (error as AxiosError<any>).response?.data?.detail
+            || (error as AxiosError<any>).message
+            || 'Falha ao criar template'
         throw error
       } finally {
         this.loadingMutation = false
       }
     },
 
-    // ATUALIZAR (PATCH). Se incluir file, usa multipart.
+    // ATUALIZAR
     async update (
       id: number,
       payload: Partial<{ name: string, active: boolean, file: File }>,
@@ -186,27 +198,22 @@ export const useTemplatesStore = defineStore('templates', {
             })
           : await api.patch<TemplateItem>(url, payload)
 
-        // Atualiza em memória
         const idx = this.items.findIndex(t => t.id === id)
-        if (idx !== -1) {
+        if (idx === -1) {
+          this.items.push(res.data) // 🔹 mantém lista sincronizada
+        } else {
           this.items[idx] = res.data
         }
         return res.data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.lastError
-                    = e.response?.data?.file?.[0]
-                      || e.response?.data?.name?.[0]
-                      || e.response?.data?.detail
-                      || e.message
-                      || 'Falha ao atualizar template'
+        this.lastError = toMessage(error)
         throw error
       } finally {
         this.loadingMutation = false
       }
     },
 
-    // ATIVAR/DESATIVAR helper
+    // ATIVAR/DESATIVAR
     async setActive (id: number, active: boolean): Promise<TemplateItem> {
       return this.update(id, { active })
     },
@@ -220,15 +227,14 @@ export const useTemplatesStore = defineStore('templates', {
         this.items = this.items.filter(t => t.id !== id)
         this.count = Math.max(0, this.count - 1)
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.lastError = e.response?.data?.detail || e.message || 'Falha ao remover template'
+        this.lastError = toMessage(error)
         throw error
       } finally {
         this.loadingMutation = false
       }
     },
 
-    // FIELDS (cacheável)
+    // CAMPOS
     async fetchFields (id: number, { force = false }: { force?: boolean } = {}): Promise<FieldsResponse> {
       if (!force && this.fieldsCache.has(id)) {
         return this.fieldsCache.get(id) as FieldsResponse
@@ -238,13 +244,12 @@ export const useTemplatesStore = defineStore('templates', {
         this.fieldsCache.set(id, res.data)
         return res.data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.lastError = e.response?.data?.detail || e.message || 'Falha ao carregar campos do template'
+        this.lastError = toMessage(error)
         throw error
       }
     },
 
-    // RENDER (download .docx)
+    // RENDER
     async render (id: number, opts: RenderOptions): Promise<RenderResult> {
       const body = {
         context: opts.context || {},
@@ -259,23 +264,25 @@ export const useTemplatesStore = defineStore('templates', {
         return { blob: res.data as Blob, filename: fname }
       } catch (error) {
         const e = error as AxiosError<any>
-        // Quando o backend retorna erro de validação de context, DRF pode mandar JSON
-        if (e.response && e.response.data && (e.response.data as any) instanceof Blob) {
-          // tenta ler texto do blob para detalhar
+        if (e.response?.data instanceof Blob) {
           try {
-            const txt = await (e.response.data as Blob).text()
-            this.lastError = txt
+            if (e.response.data.type === 'application/json') {
+              const json = JSON.parse(await e.response.data.text())
+              this.lastError = json.detail || JSON.stringify(json)
+            } else {
+              this.lastError = await e.response.data.text()
+            }
           } catch {
             this.lastError = e.message
           }
         } else {
-          this.lastError = (e.response as any)?.data?.detail || e.message || 'Falha ao renderizar documento'
+          this.lastError = toMessage(error)
         }
         throw error
       }
     },
 
-    // Helper: dispara download no browser
+    // DOWNLOAD
     downloadRendered (result: RenderResult): void {
       const url = URL.createObjectURL(result.blob)
       const a = document.createElement('a')
