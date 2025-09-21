@@ -116,6 +116,18 @@
     digito: ['digito', 'dv', 'digitoverificador'],
     tipoconta: ['tipoconta', 'tipo', 'contatipo', 'tipo_conta'],
     contaformatada: ['contaformatada', 'agenciaconta', 'contacompleta'],
+
+    // novos sinalizadores do cliente
+    incapaz: ['incapaz', 'interditado', 'curatelado', 'tutelado'],
+    criancaadolescente: [
+      'criancaadolescente', 'crianca_adolescente', 'menor',
+      'crianca', 'adolescente', 'criancaouadolescente',
+    ],
+
+    // dados civis
+    nacionalidade: ['nacionalidade'],
+    estadocivil: ['estadocivil', 'estado_civil'],
+    profissao: ['profissao', 'ocupacao'],
   }
 
   const LOOKUP = new Map<string, string>()
@@ -139,6 +151,16 @@
     if (k.includes('enderecocompleto') || k === 'endereco')
       return 'enderecocompleto'
     if (k.includes('cidadeuf')) return 'cidadeuf'
+
+    // novos: criança/adolescente
+    if (k.includes('crianca') || k.includes('adolescente') || k.includes('menor')) {
+      return 'criancaadolescente'
+    }
+
+    // novos: estado civil
+    if ((k.includes('estado') && k.includes('civil')) || k === 'estadocivil') {
+      return 'estadocivil'
+    }
 
     return k // sem match: deixa passar
   }
@@ -223,6 +245,21 @@
             [c.cidade, (c.uf || '')?.toUpperCase()].filter(Boolean).join('/')
             || ''
           )
+        }
+        case 'incapaz': {
+          return !!c.se_incapaz
+        }
+        case 'criancaadolescente': {
+          return !!c.se_crianca_adolescente
+        }
+        case 'nacionalidade': {
+          return c.nacionalidade || ''
+        }
+        case 'estadocivil': {
+          return c.estado_civil || ''
+        }
+        case 'profissao': {
+          return c.profissao || ''
         }
       }
     }
@@ -393,13 +430,21 @@
     async cid => {
       if (!cid) return
       ensureClientInCache(Number(cid))
-      // idoso default do cliente (se o template tiver esse campo)
-      const c = (clientes.items as Cliente[]).find(
-        x => Number(x.id) === Number(cid),
-      )
-      if (c && form.context.idoso === undefined)
-        form.context.idoso = !!c.se_idoso
-      // preenche quando possível
+
+      const c = (clientes.items as Cliente[]).find(x => Number(x.id) === Number(cid))
+      if (c) {
+        if (form.context.idoso === undefined) form.context.idoso = !!c.se_idoso
+        if (form.context.incapaz === undefined) form.context.incapaz = !!c.se_incapaz
+
+        // cobre tanto camelCase quanto snake_case, caso o template use qualquer um:
+        if (form.context.criancaAdolescente === undefined) {
+          form.context.criancaAdolescente = !!c.se_crianca_adolescente
+        }
+        if (form.context.crianca_adolescente === undefined) {
+          form.context.crianca_adolescente = !!c.se_crianca_adolescente
+        }
+      }
+
       await tryPrefillFromSources()
     },
   )
