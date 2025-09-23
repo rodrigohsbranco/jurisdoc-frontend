@@ -1,4 +1,4 @@
-import type { Router } from 'vue-router';
+import type { Router } from "vue-router";
 export declare const useAuthStore: import("pinia").StoreDefinition<"auth", {
     accessToken: string;
     refreshToken: string;
