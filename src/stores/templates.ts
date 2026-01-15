@@ -33,18 +33,9 @@ export interface FieldsResponse {
 }
 
 export interface ListParams {
-  page?: number
-  page_size?: number
   search?: string
   ordering?: string
   active?: boolean
-}
-
-export interface Paginated<T> {
-  count: number
-  next: string | null
-  previous: string | null
-  results: T[]
 }
 
 export interface RenderOptions {
@@ -117,9 +108,6 @@ function toMessage (e: any): string {
 export const useTemplatesStore = defineStore('templates', {
   state: () => ({
     items: [] as TemplateItem[],
-    count: 0,
-    next: null as string | null,
-    previous: null as string | null,
     loadingList: false,
     loadingMutation: false,
     fieldsCache: new Map<number, FieldsResponse>(),
@@ -136,19 +124,14 @@ export const useTemplatesStore = defineStore('templates', {
       this.loadingList = true
       this.lastError = null
       try {
-        const res = await api.get<Paginated<TemplateItem>>('/api/templates/', {
+        const res = await api.get<TemplateItem[]>('/api/templates/', {
           params: buildQuery({
-            page: params.page ?? 1,
-            page_size: params.page_size ?? 10,
             search: params.search,
             ordering: params.ordering,
             active: params.active,
           }),
         })
-        this.items = res.data.results
-        this.count = res.data.count
-        this.next = res.data.next
-        this.previous = res.data.previous
+        this.items = Array.isArray(res.data) ? res.data : []
       } catch (error) {
         this.lastError = toMessage(error)
         throw error
@@ -167,7 +150,6 @@ export const useTemplatesStore = defineStore('templates', {
           headers: { 'Content-Type': 'multipart/form-data' },
         })
         this.items = [res.data, ...this.items]
-        this.count += 1
         return res.data
       } catch (error) {
         this.lastError
@@ -225,7 +207,6 @@ export const useTemplatesStore = defineStore('templates', {
       try {
         await api.delete(`/api/templates/${id}/`)
         this.items = this.items.filter(t => t.id !== id)
-        this.count = Math.max(0, this.count - 1)
       } catch (error) {
         this.lastError = toMessage(error)
         throw error
@@ -258,7 +239,22 @@ export const useTemplatesStore = defineStore('templates', {
       try {
         const res = await api.post(`/api/templates/${id}/render/`, body, {
           responseType: 'blob',
+          validateStatus: (status) => status < 500, // Aceita 400 para capturar erro
         })
+        // Verifica se a resposta é um erro (400)
+        if (res.status === 400) {
+          // Tenta ler o erro do blob
+          const errorText = await (res.data as Blob).text()
+          let errorDetail = errorText
+          try {
+            const errorJson = JSON.parse(errorText)
+            errorDetail = errorJson.detail || errorText
+          } catch {
+            // Se não for JSON, usa o texto direto
+          }
+          throw new Error(errorDetail)
+        }
+        
         const cd = res.headers['content-disposition'] as string | undefined
         const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'documento'}.docx`
         return { blob: res.data as Blob, filename: fname }

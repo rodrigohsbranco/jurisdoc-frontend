@@ -1,185 +1,183 @@
 <script setup lang="ts">
-  import { computed, onMounted, reactive, ref } from 'vue'
-  import {
-    type FieldsResponse,
-    type TemplateField,
-    type TemplateItem,
-    useTemplatesStore,
-  } from '@/stores/templates'
+import { computed, onMounted, reactive, ref } from "vue";
+import {
+  type FieldsResponse,
+  type TemplateField,
+  type TemplateItem,
+  useTemplatesStore,
+} from "@/stores/templates";
 
-  const templates = useTemplatesStore()
+const templates = useTemplatesStore();
 
-  // =============================
-  // Tabela
-  // =============================
-  const search = ref('')
-  const page = ref(1)
-  const itemsPerPage = ref(10)
-  const sortBy = ref<{ key: string, order?: 'asc' | 'desc' }[]>([
-    { key: 'name', order: 'asc' },
-  ])
+// =============================
+// Tabela
+// =============================
+const search = ref("");
+const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
+  { key: "name", order: "asc" },
+]);
 
-  const headers = [
-    { title: 'Nome', key: 'name' },
-    { title: 'Arquivo', key: 'file' },
-    { title: 'Ativo', key: 'active' },
-    { title: 'Ações', key: 'actions', sortable: false, align: 'end' as const },
-  ]
+const headers = [
+  { title: "Nome", key: "name" },
+  { title: "Arquivo", key: "file" },
+  { title: "Ativo", key: "active" },
+  { title: "Ações", key: "actions", sortable: false, align: "end" as const },
+];
 
-  // =============================
-  // Criar/editar
-  // =============================
-  const dialogUpsert = ref(false)
-  const editing = ref<TemplateItem | null>(null)
-  const form = reactive<{ name: string, active: boolean, file: File | null }>({
-    name: '',
-    active: true,
-    file: null,
-  })
+// =============================
+// Criar/editar
+// =============================
+const dialogUpsert = ref(false);
+const editing = ref<TemplateItem | null>(null);
+const form = reactive<{ name: string; active: boolean; file: File | null }>({
+  name: "",
+  active: true,
+  file: null,
+});
 
-  function openCreate () {
-    editing.value = null
-    form.name = ''
-    form.active = true
-    form.file = null
-    dialogUpsert.value = true
-  }
+function openCreate() {
+  editing.value = null;
+  form.name = "";
+  form.active = true;
+  form.file = null;
+  dialogUpsert.value = true;
+}
 
-  function openEdit (item: TemplateItem) {
-    editing.value = item
-    form.name = item.name
-    form.active = item.active
-    form.file = null
-    dialogUpsert.value = true
-  }
+function openEdit(item: TemplateItem) {
+  editing.value = item;
+  form.name = item.name;
+  form.active = item.active;
+  form.file = null;
+  dialogUpsert.value = true;
+}
 
-  async function saveUpsert () {
-    try {
-      if (!form.name.trim()) throw new Error('Informe o nome do template.')
-      if (!editing.value && !form.file)
-        throw new Error('Selecione o arquivo .docx.')
+async function saveUpsert() {
+  try {
+    if (!form.name.trim()) throw new Error("Informe o nome do template.");
+    if (!editing.value && !form.file)
+      throw new Error("Selecione o arquivo .docx.");
 
-      await (editing.value
-        ? templates.update(editing.value.id, {
+    await (editing.value
+      ? templates.update(editing.value.id, {
           name: form.name.trim(),
           active: form.active,
           ...(form.file ? { file: form.file } : {}),
         })
-        : templates.create({
+      : templates.create({
           name: form.name.trim(),
           file: form.file as File,
           active: form.active,
-        }))
-      dialogUpsert.value = false
-    } catch (error_) {
-      // store já preenche lastError
-      console.error(error_)
-    }
+        }));
+    dialogUpsert.value = false;
+  } catch (error_) {
+    // store já preenche lastError
+    console.error(error_);
   }
+}
 
-  function onPickFile (e: Event) {
-    const files = (e.target as HTMLInputElement).files
-    form.file = files && files.length > 0 ? files[0] : null
+function onPickFile(e: Event) {
+  const files = (e.target as HTMLInputElement).files;
+  form.file = files && files.length > 0 ? files[0] : null;
+}
+
+// =============================
+// Remover
+// =============================
+async function removeTemplate(item: TemplateItem) {
+  if (!confirm(`Excluir o template "${item.name}"?`)) return;
+  try {
+    await templates.remove(item.id);
+  } catch (error_) {
+    console.error(error_);
   }
+}
 
-  // =============================
-  // Remover
-  // =============================
-  async function removeTemplate (item: TemplateItem) {
-    if (!confirm(`Excluir o template "${item.name}"?`)) return
-    try {
-      await templates.remove(item.id)
-    } catch (error_) {
-      console.error(error_)
-    }
+// =============================
+// Campos
+// =============================
+const dialogFields = ref(false);
+const fieldsLoading = ref(false);
+const fieldsOf = ref<FieldsResponse | null>(null);
+const fieldsOfItem = ref<TemplateItem | null>(null);
+
+async function openFields(item: TemplateItem) {
+  fieldsLoading.value = true;
+  fieldsOfItem.value = item;
+  fieldsOf.value = null;
+  dialogFields.value = true;
+  try {
+    fieldsOf.value = await templates.fetchFields(item.id, { force: true });
+  } catch (error_) {
+    console.error(error_);
+  } finally {
+    fieldsLoading.value = false;
   }
+}
 
-  // =============================
-  // Campos
-  // =============================
-  const dialogFields = ref(false)
-  const fieldsLoading = ref(false)
-  const fieldsOf = ref<FieldsResponse | null>(null)
-  const fieldsOfItem = ref<TemplateItem | null>(null)
+// =============================
+// Render
+// =============================
+const dialogRender = ref(false);
+const renderItem = ref<TemplateItem | null>(null);
+const renderFields = ref<TemplateField[]>([]);
+const renderContext = ref<Record<string, any>>({});
+const renderFilename = ref("");
+const rendering = ref(false);
 
-  async function openFields (item: TemplateItem) {
-    fieldsLoading.value = true
-    fieldsOfItem.value = item
-    fieldsOf.value = null
-    dialogFields.value = true
-    try {
-      fieldsOf.value = await templates.fetchFields(item.id, { force: true })
-    } catch (error_) {
-      console.error(error_)
-    } finally {
-      fieldsLoading.value = false
-    }
+// Caso queira ativar no futuro
+// async function openRender (item: TemplateItem) {
+//   try {
+//     const f = await templates.fetchFields(item.id)
+//     if (f.syntax && f.syntax.toLowerCase().includes('angle')) {
+//       templates.lastError =
+//         'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
+//       return
+//     }
+//     renderItem.value = item
+//     renderFields.value = f.fields
+//     renderContext.value = {}
+//     renderFilename.value = `${item.name}.docx`
+//     dialogRender.value = true
+//   } catch (e) {
+//     console.error(e)
+//   }
+// }
+
+async function doRender() {
+  if (!renderItem.value) return;
+  rendering.value = true;
+  try {
+    const result = await templates.render(renderItem.value.id, {
+      context: renderContext.value,
+      filename: renderFilename.value.trim() || undefined,
+    });
+    templates.downloadRendered(result);
+    dialogRender.value = false;
+  } catch (error_) {
+    console.error(error_);
+  } finally {
+    rendering.value = false;
   }
+}
 
-  // =============================
-  // Render
-  // =============================
-  const dialogRender = ref(false)
-  const renderItem = ref<TemplateItem | null>(null)
-  const renderFields = ref<TemplateField[]>([])
-  const renderContext = ref<Record<string, any>>({})
-  const renderFilename = ref('')
-  const rendering = ref(false)
+// =============================
+// Computed & inicialização
+// =============================
+const loadingList = computed(() => templates.loadingList);
+const error = computed(() => templates.lastError);
+const items = computed(() => templates.items);
 
-  // Caso queira ativar no futuro
-  // async function openRender (item: TemplateItem) {
-  //   try {
-  //     const f = await templates.fetchFields(item.id)
-  //     if (f.syntax && f.syntax.toLowerCase().includes('angle')) {
-  //       templates.lastError =
-  //         'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
-  //       return
-  //     }
-  //     renderItem.value = item
-  //     renderFields.value = f.fields
-  //     renderContext.value = {}
-  //     renderFilename.value = `${item.name}.docx`
-  //     dialogRender.value = true
-  //   } catch (e) {
-  //     console.error(e)
-  //   }
-  // }
+async function load() {
+  await templates.fetch({});
+}
 
-  async function doRender () {
-    if (!renderItem.value) return
-    rendering.value = true
-    try {
-      const result = await templates.render(renderItem.value.id, {
-        context: renderContext.value,
-        filename: renderFilename.value.trim() || undefined,
-      })
-      templates.downloadRendered(result)
-      dialogRender.value = false
-    } catch (error_) {
-      console.error(error_)
-    } finally {
-      rendering.value = false
-    }
-  }
-
-  // =============================
-  // Computed & inicialização
-  // =============================
-  const loadingList = computed(() => templates.loadingList)
-  const error = computed(() => templates.lastError)
-  const items = computed(() => templates.items)
-
-  async function load () {
-    await templates.fetch({ page: 1, page_size: itemsPerPage.value })
-  }
-
-  onMounted(load)
+onMounted(load);
 </script>
 
 <template>
   <v-container fluid>
     <!-- Cabeçalho -->
-    <v-card class="rounded-xl mb-4" elevation="2">
+    <v-card class="rounded mb-4" elevation="2">
       <v-card-title class="d-flex align-center">
         <div>
           <div class="text-subtitle-1">Templates (.docx)</div>
@@ -195,17 +193,19 @@
     </v-card>
 
     <!-- Lista -->
-    <v-card class="rounded-xl" elevation="2">
+    <v-card class="rounded" elevation="2">
       <v-card-title class="d-flex align-center">
-        <v-text-field
-          v-model="search"
-          clearable
-          density="comfortable"
-          hide-details
-          label="Buscar"
-          prepend-inner-icon="mdi-magnify"
-          style="max-width: 320px"
-        />
+        <v-responsive max-width="300px" class="mt-2" >
+          <v-text-field
+            v-model="search"
+            clearable
+            density="compact"
+            variant="outlined"
+            hide-details
+            label="Buscar"
+            prepend-inner-icon="mdi-magnify"
+          />
+        </v-responsive>
       </v-card-title>
 
       <v-card-text>
@@ -214,8 +214,6 @@
         </v-alert>
 
         <v-data-table
-          v-model:items-per-page="itemsPerPage"
-          v-model:page="page"
           v-model:sort-by="sortBy"
           class="rounded-lg"
           :headers="headers"
@@ -339,7 +337,7 @@
           <v-alert
             v-if="
               fieldsOf?.syntax &&
-                fieldsOf.syntax.toLowerCase().includes('angle')
+              fieldsOf.syntax.toLowerCase().includes('angle')
             "
             class="mb-4"
             type="warning"
@@ -347,7 +345,8 @@
           >
             Este arquivo ainda possui marcadores no formato
             <code>&lt;&lt; &gt;&gt;</code>. Atualize para Jinja
-            <code>{{ "{" }}{{ "}" }}</code>.
+            <code>{{ "{" }}{{ "}" }}</code
+            >.
           </v-alert>
 
           <v-skeleton-loader v-if="fieldsLoading" type="table" />
@@ -416,11 +415,9 @@
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="dialogRender = false">Cancelar</v-btn>
-          <v-btn
-            color="primary"
-            :loading="rendering"
-            @click="doRender"
-          >Gerar & baixar</v-btn>
+          <v-btn color="primary" :loading="rendering" @click="doRender"
+            >Gerar & baixar</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>

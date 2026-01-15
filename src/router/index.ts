@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Contas bancárias' },
       },
       {
+        path: 'conta-reu',
+        name: 'conta-reu',
+        component: () => import('@/views/ContaReuView.vue'),
+        meta: { title: 'Bancos Réus' },
+      },
+      {
         path: 'templates',
         name: 'templates',
         component: () => import('../views/TemplatesView.vue'),
@@ -47,6 +53,12 @@ const routes: RouteRecordRaw[] = [
         name: 'peticoes',
         component: () => import('../views/PetitionsView.vue'),
         meta: { title: 'Petições' },
+      },
+      {
+        path: 'contratos',
+        name: 'contratos',
+        component: () => import('../views/ContratosView.vue'),
+        meta: { title: 'Contratos' },
       },
       { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios' } },
     ],

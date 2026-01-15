@@ -27,19 +27,10 @@ export interface UpdatePetitionPayload {
 }
 
 export interface ListParams {
-  page?: number
-  page_size?: number
   search?: string
   ordering?: string
   cliente?: number
   template?: number
-}
-
-export interface Paginated<T> {
-  count: number
-  next: string | null
-  previous: string | null
-  results: T[]
 }
 
 export interface RenderOptions {
@@ -92,9 +83,6 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
 export const usePeticoesStore = defineStore('peticoes', {
   state: () => ({
     items: [] as Petition[],
-    count: 0,
-    next: null as string | null,
-    previous: null as string | null,
     loading: false,
     loadingMutation: false,
     error: null as string | null,
@@ -112,20 +100,15 @@ export const usePeticoesStore = defineStore('peticoes', {
       this.loading = true
       this.error = null
       try {
-        const res = await api.get<Paginated<Petition>>('/api/petitions/', {
+        const res = await api.get<Petition[]>('/api/petitions/', {
           params: buildQuery({
-            page: params.page ?? 1,
-            page_size: params.page_size ?? 10,
             search: params.search,
             ordering: params.ordering,
             cliente: params.cliente,
             template: params.template,
           }),
         })
-        this.items = res.data.results.map(p => normalize(p))
-        this.count = res.data.count
-        this.next = res.data.next
-        this.previous = res.data.previous
+        this.items = (Array.isArray(res.data) ? res.data : []).map(p => normalize(p))
         for (const it of this.items) {
           this.byIdCache.set(it.id, it)
         }
@@ -168,7 +151,6 @@ export const usePeticoesStore = defineStore('peticoes', {
         const res = await api.post<Petition>('/api/petitions/', payload)
         const data = normalize(res.data)
         this.items = [data, ...this.items]
-        this.count += 1
         this.byIdCache.set(data.id, data)
         return data
       } catch (error) {
@@ -209,7 +191,6 @@ export const usePeticoesStore = defineStore('peticoes', {
       try {
         await api.delete(`/api/petitions/${id}/`)
         this.items = this.items.filter(i => i.id !== id)
-        this.count = Math.max(0, this.count - 1)
         this.byIdCache.delete(id)
       } catch (error) {
         const e = error as AxiosError<any>

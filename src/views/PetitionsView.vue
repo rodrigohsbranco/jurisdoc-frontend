@@ -1,605 +1,611 @@
 <script setup lang="ts">
-  import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-  import { type Cliente, useClientesStore } from '@/stores/clientes'
-  import { type ContaBancaria, useContasStore } from '@/stores/contas'
-  import { type Petition, usePeticoesStore } from '@/stores/peticoes'
-  import { type TemplateField, useTemplatesStore } from '@/stores/templates'
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { type Cliente, useClientesStore } from "@/stores/clientes";
+import { type ContaBancaria, useContasStore } from "@/stores/contas";
+import { type Petition, usePeticoesStore } from "@/stores/peticoes";
+import { type TemplateField, useTemplatesStore } from "@/stores/templates";
 
-  const peticoes = usePeticoesStore()
-  const templates = useTemplatesStore()
-  const clientes = useClientesStore()
-  const contas = useContasStore()
+const peticoes = usePeticoesStore();
+const templates = useTemplatesStore();
+const clientes = useClientesStore();
+const contas = useContasStore();
 
-  // =========================
-  // Config de prefill
-  // =========================
-  const PREFILL_MASKS = true // aplica máscara em CPF/CEP
+// =========================
+// Config de prefill
+// =========================
+const PREFILL_MASKS = true; // aplica máscara em CPF/CEP
 
-  // normaliza chave p/ comparação
-  const normKey = (s: any) =>
-    String(s ?? '')
-      .normalize('NFD')
-      .replace(/\p{Diacritic}/gu, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
+// normaliza chave p/ comparação
+const normKey = (s: any) =>
+  String(s ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 
-  const maskCPF = (cpf?: string | null) => {
-    if (!cpf) return ''
-    const d = cpf.replace(/\D/g, '').slice(0, 11)
-    if (!PREFILL_MASKS) return d
-    return d
-      .replace(/^(\d{3})(\d)/, '$1.$2')
-      .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
-      .replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2')
-  }
+const maskCPF = (cpf?: string | null) => {
+  if (!cpf) return "";
+  const d = cpf.replace(/\D/g, "").slice(0, 11);
+  if (!PREFILL_MASKS) return d;
+  return d
+    .replace(/^(\d{3})(\d)/, "$1.$2")
+    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d{1,2})$/, ".$1-$2");
+};
 
-  const maskCEP = (cep?: string | null) => {
-    if (!cep) return ''
-    const d = cep.replace(/\D/g, '').slice(0, 8)
-    if (!PREFILL_MASKS) return d
-    return d.replace(/^(\d{5})(\d{1,3})$/, '$1-$2')
-  }
+const maskCEP = (cep?: string | null) => {
+  if (!cep) return "";
+  const d = cep.replace(/\D/g, "").slice(0, 8);
+  if (!PREFILL_MASKS) return d;
+  return d.replace(/^(\d{5})(\d{1,3})$/, "$1-$2");
+};
 
-  const composeEndereco = (c: Cliente) => {
-    const partes = [
-      [c.logradouro, c.numero].filter(Boolean).join(', '),
-      c.bairro,
-      [c.cidade, (c.uf || '')?.toUpperCase()].filter(Boolean).join('/'),
-      maskCEP(c.cep),
-    ].filter(Boolean)
-    return partes.join(' – ')
-  }
+const composeEndereco = (c: Cliente) => {
+  const partes = [
+    [c.logradouro, c.numero].filter(Boolean).join(", "),
+    c.bairro,
+    [c.cidade, (c.uf || "")?.toUpperCase()].filter(Boolean).join("/"),
+    maskCEP(c.cep),
+  ].filter(Boolean);
+  return partes.join(" – ");
+};
 
-  // Sinônimos → chave canônica (cliente + bancário)
-  const SYNONYMS: Record<string, string[]> = {
-    // cliente
-    nome: [
-      'nome',
-      'nomecliente',
-      'cliente',
-      'nomecompleto',
-      'autor',
-      'requerente',
-    ],
-    cpf: ['cpf', 'cpfrequerente', 'documentocpf'],
-    rg: ['rg', 'identidade'],
-    orgaoexpedidor: ['orgaoexpedidor', 'oexpedidor', 'oexp', 'expedidor'],
-    qualificacao: ['qualificacao', 'ocupacao', 'profissao'],
-    idoso: ['idoso', 'eidoso', 'seidoso', 'senior'],
-    logradouro: ['logradouro', 'rua', 'endereco', 'end', 'endereco_rua'],
-    numero: ['numero', 'num', 'n'],
-    bairro: ['bairro'],
-    cidade: ['cidade', 'municipio'],
-    cep: ['cep', 'codigopostal', 'codpostal'],
-    uf: ['uf', 'estado', 'siglaestado'],
-    enderecocompleto: [
-      'enderecocompleto',
-      'enderecoformatado',
-      'enderecofull',
-      'endereco_full',
-      'enderecocompletoformatado',
-      'endereco',
-    ],
-    cidadeuf: ['cidadeuf', 'localidade', 'cidade_uf'],
-    // bancário (conta principal)
-    banco: [
-      'banco',
-      'banco_nome',
-      'nomebanco',
-      'bancodesc',
-      'codigo_banco',
-      'codigo_bco',
-      'bancoquerecebe',
-      'banco_que_recebe',
-      'bancodestino',
-      'bancorecebedor',
-      'bancobeneficiario',
-    ],
-    agencia: [
-      'agencia',
-      'ag',
-      'nragencia',
-      'agenciaquerecebe',
-      'agencia_que_recebe',
-      'agenciadestino',
-    ],
-    conta: [
-      'conta',
-      'nconta',
-      'contacorrente',
-      'contanumero',
-      'conta_numero',
-      'contaquerecebe',
-      'conta_que_recebe',
-      'contadestino',
-    ],
-    digito: ['digito', 'dv', 'digitoverificador'],
-    tipoconta: ['tipoconta', 'tipo', 'contatipo', 'tipo_conta'],
-    contaformatada: ['contaformatada', 'agenciaconta', 'contacompleta'],
+// Sinônimos → chave canônica (cliente + bancário)
+const SYNONYMS: Record<string, string[]> = {
+  // cliente
+  nome: [
+    "nome",
+    "nomecliente",
+    "cliente",
+    "nomecompleto",
+    "autor",
+    "requerente",
+  ],
+  cpf: ["cpf", "cpfrequerente", "documentocpf"],
+  rg: ["rg", "identidade"],
+  orgaoexpedidor: ["orgaoexpedidor", "oexpedidor", "oexp", "expedidor"],
+  qualificacao: ["qualificacao", "ocupacao", "profissao"],
+  idoso: ["idoso", "eidoso", "seidoso", "senior"],
+  logradouro: ["logradouro", "rua", "endereco", "end", "endereco_rua"],
+  numero: ["numero", "num", "n"],
+  bairro: ["bairro"],
+  cidade: ["cidade", "municipio"],
+  cep: ["cep", "codigopostal", "codpostal"],
+  uf: ["uf", "estado", "siglaestado"],
+  enderecocompleto: [
+    "enderecocompleto",
+    "enderecoformatado",
+    "enderecofull",
+    "endereco_full",
+    "enderecocompletoformatado",
+    "endereco",
+  ],
+  cidadeuf: ["cidadeuf", "localidade", "cidade_uf"],
+  // bancário (conta principal)
+  banco: [
+    "banco",
+    "banco_nome",
+    "nomebanco",
+    "bancodesc",
+    "codigo_banco",
+    "codigo_bco",
+    "bancoquerecebe",
+    "banco_que_recebe",
+    "bancodestino",
+    "bancorecebedor",
+    "bancobeneficiario",
+  ],
+  agencia: [
+    "agencia",
+    "ag",
+    "nragencia",
+    "agenciaquerecebe",
+    "agencia_que_recebe",
+    "agenciadestino",
+  ],
+  conta: [
+    "conta",
+    "nconta",
+    "contacorrente",
+    "contanumero",
+    "conta_numero",
+    "contaquerecebe",
+    "conta_que_recebe",
+    "contadestino",
+  ],
+  digito: ["digito", "dv", "digitoverificador"],
+  tipoconta: ["tipoconta", "tipo", "contatipo", "tipo_conta"],
+  contaformatada: ["contaformatada", "agenciaconta", "contacompleta"],
 
-    // novos sinalizadores do cliente
-    incapaz: ['incapaz', 'interditado', 'curatelado', 'tutelado'],
-    criancaadolescente: [
-      'criancaadolescente', 'crianca_adolescente', 'menor',
-      'crianca', 'adolescente', 'criancaouadolescente',
-    ],
+  // novos sinalizadores do cliente
+  incapaz: ["incapaz", "interditado", "curatelado", "tutelado"],
+  criancaadolescente: [
+    "criancaadolescente",
+    "crianca_adolescente",
+    "menor",
+    "crianca",
+    "adolescente",
+    "criancaouadolescente",
+  ],
 
-    // dados civis
-    nacionalidade: ['nacionalidade'],
-    estadocivil: ['estadocivil', 'estado_civil'],
-    profissao: ['profissao', 'ocupacao'],
-  }
+  // dados civis
+  nacionalidade: ["nacionalidade"],
+  estadocivil: ["estadocivil", "estado_civil"],
+  profissao: ["profissao", "ocupacao"],
+};
 
-  const LOOKUP = new Map<string, string>()
-  for (const [canon, list] of Object.entries(SYNONYMS)) {
-    LOOKUP.set(canon, canon)
-    for (const s of list) LOOKUP.set(s, canon)
-  }
+const LOOKUP = new Map<string, string>();
+for (const [canon, list] of Object.entries(SYNONYMS)) {
+  LOOKUP.set(canon, canon);
+  for (const s of list) LOOKUP.set(s, canon);
+}
 
-  function detectCanon (k: string): string {
-    if (LOOKUP.has(k)) return LOOKUP.get(k)! // já é sinônimo conhecido
+function detectCanon(k: string): string {
+  if (LOOKUP.has(k)) return LOOKUP.get(k)!; // já é sinônimo conhecido
 
-    // bancário (sub-string match robusto)
-    if (k.includes('banco')) return 'banco'
-    if (k.includes('agencia') || k === 'ag') return 'agencia'
-    if (k.includes('conta')) return 'conta'
-    if (k.includes('digito') || k === 'dv') return 'digito'
-    if ((k.includes('tipo') && k.includes('conta')) || k === 'tipoconta')
-      return 'tipoconta'
+  // bancário (sub-string match robusto)
+  if (k.includes("banco")) return "banco";
+  if (k.includes("agencia") || k === "ag") return "agencia";
+  if (k.includes("conta")) return "conta";
+  if (k.includes("digito") || k === "dv") return "digito";
+  if ((k.includes("tipo") && k.includes("conta")) || k === "tipoconta")
+    return "tipoconta";
 
-    // cliente (alguns atalhos úteis)
-    if (k.includes('enderecocompleto') || k === 'endereco')
-      return 'enderecocompleto'
-    if (k.includes('cidadeuf')) return 'cidadeuf'
+  // cliente (alguns atalhos úteis)
+  if (k.includes("enderecocompleto") || k === "endereco")
+    return "enderecocompleto";
+  if (k.includes("cidadeuf")) return "cidadeuf";
 
-    // novos: criança/adolescente
-    if (k.includes('crianca') || k.includes('adolescente') || k.includes('menor')) {
-      return 'criancaadolescente'
-    }
-
-    // novos: estado civil
-    if ((k.includes('estado') && k.includes('civil')) || k === 'estadocivil') {
-      return 'estadocivil'
-    }
-
-    return k // sem match: deixa passar
-  }
-
-  const isEmpty = (v: unknown) =>
-    v === undefined || v === null || (typeof v === 'string' && v.trim() === '')
-
-  // pega conta principal do cliente (ou 1ª)
-  async function getContaPrincipalForCliente (
-    clienteId?: number,
-  ): Promise<ContaBancaria | null> {
-    const cid = Number(clienteId)
-    if (!Number.isFinite(cid) || cid <= 0) return null
-
-    // tenta cache local primeiro
-    const inCache
-      = contas.principal(cid) || (contas.byCliente(cid) || [])[0] || null
-    if (inCache) return inCache
-
-    // carrega do servidor e tenta de novo
-    try {
-      await contas.fetchForCliente(cid)
-    } catch {
-      return null
-    }
-    return contas.principal(cid) || (contas.byCliente(cid) || [])[0] || null
-  }
-
-  // resolve valor para um field do template a partir do cliente e (opcional) conta
-  const valueFromSources = (
-    c: Cliente | null,
-    acc: ContaBancaria | null,
-    rawFieldName: string,
-  ) => {
-    const k = normKey(rawFieldName)
-    const canon = detectCanon(k)
-
-    // 1) campos do cliente
-    if (c) {
-      switch (canon) {
-        case 'nome': {
-          return c.nome_completo || ''
-        }
-        case 'cpf': {
-          return maskCPF(c.cpf)
-        }
-        case 'rg': {
-          return c.rg || ''
-        }
-        case 'orgaoexpedidor': {
-          return c.orgao_expedidor || ''
-        }
-        case 'qualificacao': {
-          return c.qualificacao || ''
-        }
-        case 'idoso': {
-          return !!c.se_idoso
-        }
-        case 'logradouro': {
-          return c.logradouro || ''
-        }
-        case 'numero': {
-          return c.numero || ''
-        }
-        case 'bairro': {
-          return c.bairro || ''
-        }
-        case 'cidade': {
-          return c.cidade || ''
-        }
-        case 'cep': {
-          return maskCEP(c.cep)
-        }
-        case 'uf': {
-          return (c.uf || '').toUpperCase()
-        }
-        case 'enderecocompleto': {
-          return composeEndereco(c)
-        }
-        case 'cidadeuf': {
-          return (
-            [c.cidade, (c.uf || '')?.toUpperCase()].filter(Boolean).join('/')
-            || ''
-          )
-        }
-        case 'incapaz': {
-          return !!c.se_incapaz
-        }
-        case 'criancaadolescente': {
-          return !!c.se_crianca_adolescente
-        }
-        case 'nacionalidade': {
-          return c.nacionalidade || ''
-        }
-        case 'estadocivil': {
-          return c.estado_civil || ''
-        }
-        case 'profissao': {
-          return c.profissao || ''
-        }
-      }
-    }
-
-    // 2) campos bancários (conta principal)
-    if (acc) {
-      switch (canon) {
-        case 'banco': {
-          // Agora busca a descrição ativa (se existir) ou o nome do banco
-          return (acc as any).descricao_ativa || acc.banco_nome || ''
-        }
-        case 'agencia': {
-          return acc.agencia || ''
-        }
-        case 'conta': {
-          return acc.conta || ''
-        }
-        case 'digito': {
-          return acc.digito || ''
-        }
-        case 'tipoconta': {
-          return acc.tipo || ''
-        }
-        case 'contaformatada': {
-          const ag = acc.agencia ?? ''
-          const num = acc.conta ?? ''
-          const dv = acc.digito ?? ''
-          return [ag, num].filter(Boolean).join('/') + (dv ? `-${dv}` : '')
-        }
-      }
-    }
-
-    // sem match
-    return undefined
-  }
-
-  // =========================
-  // Carregamento e lookups
-  // =========================
-  const requestedClients = new Set<number>()
-  function ensureClientInCache (id?: number) {
-    const cid = Number(id)
-    if (!Number.isFinite(cid) || cid <= 0) return
-    const found = (clientes.items as Cliente[]).some(c => Number(c.id) === cid)
-    if (!found && !requestedClients.has(cid)) {
-      requestedClients.add(cid)
-      clientes.getDetail(cid).catch(() => {})
-    }
-  }
-
-  // Opções para selects
-  const clientOptions = computed(() =>
-    (clientes.items as Cliente[]).map(c => ({
-      title: c.nome_completo || `#${Number(c.id)}`,
-      value: Number(c.id),
-    })),
-  )
-
-  const templateOptions = computed(() =>
-    templates.items.map(t => ({ title: t.name, value: Number(t.id) })),
-  )
-
-  // =========================
-  // Tabela
-  // =========================
-  const search = ref('')
-  const page = ref(1)
-  const itemsPerPage = ref(10)
-  const sortBy = ref<{ key: string, order?: 'asc' | 'desc' }[]>([
-    { key: 'created_at', order: 'desc' },
-  ])
-
-  const headers = [
-    { title: 'Cliente', key: 'cliente' },
-    { title: 'Template', key: 'template' },
-    { title: 'Criada em', key: 'created_at' },
-    { title: 'Atualizada em', key: 'updated_at' },
-    { title: 'Ações', key: 'actions', sortable: false, align: 'end' as const },
-  ]
-
-  const clienteNome = (id?: number, fallback?: string | null) => {
-    if (fallback && String(fallback).trim()) return String(fallback)
-    const cid = Number(id)
-    if (!Number.isFinite(cid) || cid <= 0) return '—'
-    const c = (clientes.items as Cliente[]).find(x => Number(x.id) === cid)
-    if (c) return c.nome_completo || `#${cid}`
-    ensureClientInCache(cid)
-    return '—'
-  }
-
-  const templateLabel = (id?: number) => {
-    const tid = Number(id)
-    if (!Number.isFinite(tid) || tid <= 0) return '—'
-    const t = templates.byId(tid)
-    return t ? t.name : `#${tid}`
-  }
-
-  // =========================
-  // Dialog / Form
-  // =========================
-  const dialogUpsert = ref(false)
-  const editing = ref<Petition | null>(null)
-  const form = reactive<{
-    cliente: number | null
-    template: number | null
-    context: Record<string, any>
-  }>({
-    cliente: null,
-    template: null,
-    context: {},
-  })
-
-  const fieldsLoading = ref(false)
-  const fields = ref<TemplateField[]>([])
-  const syntaxInfo = ref<string>('')
-
-  async function loadFieldsForTemplate (
-    tid: number | string | null | undefined,
-    force = false,
+  // novos: criança/adolescente
+  if (
+    k.includes("crianca") ||
+    k.includes("adolescente") ||
+    k.includes("menor")
   ) {
-    const id = typeof tid === 'string' ? Number(tid) : (tid as number)
-    fields.value = []
-    syntaxInfo.value = ''
+    return "criancaadolescente";
+  }
 
-    if (!Number.isFinite(id) || id <= 0) return
+  // novos: estado civil
+  if ((k.includes("estado") && k.includes("civil")) || k === "estadocivil") {
+    return "estadocivil";
+  }
 
-    fieldsLoading.value = true
-    try {
-      const resp = await templates.fetchFields(id, { force })
-      syntaxInfo.value = resp.syntax || ''
+  return k; // sem match: deixa passar
+}
 
-      if (resp.syntax && resp.syntax.toLowerCase().includes('angle')) {
-        templates.lastError
-          = 'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
-        fields.value = []
-        return
+const isEmpty = (v: unknown) =>
+  v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+
+// pega conta principal do cliente (ou 1ª)
+async function getContaPrincipalForCliente(
+  clienteId?: number
+): Promise<ContaBancaria | null> {
+  const cid = Number(clienteId);
+  if (!Number.isFinite(cid) || cid <= 0) return null;
+
+  // tenta cache local primeiro
+  const inCache =
+    contas.principal(cid) || (contas.byCliente(cid) || [])[0] || null;
+  if (inCache) return inCache;
+
+  // carrega do servidor e tenta de novo
+  try {
+    await contas.fetchForCliente(cid);
+  } catch {
+    return null;
+  }
+  return contas.principal(cid) || (contas.byCliente(cid) || [])[0] || null;
+}
+
+// resolve valor para um field do template a partir do cliente e (opcional) conta
+const valueFromSources = (
+  c: Cliente | null,
+  acc: ContaBancaria | null,
+  rawFieldName: string
+) => {
+  const k = normKey(rawFieldName);
+  const canon = detectCanon(k);
+
+  // 1) campos do cliente
+  if (c) {
+    switch (canon) {
+      case "nome": {
+        return c.nome_completo || "";
       }
-
-      fields.value = resp.fields || []
-
-      // Garante chaves no context para todos os fields
-      for (const f of fields.value) {
-        if (!(f.name in form.context)) form.context[f.name] = ''
+      case "cpf": {
+        return maskCPF(c.cpf);
       }
-
-      // Tenta autopreencher se já houver cliente selecionado
-      await nextTick()
-      await tryPrefillFromSources()
-    } catch (error_: any) {
-      templates.lastError
-        = error_?.response?.data?.detail
-          || error_?.message
-          || 'Falha ao carregar campos do template'
-    } finally {
-      fieldsLoading.value = false
+      case "rg": {
+        return c.rg || "";
+      }
+      case "orgaoexpedidor": {
+        return c.orgao_expedidor || "";
+      }
+      case "qualificacao": {
+        return c.qualificacao || "";
+      }
+      case "idoso": {
+        return !!c.se_idoso;
+      }
+      case "logradouro": {
+        return c.logradouro || "";
+      }
+      case "numero": {
+        return c.numero || "";
+      }
+      case "bairro": {
+        return c.bairro || "";
+      }
+      case "cidade": {
+        return c.cidade || "";
+      }
+      case "cep": {
+        return maskCEP(c.cep);
+      }
+      case "uf": {
+        return (c.uf || "").toUpperCase();
+      }
+      case "enderecocompleto": {
+        return composeEndereco(c);
+      }
+      case "cidadeuf": {
+        return (
+          [c.cidade, (c.uf || "")?.toUpperCase()].filter(Boolean).join("/") ||
+          ""
+        );
+      }
+      case "incapaz": {
+        return !!c.se_incapaz;
+      }
+      case "criancaadolescente": {
+        return !!c.se_crianca_adolescente;
+      }
+      case "nacionalidade": {
+        return c.nacionalidade || "";
+      }
+      case "estadocivil": {
+        return c.estado_civil || "";
+      }
+      case "profissao": {
+        return c.profissao || "";
+      }
     }
   }
 
-  // Dispara quando template mudar
-  watch(
-    () => form.template,
-    tid => loadFieldsForTemplate(tid, true),
-  )
-
-  // Dispara quando cliente mudar (carrega cliente + contas e preenche)
-  watch(
-    () => form.cliente,
-    async cid => {
-      if (!cid) return
-      ensureClientInCache(Number(cid))
-
-      const c = (clientes.items as Cliente[]).find(x => Number(x.id) === Number(cid))
-      if (c) {
-        if (form.context.idoso === undefined) form.context.idoso = !!c.se_idoso
-        if (form.context.incapaz === undefined) form.context.incapaz = !!c.se_incapaz
-
-        // cobre tanto camelCase quanto snake_case, caso o template use qualquer um:
-        if (form.context.criancaAdolescente === undefined) {
-          form.context.criancaAdolescente = !!c.se_crianca_adolescente
-        }
-        if (form.context.crianca_adolescente === undefined) {
-          form.context.crianca_adolescente = !!c.se_crianca_adolescente
-        }
+  // 2) campos bancários (conta principal)
+  if (acc) {
+    switch (canon) {
+      case "banco": {
+        // Agora busca a descrição ativa (se existir) ou o nome do banco
+        return (acc as any).descricao_ativa || acc.banco_nome || "";
       }
-
-      await tryPrefillFromSources()
-    },
-  )
-
-  async function tryPrefillFromSources () {
-    if (!form.cliente || fields.value.length === 0) return
-
-    // garante cliente e contas
-    let c
-      = (clientes.items as Cliente[]).find(
-        x => Number(x.id) === Number(form.cliente),
-      ) || null
-    if (!c) {
-      try {
-        c = await clientes.getDetail(Number(form.cliente))
-      } catch {
-      /* ignore */
+      case "agencia": {
+        return acc.agencia || "";
+      }
+      case "conta": {
+        return acc.conta || "";
+      }
+      case "digito": {
+        return acc.digito || "";
+      }
+      case "tipoconta": {
+        return acc.tipo || "";
+      }
+      case "contaformatada": {
+        const ag = acc.agencia ?? "";
+        const num = acc.conta ?? "";
+        const dv = acc.digito ?? "";
+        return [ag, num].filter(Boolean).join("/") + (dv ? `-${dv}` : "");
       }
     }
-    const acc = await getContaPrincipalForCliente(Number(form.cliente))
+  }
 
-    // percorre os campos do template e preenche se vazio
+  // sem match
+  return undefined;
+};
+
+// =========================
+// Carregamento e lookups
+// =========================
+const requestedClients = new Set<number>();
+function ensureClientInCache(id?: number) {
+  const cid = Number(id);
+  if (!Number.isFinite(cid) || cid <= 0) return;
+  const found = (clientes.items as Cliente[]).some((c) => Number(c.id) === cid);
+  if (!found && !requestedClients.has(cid)) {
+    requestedClients.add(cid);
+    clientes.getDetail(cid).catch(() => {});
+  }
+}
+
+// Opções para selects
+const clientOptions = computed(() =>
+  (clientes.items as Cliente[]).map((c) => ({
+    title: c.nome_completo || `#${Number(c.id)}`,
+    value: Number(c.id),
+  }))
+);
+
+const templateOptions = computed(() =>
+  templates.items.map((t) => ({ title: t.name, value: Number(t.id) }))
+);
+
+// =========================
+// Tabela
+// =========================
+const search = ref("");
+const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
+  { key: "created_at", order: "desc" },
+]);
+
+const headers = [
+  { title: "Cliente", key: "cliente" },
+  { title: "Template", key: "template" },
+  { title: "Criada em", key: "created_at" },
+  { title: "Atualizada em", key: "updated_at" },
+  { title: "Ações", key: "actions", sortable: false, align: "end" as const },
+];
+
+const clienteNome = (id?: number, fallback?: string | null) => {
+  if (fallback && String(fallback).trim()) return String(fallback);
+  const cid = Number(id);
+  if (!Number.isFinite(cid) || cid <= 0) return "—";
+  const c = (clientes.items as Cliente[]).find((x) => Number(x.id) === cid);
+  if (c) return c.nome_completo || `#${cid}`;
+  ensureClientInCache(cid);
+  return "—";
+};
+
+const templateLabel = (id?: number) => {
+  const tid = Number(id);
+  if (!Number.isFinite(tid) || tid <= 0) return "—";
+  const t = templates.byId(tid);
+  return t ? t.name : `#${tid}`;
+};
+
+// =========================
+// Dialog / Form
+// =========================
+const dialogUpsert = ref(false);
+const editing = ref<Petition | null>(null);
+const form = reactive<{
+  cliente: number | null;
+  template: number | null;
+  context: Record<string, any>;
+}>({
+  cliente: null,
+  template: null,
+  context: {},
+});
+
+const fieldsLoading = ref(false);
+const fields = ref<TemplateField[]>([]);
+const syntaxInfo = ref<string>("");
+
+async function loadFieldsForTemplate(
+  tid: number | string | null | undefined,
+  force = false
+) {
+  const id = typeof tid === "string" ? Number(tid) : (tid as number);
+  fields.value = [];
+  syntaxInfo.value = "";
+
+  if (!Number.isFinite(id) || id <= 0) return;
+
+  fieldsLoading.value = true;
+  try {
+    const resp = await templates.fetchFields(id, { force });
+    syntaxInfo.value = resp.syntax || "";
+
+    if (resp.syntax && resp.syntax.toLowerCase().includes("angle")) {
+      templates.lastError =
+        "Este template ainda usa << >>. Atualize para {{ }} antes de gerar.";
+      fields.value = [];
+      return;
+    }
+
+    fields.value = resp.fields || [];
+
+    // Garante chaves no context para todos os fields
     for (const f of fields.value) {
-      const current = form.context[f.name]
-      if (!isEmpty(current)) continue
-      const v = valueFromSources(c!, acc, f.name)
-      if (v === undefined || v === null || v === '') continue
-      if (f.type === 'bool') {
-        form.context[f.name] = Boolean(v)
-      } else if (f.type === 'int') {
-        const n = Number(v)
-        if (!Number.isNaN(n)) form.context[f.name] = n
-      } else {
-        form.context[f.name] = String(v)
+      if (!(f.name in form.context)) form.context[f.name] = "";
+    }
+
+    // Tenta autopreencher se já houver cliente selecionado
+    await nextTick();
+    await tryPrefillFromSources();
+  } catch (error_: any) {
+    templates.lastError =
+      error_?.response?.data?.detail ||
+      error_?.message ||
+      "Falha ao carregar campos do template";
+  } finally {
+    fieldsLoading.value = false;
+  }
+}
+
+// Dispara quando template mudar
+watch(
+  () => form.template,
+  (tid) => loadFieldsForTemplate(tid, true)
+);
+
+// Dispara quando cliente mudar (carrega cliente + contas e preenche)
+watch(
+  () => form.cliente,
+  async (cid) => {
+    if (!cid) return;
+    ensureClientInCache(Number(cid));
+
+    const c = (clientes.items as Cliente[]).find(
+      (x) => Number(x.id) === Number(cid)
+    );
+    if (c) {
+      if (form.context.idoso === undefined) form.context.idoso = !!c.se_idoso;
+      if (form.context.incapaz === undefined)
+        form.context.incapaz = !!c.se_incapaz;
+
+      // cobre tanto camelCase quanto snake_case, caso o template use qualquer um:
+      if (form.context.criancaAdolescente === undefined) {
+        form.context.criancaAdolescente = !!c.se_crianca_adolescente;
+      }
+      if (form.context.crianca_adolescente === undefined) {
+        form.context.crianca_adolescente = !!c.se_crianca_adolescente;
       }
     }
-  }
 
-  async function openCreate () {
-    editing.value = null
-    form.cliente = null
-    form.template = null
-    form.context = {}
-    fields.value = []
-    syntaxInfo.value = ''
-    if ((clientes.items as Cliente[]).length === 0) {
-      await clientes.fetchList({ page: 1, page_size: 500 })
-    }
-    dialogUpsert.value = true
+    await tryPrefillFromSources();
   }
+);
 
-  function openEdit (p: Petition) {
-    editing.value = p
-    form.cliente = Number(p.cliente) || null
-    form.template = Number(p.template) || null
-    form.context = { ...p.context }
-    dialogUpsert.value = true
-    ensureClientInCache(p.cliente)
-    // também podemos pré-carregar contas para o cliente já selecionado
-    if (p.cliente) contas.fetchForCliente(Number(p.cliente)).catch(() => {})
-    loadFieldsForTemplate(p.template || null, true)
-  }
+async function tryPrefillFromSources() {
+  if (!form.cliente || fields.value.length === 0) return;
 
-  async function saveUpsert () {
+  // garante cliente e contas
+  let c =
+    (clientes.items as Cliente[]).find(
+      (x) => Number(x.id) === Number(form.cliente)
+    ) || null;
+  if (!c) {
     try {
-      if (!form.cliente) throw new Error('Selecione o cliente.')
-      if (!form.template) throw new Error('Selecione o template.')
-
-      const payload = {
-        cliente: Number(form.cliente),
-        template: Number(form.template),
-        context: form.context || {},
-      }
-
-      await (editing.value
-        ? peticoes.update(editing.value.id, payload)
-        : peticoes.create(payload))
-      dialogUpsert.value = false
-    } catch (error_: any) {
-      peticoes.error
-        = error_?.response?.data?.detail
-          || error_?.message
-          || 'Erro ao salvar petição.'
-    }
-  }
-
-  async function removePetition (p: Petition) {
-    if (!confirm('Excluir esta petição?')) return
-    try {
-      await peticoes.remove(p.id)
-    } catch (error_: any) {
-      peticoes.error
-        = error_?.response?.data?.detail || 'Não foi possível excluir.'
-    }
-  }
-
-  // ===== render =====
-  const dialogRender = ref(false)
-  const rendering = ref(false)
-  const renderItem = ref<Petition | null>(null)
-  const renderFilename = ref('')
-
-  async function openRender (p: Petition) {
-    try {
-      await loadFieldsForTemplate(p.template, false)
-      if (syntaxInfo.value && syntaxInfo.value.toLowerCase().includes('angle'))
-        return
-      renderItem.value = p
-      renderFilename.value = `peticao_${p.id}.docx`
-      dialogRender.value = true
-    } catch (error_: any) {
-      peticoes.error
-        = error_?.response?.data?.detail
-          || error_?.message
-          || 'Não foi possível abrir geração.'
-    }
-  }
-
-  async function doRender () {
-    if (!renderItem.value) return
-    rendering.value = true
-    try {
-      const result = await peticoes.render(renderItem.value.id, {
-        filename: renderFilename.value.trim() || undefined,
-        strict: true,
-      })
-      peticoes.downloadRendered(result)
-      dialogRender.value = false
+      c = await clientes.getDetail(Number(form.cliente));
     } catch {
-    // erro já populado
-    } finally {
-      rendering.value = false
+      /* ignore */
     }
   }
+  const acc = await getContaPrincipalForCliente(Number(form.cliente));
 
-  // ===== carregamento inicial =====
-  const loading = computed(() => peticoes.loading)
-  const error = computed(() => peticoes.error || templates.lastError)
-  const items = computed(() => peticoes.items)
-
-  async function loadAll () {
-    await clientes.fetchList({ page: 1, page_size: 500 })
-    await Promise.all([
-      templates.fetch({ page: 1, page_size: 100, active: true }),
-      peticoes.fetch({ page: 1, page_size: itemsPerPage.value }),
-    ])
+  // percorre os campos do template e preenche se vazio
+  for (const f of fields.value) {
+    const current = form.context[f.name];
+    if (!isEmpty(current)) continue;
+    const v = valueFromSources(c!, acc, f.name);
+    if (v === undefined || v === null || v === "") continue;
+    if (f.type === "bool") {
+      form.context[f.name] = Boolean(v);
+    } else if (f.type === "int") {
+      const n = Number(v);
+      if (!Number.isNaN(n)) form.context[f.name] = n;
+    } else {
+      form.context[f.name] = String(v);
+    }
   }
+}
 
-  onMounted(loadAll)
+async function openCreate() {
+  editing.value = null;
+  form.cliente = null;
+  form.template = null;
+  form.context = {};
+  fields.value = [];
+  syntaxInfo.value = "";
+  if ((clientes.items as Cliente[]).length === 0) {
+    await clientes.fetchList({});
+  }
+  dialogUpsert.value = true;
+}
+
+function openEdit(p: Petition) {
+  editing.value = p;
+  form.cliente = Number(p.cliente) || null;
+  form.template = Number(p.template) || null;
+  form.context = { ...p.context };
+  dialogUpsert.value = true;
+  ensureClientInCache(p.cliente);
+  // também podemos pré-carregar contas para o cliente já selecionado
+  if (p.cliente) contas.fetchForCliente(Number(p.cliente)).catch(() => {});
+  loadFieldsForTemplate(p.template || null, true);
+}
+
+async function saveUpsert() {
+  try {
+    if (!form.cliente) throw new Error("Selecione o cliente.");
+    if (!form.template) throw new Error("Selecione o template.");
+
+    const payload = {
+      cliente: Number(form.cliente),
+      template: Number(form.template),
+      context: form.context || {},
+    };
+
+    await (editing.value
+      ? peticoes.update(editing.value.id, payload)
+      : peticoes.create(payload));
+    dialogUpsert.value = false;
+  } catch (error_: any) {
+    peticoes.error =
+      error_?.response?.data?.detail ||
+      error_?.message ||
+      "Erro ao salvar petição.";
+  }
+}
+
+async function removePetition(p: Petition) {
+  if (!confirm("Excluir esta petição?")) return;
+  try {
+    await peticoes.remove(p.id);
+  } catch (error_: any) {
+    peticoes.error =
+      error_?.response?.data?.detail || "Não foi possível excluir.";
+  }
+}
+
+// ===== render =====
+const dialogRender = ref(false);
+const rendering = ref(false);
+const renderItem = ref<Petition | null>(null);
+const renderFilename = ref("");
+
+async function openRender(p: Petition) {
+  try {
+    await loadFieldsForTemplate(p.template, false);
+    if (syntaxInfo.value && syntaxInfo.value.toLowerCase().includes("angle"))
+      return;
+    renderItem.value = p;
+    renderFilename.value = `peticao_${p.id}.docx`;
+    dialogRender.value = true;
+  } catch (error_: any) {
+    peticoes.error =
+      error_?.response?.data?.detail ||
+      error_?.message ||
+      "Não foi possível abrir geração.";
+  }
+}
+
+async function doRender() {
+  if (!renderItem.value) return;
+  rendering.value = true;
+  try {
+    const result = await peticoes.render(renderItem.value.id, {
+      filename: renderFilename.value.trim() || undefined,
+      strict: true,
+    });
+    peticoes.downloadRendered(result);
+    dialogRender.value = false;
+  } catch {
+    // erro já populado
+  } finally {
+    rendering.value = false;
+  }
+}
+
+// ===== carregamento inicial =====
+const loading = computed(() => peticoes.loading);
+const error = computed(() => peticoes.error || templates.lastError);
+const items = computed(() => peticoes.items);
+
+async function loadAll() {
+  await clientes.fetchList({});
+  await Promise.all([templates.fetch({ active: true }), peticoes.fetch({})]);
+}
+
+onMounted(loadAll);
 </script>
 
 <template>
   <v-container fluid>
     <!-- Header -->
-    <v-card class="rounded-xl mb-4" elevation="2">
+    <v-card class="rounded mb-4" elevation="2">
       <v-card-title class="d-flex align-center">
         <div>
           <div class="text-subtitle-1">Petições</div>
@@ -612,30 +618,31 @@
           color="primary"
           prepend-icon="mdi-file-document-plus"
           @click="openCreate"
-        >Nova petição</v-btn>
+          >Nova petição</v-btn
+        >
       </v-card-title>
     </v-card>
 
     <!-- Lista -->
-    <v-card class="rounded-xl" elevation="2">
+    <v-card class="rounded" elevation="2">
       <v-card-title class="d-flex align-center">
-        <v-text-field
-          v-model="search"
-          clearable
-          density="comfortable"
-          hide-details
-          label="Buscar"
-          prepend-inner-icon="mdi-magnify"
-          style="max-width: 320px"
-        />
+        <v-responsive max-width="300px" class="mx-2">
+          <v-text-field
+            v-model="search"
+            clearable
+            density="compact"
+            variant="outlined"
+            hide-details
+            label="Buscar"
+            prepend-inner-icon="mdi-magnify"
+          />
+        </v-responsive>
       </v-card-title>
       <v-card-text>
         <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
           {{ error }}
         </v-alert>
         <v-data-table
-          v-model:items-per-page="itemsPerPage"
-          v-model:page="page"
           v-model:sort-by="sortBy"
           class="rounded-lg"
           :headers="headers"
@@ -762,7 +769,8 @@
                 >
                   O template selecionado ainda possui marcadores
                   <code>&lt;&lt; &gt;&gt;</code>. Atualize para Jinja
-                  <code>{{ "{" }}{{ "}" }}</code>.
+                  <code>{{ "{" }}{{ "}" }}</code
+                  >.
                 </v-alert>
 
                 <v-skeleton-loader v-if="fieldsLoading" type="article" />
@@ -834,11 +842,9 @@
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="dialogRender = false">Cancelar</v-btn>
-          <v-btn
-            color="primary"
-            :loading="rendering"
-            @click="doRender"
-          >Gerar & baixar</v-btn>
+          <v-btn color="primary" :loading="rendering" @click="doRender"
+            >Gerar & baixar</v-btn
+          >
         </v-card-actions>
       </v-card>
     </v-dialog>

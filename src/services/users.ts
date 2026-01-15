@@ -10,21 +10,12 @@ export type User = {
   is_active: boolean
 }
 
-export type Paginated<T> = {
-  count: number
-  next: string | null
-  previous: string | null
-  results: T[]
-}
-
 export async function listUsers (params: {
-  page?: number
-  page_size?: number
   search?: string
   ordering?: string
 }) {
-  const { data } = await api.get<Paginated<User>>('/api/accounts/users/', { params })
-  return data
+  const { data } = await api.get<User[]>('/api/accounts/users/', { params })
+  return Array.isArray(data) ? data : []
 }
 
 export async function createUser (payload: User & { password: string }) {

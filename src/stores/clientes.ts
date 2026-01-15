@@ -30,6 +30,9 @@ export type Cliente = {
   cep?: string | null
   uf?: string | null
 
+  // Status
+  is_active?: boolean
+
   // Auditoria
   criado_em?: string
   atualizado_em?: string
@@ -69,16 +72,7 @@ export type Representante = {
   atualizado_em?: string
 }
 
-export type Paginated<T> = {
-  count: number
-  next: string | null
-  previous: string | null
-  results: T[]
-}
-
 type ListParams = {
-  page?: number
-  page_size?: number
   search?: string
   ordering?: string // ex.: 'nome_completo' ou '-criado_em'
 }
@@ -120,17 +114,14 @@ const REPS_BASE = '/api/cadastro/representantes/'
 export const useClientesStore = defineStore('clientes', {
   state: () => ({
     items: [] as Cliente[],
-    count: 0,
     loading: false,
     error: '' as string,
 
-    // filtros/paginação padrão (server-side)
+    // filtros padrão (server-side)
     params: {
-      page: 1,
-      page_size: 10,
       search: '',
       ordering: 'nome_completo',
-    } as Required<Pick<ListParams, 'page' | 'page_size' | 'search' | 'ordering'>>,
+    } as Required<Pick<ListParams, 'search' | 'ordering'>>,
 
     // ---------- Representantes por cliente ----------
     representantesByCliente: {} as Record<number, Representante[]>,
@@ -154,7 +145,7 @@ export const useClientesStore = defineStore('clientes', {
     },
 
     resetParams () {
-      this.params = { page: 1, page_size: 10, search: '', ordering: 'nome_completo' }
+      this.params = { search: '', ordering: 'nome_completo' }
     },
 
     // ========= Clientes: CRUD =========
@@ -163,13 +154,10 @@ export const useClientesStore = defineStore('clientes', {
       this.error = ''
       try {
         const params = { ...this.params, ...overrides }
-        const { data } = await api.get<Paginated<Cliente>>(BASE, { params })
-        this.items = data.results
-        this.count = data.count
+        const { data } = await api.get<Cliente[]>(BASE, { params })
+        this.items = Array.isArray(data) ? data : []
         // se vier override, sincroniza no estado
         this.params = {
-          page: params.page ?? 1,
-          page_size: params.page_size ?? 10,
           search: params.search ?? '',
           ordering: params.ordering ?? 'nome_completo',
         }
@@ -203,7 +191,6 @@ export const useClientesStore = defineStore('clientes', {
       try {
         const { data } = await api.post<Cliente>(BASE, payload)
         this.items.unshift(data)
-        this.count += 1
         return data
       } catch (error: any) {
         this.error = toMessage(error)
@@ -231,7 +218,6 @@ export const useClientesStore = defineStore('clientes', {
       try {
         await api.delete(`${BASE}${id}/`)
         this.items = this.items.filter(x => x.id !== id)
-        this.count = Math.max(0, this.count - 1)
         // limpa reps cache daquele cliente
         delete this.representantesByCliente[id]
         delete this.repsLoadingByCliente[id]
@@ -250,20 +236,20 @@ export const useClientesStore = defineStore('clientes', {
      */
     async fetchRepresentantes (
       clienteId: number,
-      opts: { force?: boolean, page_size?: number } = {},
+      opts: { force?: boolean } = {},
     ): Promise<Representante[]> {
-      const { force = false, page_size = 200 } = opts
+      const { force = false } = opts
       if (!force && this.representantesByCliente[clienteId]) {
         return this.representantesByCliente[clienteId]
       }
       this.repsLoadingByCliente[clienteId] = true
       this.repsErrorByCliente[clienteId] = ''
       try {
-        const { data } = await api.get<Paginated<Representante>>(REPS_BASE, {
-          params: { cliente: clienteId, page: 1, page_size },
+        const { data } = await api.get<Representante[]>(REPS_BASE, {
+          params: { cliente: clienteId },
         })
-        this.representantesByCliente[clienteId] = data.results
-        return data.results
+        this.representantesByCliente[clienteId] = Array.isArray(data) ? data : []
+        return this.representantesByCliente[clienteId]
       } catch (error: any) {
         this.repsErrorByCliente[clienteId] = toMessage(error)
         throw error

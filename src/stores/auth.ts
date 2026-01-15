@@ -3,7 +3,7 @@ import axios from "axios";
 import { defineStore } from "pinia";
 
 // ===== Types =====
-type Tokens = { access: string; refresh: string };
+type Tokens = { accessToken: string; refreshToken: string };
 
 const BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || "http://192.168.0.250:8000";
@@ -42,6 +42,7 @@ export const useAuthStore = defineStore("auth", {
   // Persistência (pinia-plugin-persistedstate)
   // Dica: se seu projeto não tiver a tipagem do plugin, o "as any" evita ruído de TS
   persist: {
+    key: 'auth',
     storage: localStorage,
     paths: ["accessToken", "refreshToken", "username", "lastActiveAt"],
   } as any,
@@ -67,24 +68,114 @@ export const useAuthStore = defineStore("auth", {
 
     touchActivity() {
       this.lastActiveAt = Date.now();
+      // Atualiza o lastActiveAt no localStorage também
+      try {
+        const stored = localStorage.getItem('auth');
+        const currentData = stored ? JSON.parse(stored) : {};
+        currentData.lastActiveAt = this.lastActiveAt;
+        localStorage.setItem('auth', JSON.stringify(currentData));
+      } catch (e) {
+        // Ignora erros de localStorage
+      }
     },
 
     async bootstrap() {
       try {
+        // Verifica diretamente no localStorage se há tokens salvos
+        // O pinia-plugin-persistedstate usa a chave 'auth' (definida acima)
+        let storedData: any = null;
+        try {
+          const stored = localStorage.getItem('auth');
+          if (stored) {
+            storedData = JSON.parse(stored);
+          }
+        } catch {
+          // localStorage pode estar vazio ou corrompido
+        }
+
+        // Se não há tokens no localStorage E no estado atual, não precisa validar
+        const hasAccessToken = storedData?.accessToken || this.accessToken;
+        const hasRefreshToken = storedData?.refreshToken || this.refreshToken;
+        const lastActive = storedData?.lastActiveAt || this.lastActiveAt;
+
+        if (!hasAccessToken && !hasRefreshToken) {
+          this.initialized = true;
+          return;
+        }
+
+        // Restaura valores do localStorage se o plugin ainda não restaurou
+        if (storedData) {
+          if (storedData.accessToken && !this.accessToken) {
+            this.accessToken = storedData.accessToken;
+          }
+          if (storedData.refreshToken && !this.refreshToken) {
+            this.refreshToken = storedData.refreshToken;
+          }
+          if (storedData.username && !this.username) {
+            this.username = storedData.username;
+          }
+          if (storedData.lastActiveAt && !this.lastActiveAt) {
+            this.lastActiveAt = storedData.lastActiveAt;
+          }
+        }
+
         // corta sessão se inativo por > 24h
-        if (this.lastActiveAt && Date.now() - this.lastActiveAt > IDLE_MAX_MS) {
+        if (lastActive && Date.now() - lastActive > IDLE_MAX_MS) {
           await this.logout();
           return;
         }
-        // tenta renovar access se necessário
-        if (this.refreshToken) {
+
+        // Valida o token atual fazendo uma chamada ao servidor
+        if (this.accessToken) {
           try {
-            await this.refreshIfNeeded();
+            // Verifica se o token ainda é válido no servidor
+            await authClient.get("/api/auth/me/", {
+              headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+              },
+            });
+            // Token válido, agenda refresh se necessário
+            this._scheduleRefresh();
+          } catch (error: any) {
+            // Token inválido ou expirado, tenta fazer refresh
+            if (this.refreshToken) {
+              try {
+                await this.refresh();
+                // Após refresh bem-sucedido, valida novamente
+                await authClient.get("/api/auth/me/", {
+                  headers: {
+                    Authorization: `Bearer ${this.accessToken}`,
+                  },
+                });
+                this._scheduleRefresh();
+              } catch {
+                // Refresh falhou, limpa a sessão
+                await this.logout();
+                return;
+              }
+            } else {
+              // Sem refresh token, limpa a sessão
+              await this.logout();
+              return;
+            }
+          }
+        } else if (this.refreshToken) {
+          // Tem refresh token mas não tem access token, tenta renovar
+          try {
+            await this.refresh();
+            // Após refresh, valida o novo token
+            await authClient.get("/api/auth/me/", {
+              headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+              },
+            });
+            this._scheduleRefresh();
           } catch {
-            // silencioso: o interceptor lidará com 401 depois
+            // Refresh falhou, limpa a sessão
+            await this.logout();
+            return;
           }
         }
-        this._scheduleRefresh();
 
         // listeners de atividade (para resetar o relógio de 24h)
         const onActivity = () => this.touchActivity();
@@ -102,14 +193,30 @@ export const useAuthStore = defineStore("auth", {
     },
 
     async login(username: string, password: string) {
-      const { data } = await authClient.post<Tokens>("/api/auth/login/", {
+      const { data } = await authClient.post<{ accessToken: string; refreshToken: string }>("/api/auth/login/", {
         username,
         password,
       });
-      this.accessToken = data.access;
-      this.refreshToken = data.refresh;
+      // Atribui os valores - o plugin de persistência salvará automaticamente
+      this.accessToken = data.accessToken;
+      this.refreshToken = data.refreshToken;
       this.username = username;
       this.touchActivity();
+      
+      // Força o salvamento no localStorage garantindo que os dados sejam persistidos
+      // O plugin salva automaticamente, mas garantimos aqui também
+      try {
+        const dataToSave = {
+          accessToken: this.accessToken,
+          refreshToken: this.refreshToken,
+          username: this.username,
+          lastActiveAt: this.lastActiveAt,
+        };
+        localStorage.setItem('auth', JSON.stringify(dataToSave));
+      } catch (e) {
+        console.warn('Erro ao salvar no localStorage:', e);
+      }
+      
       this._scheduleRefresh();
     },
 
@@ -136,11 +243,23 @@ export const useAuthStore = defineStore("auth", {
       }
 
       this._refreshPromise = (async () => {
-        const { data } = await authClient.post<{ access: string }>(
+        const { data } = await authClient.post<{ accessToken: string }>(
           "/api/auth/refresh/",
           { refresh: this.refreshToken }
         );
-        this.accessToken = data.access;
+        // Atualiza o accessToken - o plugin de persistência salvará automaticamente
+        this.accessToken = data.accessToken;
+        
+        // Força o salvamento no localStorage
+        try {
+          const stored = localStorage.getItem('auth');
+          const currentData = stored ? JSON.parse(stored) : {};
+          currentData.accessToken = this.accessToken;
+          localStorage.setItem('auth', JSON.stringify(currentData));
+        } catch (e) {
+          console.warn('Erro ao salvar refresh no localStorage:', e);
+        }
+        
         this._scheduleRefresh();
       })();
 

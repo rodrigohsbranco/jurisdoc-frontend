@@ -48,9 +48,9 @@
         date_to: filters.date_to,
       }),
       rel.fetchDataQuality(),
-      // carregar alguns templates p/ selects (seu store suporta active: true)
+      // carregar templates p/ selects (seu store suporta active: true)
       templates
-        .fetch?.({ page: 1, page_size: 100, active: true })
+        .fetch?.({ active: true })
         .catch(() => {}),
     ])
   }
@@ -120,7 +120,7 @@
 <template>
   <v-container fluid>
     <!-- Header / Filtros -->
-    <v-card class="rounded-xl mb-4" elevation="2">
+    <v-card class="rounded mb-4" elevation="2">
       <v-card-title class="d-flex align-center">
         <div>
           <div class="text-subtitle-1">Relatórios</div>
@@ -148,16 +148,17 @@
           <v-col cols="12" sm="3">
             <v-select
               v-model="filters.bucket"
-              density="comfortable"
+              density="compact"
               hide-details
               :items="bucketItems"
               label="Agrupar por"
+              class="h-100"
             />
           </v-col>
           <v-col cols="12" sm="3">
             <v-text-field
               v-model="filters.date_from"
-              density="comfortable"
+              density="compact"
               hide-details
               label="Início"
               type="date"
@@ -166,7 +167,7 @@
           <v-col cols="12" sm="3">
             <v-text-field
               v-model="filters.date_to"
-              density="comfortable"
+              density="compact"
               hide-details
               label="Fim"
               type="date"
@@ -177,6 +178,7 @@
               block
               color="secondary"
               @click="doRefresh"
+              class="h-100"
             >Aplicar filtros</v-btn>
           </v-col>
         </v-row>
@@ -190,7 +192,7 @@
     <!-- KPIs -->
     <v-row class="mb-4" dense>
       <v-col cols="12" sm="4">
-        <v-card class="rounded-xl" elevation="2">
+        <v-card class="rounded" elevation="2">
           <v-card-item>
             <div class="d-flex align-center justify-space-between">
               <div>
@@ -211,7 +213,7 @@
       </v-col>
 
       <v-col cols="12" sm="4">
-        <v-card class="rounded-xl" elevation="2">
+        <v-card class="rounded" elevation="2">
           <v-card-item>
             <div class="d-flex align-center justify-space-between">
               <div>
@@ -234,7 +236,7 @@
       </v-col>
 
       <v-col cols="12" sm="4">
-        <v-card class="rounded-xl" elevation="2">
+        <v-card class="rounded" elevation="2">
           <v-card-item>
             <div class="d-flex align-center justify-space-between">
               <div>
@@ -258,7 +260,7 @@
     </v-row>
 
     <!-- Tabs -->
-    <v-card class="rounded-xl" elevation="2">
+    <v-card class="rounded" elevation="2">
       <v-tabs v-model="tab" bg-color="transparent" slider-color="primary">
         <v-tab value="overview"><v-icon icon="mdi-chart-line" start /> Visão Geral</v-tab>
         <v-tab value="templates"><v-icon icon="mdi-file-word" start /> Templates</v-tab>
@@ -330,7 +332,7 @@
             <v-skeleton-loader v-if="rel.loading.quality" type="card" />
             <v-row v-else dense>
               <v-col cols="12" md="3" sm="6">
-                <v-card class="rounded-xl" elevation="1">
+                <v-card class="rounded" elevation="1">
                   <v-card-item>
                     <div class="text-caption text-medium-emphasis">
                       Total de clientes
@@ -342,7 +344,7 @@
                 </v-card>
               </v-col>
               <v-col cols="12" md="3" sm="6">
-                <v-card class="rounded-xl" elevation="1">
+                <v-card class="rounded" elevation="1">
                   <v-card-item>
                     <div class="text-caption text-medium-emphasis">Sem CPF</div>
                     <div class="text-h5 font-weight-bold">
@@ -360,7 +362,7 @@
                 </v-card>
               </v-col>
               <v-col cols="12" md="3" sm="6">
-                <v-card class="rounded-xl" elevation="1">
+                <v-card class="rounded" elevation="1">
                   <v-card-item>
                     <div class="text-caption text-medium-emphasis">
                       Sem endereço completo
@@ -380,7 +382,7 @@
                 </v-card>
               </v-col>
               <v-col cols="12" md="3" sm="6">
-                <v-card class="rounded-xl" elevation="1">
+                <v-card class="rounded" elevation="1">
                   <v-card-item>
                     <div class="text-caption text-medium-emphasis">
                       Com conta principal

@@ -13,8 +13,10 @@
     { title: 'Dashboard', icon: 'mdi-view-dashboard', to: { name: 'dashboard' } },
     { title: 'Usuários', icon: 'mdi-account-cog', to: { name: 'usuarios' } },
     { title: 'Clientes', icon: 'mdi-account-group', to: { name: 'clientes' } },
+    { title: 'Bancos Réus', icon: 'mdi-bank', to: { name: 'conta-reu' } },
     { title: 'Templates', icon: 'mdi-file-word', to: { name: 'templates' } },
     { title: 'Petições', icon: 'mdi-file-document', to: { name: 'peticoes' } },
+    { title: 'Contratos', icon: 'mdi-file-document-edit-outline', to: { name: 'contratos' } },
     { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' } },
   ]
 
@@ -52,12 +54,12 @@
       <!-- Brand -->
       <v-list-item class="py-4">
         <template #prepend>
-          <v-avatar size="40">
+          <v-avatar size="40" class="rounded ml-n2">
             <v-img alt="ALR" cover src="@/assets/logo-alr.jpg" />
           </v-avatar>
         </template>
         <v-list-item-title class="font-weight-bold">
-          Azevedo Lima & Rebonatto
+          <small>Azevedo Lima & Rebonatto</small>
         </v-list-item-title>
       </v-list-item>
 

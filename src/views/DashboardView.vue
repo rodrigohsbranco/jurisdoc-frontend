@@ -11,15 +11,14 @@
 
   // ---------- carregar dados ----------
   async function loadDashboard () {
-    // Clientes: últimos cadastrados (e já nos dá count)
-    await clientes.fetchList({ page: 1, page_size: 5, ordering: '-criado_em' })
+    // Clientes: últimos cadastrados
+    await clientes.fetchList({ ordering: '-criado_em' })
 
-    // Petições: últimas criadas (e já nos dá count)
-    await peticoes.fetch({ page: 1, page_size: 5, ordering: '-created_at' })
+    // Petições: últimas criadas
+    await peticoes.fetch({ ordering: '-created_at' })
 
-    // Templates: só precisamos da contagem
-    // (seu store de templates já existia; usamos page_size=1 p/ economizar)
-    await templates.fetch({ page: 1, page_size: 1 })
+    // Templates
+    await templates.fetch({})
   }
   onMounted(loadDashboard)
 
@@ -28,20 +27,19 @@
     const list = [
       {
         label: 'Clientes',
-        value: clientes.count || 0,
+        value: clientes.items.length || 0,
         icon: 'mdi-account-group',
         color: 'primary',
       },
       {
         label: 'Petições',
-        value: peticoes.count || 0,
+        value: peticoes.items.length || 0,
         icon: 'mdi-file-document',
         color: 'secondary',
       },
       {
         label: 'Templates',
-        // alguns stores não expõem count; caímos no length como fallback
-        value: (templates as any).count ?? templates.items.length ?? 0,
+        value: templates.items.length ?? 0,
         icon: 'mdi-file-word',
         color: 'indigo',
       },
@@ -175,7 +173,7 @@
         sm="6"
       >
         <v-card
-          class="text-white rounded-xl"
+          class="text-white rounded"
           :color="k.color"
           elevation="2"
           variant="flat"
@@ -198,7 +196,7 @@
     <v-row dense>
       <!-- Ações rápidas -->
       <v-col cols="12" md="8">
-        <v-card class="rounded-xl" elevation="2">
+        <v-card class="rounded" elevation="2">
           <v-card-title class="d-flex align-center">
             <v-icon class="mr-2" icon="mdi-flash" /> Ações rápidas
           </v-card-title>
@@ -229,7 +227,7 @@
 
       <!-- Atividade recente -->
       <v-col cols="12" md="4">
-        <v-card class="rounded-xl" elevation="2">
+        <v-card class="rounded" elevation="2">
           <v-card-title class="d-flex align-center">
             <v-icon class="mr-2" icon="mdi-history" /> Atividade recente
           </v-card-title>
