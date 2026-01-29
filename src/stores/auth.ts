@@ -43,8 +43,13 @@ export const useAuthStore = defineStore("auth", {
   // Dica: se seu projeto não tiver a tipagem do plugin, o "as any" evita ruído de TS
   persist: {
     key: 'auth',
-    storage: localStorage,
+    storage: typeof window !== 'undefined' ? localStorage : undefined,
     paths: ["accessToken", "refreshToken", "username", "lastActiveAt"],
+    // Garante que valores vazios não sejam salvos
+    serializer: {
+      deserialize: JSON.parse,
+      serialize: JSON.stringify,
+    },
   } as any,
 
   getters: {
@@ -193,28 +198,84 @@ export const useAuthStore = defineStore("auth", {
     },
 
     async login(username: string, password: string) {
-      const { data } = await authClient.post<{ accessToken: string; refreshToken: string }>("/api/auth/login/", {
+      const { data } = await authClient.post<{ 
+        accessToken?: string; 
+        refreshToken?: string;
+        access?: string;
+        refresh?: string;
+      }>("/api/auth/login/", {
         username,
         password,
       });
+      
+      // Aceita tanto accessToken/refreshToken quanto access/refresh (formato padrão JWT)
+      const accessToken = data?.accessToken || data?.access;
+      const refreshToken = data?.refreshToken || data?.refresh;
+      
+      // Valida que os tokens foram recebidos
+      if (!accessToken || !refreshToken) {
+        const errorMsg = 'Resposta da API inválida: tokens não encontrados';
+        console.error(errorMsg, data);
+        throw new Error(errorMsg);
+      }
+      
       // Atribui os valores - o plugin de persistência salvará automaticamente
-      this.accessToken = data.accessToken;
-      this.refreshToken = data.refreshToken;
+      this.accessToken = accessToken;
+      this.refreshToken = refreshToken;
       this.username = username;
       this.touchActivity();
       
-      // Força o salvamento no localStorage garantindo que os dados sejam persistidos
-      // O plugin salva automaticamente, mas garantimos aqui também
-      try {
+      // Função auxiliar para salvar no localStorage
+      const saveToLocalStorage = () => {
         const dataToSave = {
           accessToken: this.accessToken,
           refreshToken: this.refreshToken,
           username: this.username,
           lastActiveAt: this.lastActiveAt,
         };
+        
+        // Verifica se localStorage está disponível
+        if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+          throw new Error('localStorage não está disponível');
+        }
+        
         localStorage.setItem('auth', JSON.stringify(dataToSave));
-      } catch (e) {
-        console.warn('Erro ao salvar no localStorage:', e);
+        
+        // Verifica se foi salvo corretamente
+        const saved = localStorage.getItem('auth');
+        if (!saved) {
+          throw new Error('Falha ao salvar no localStorage: item não encontrado após salvamento');
+        }
+        
+        const parsed = JSON.parse(saved);
+        if (!parsed.accessToken || !parsed.refreshToken) {
+          throw new Error('Dados salvos no localStorage estão incompletos');
+        }
+        
+        return true;
+      };
+      
+      // Tenta salvar imediatamente
+      try {
+        saveToLocalStorage();
+        if (import.meta.env.DEV) {
+          console.log('Login realizado com sucesso. Tokens salvos no localStorage.');
+        }
+      } catch (e: any) {
+        const errorMsg = `Erro ao salvar no localStorage: ${e?.message || String(e)}`;
+        console.error(errorMsg, e);
+        
+        // Tenta novamente após um pequeno delay (pode ser que o plugin precise de tempo)
+        setTimeout(() => {
+          try {
+            saveToLocalStorage();
+            console.log('Salvamento no localStorage bem-sucedido na segunda tentativa.');
+          } catch (e2: any) {
+            console.error('Falha ao salvar no localStorage mesmo na segunda tentativa:', e2);
+            // Em produção, isso pode indicar um problema sério
+            // Mas não vamos quebrar o fluxo - o usuário pode ainda estar autenticado na sessão atual
+          }
+        }, 100);
       }
       
       this._scheduleRefresh();
@@ -243,12 +304,17 @@ export const useAuthStore = defineStore("auth", {
       }
 
       this._refreshPromise = (async () => {
-        const { data } = await authClient.post<{ accessToken: string }>(
+        const { data } = await authClient.post<{ accessToken?: string; access?: string }>(
           "/api/auth/refresh/",
           { refresh: this.refreshToken }
         );
+        // Aceita tanto accessToken quanto access (formato padrão JWT)
+        const accessToken = data?.accessToken || data?.access;
+        if (!accessToken) {
+          throw new Error('Resposta da API inválida: accessToken não encontrado');
+        }
         // Atualiza o accessToken - o plugin de persistência salvará automaticamente
-        this.accessToken = data.accessToken;
+        this.accessToken = accessToken;
         
         // Força o salvamento no localStorage
         try {

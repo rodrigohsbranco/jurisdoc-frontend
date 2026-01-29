@@ -50,6 +50,27 @@
     loading.value = true
     try {
       await auth.login(normalizeUser(username.value), password.value)
+      
+      // Verifica se o login foi realmente bem-sucedido
+      if (!auth.isAuthenticated) {
+        throw new Error('Login falhou: autenticação não foi estabelecida')
+      }
+      
+      // Verifica se os tokens foram salvos no localStorage
+      try {
+        const stored = localStorage.getItem('auth')
+        if (!stored) {
+          throw new Error('Tokens não foram salvos no localStorage')
+        }
+        const parsed = JSON.parse(stored)
+        if (!parsed.accessToken || !parsed.refreshToken) {
+          throw new Error('Tokens incompletos no localStorage')
+        }
+      } catch (e: any) {
+        console.error('Erro ao verificar localStorage após login:', e)
+        throw new Error('Falha ao salvar sessão. Tente novamente.')
+      }
+      
       const redirect = (route.query.redirect as string) || '/'
       router.replace(redirect)
     } catch (error_: any) {
