@@ -16,11 +16,7 @@
     { title: 'Bancos Réus', icon: 'mdi-bank', to: { name: 'conta-reu' } },
     { title: 'Templates', icon: 'mdi-file-word', to: { name: 'templates' } },
     { title: 'Petições', icon: 'mdi-file-document', to: { name: 'peticoes' } },
-<<<<<<< HEAD
-    { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contracts' } },
-=======
     { title: 'Contratos', icon: 'mdi-file-document-edit-outline', to: { name: 'contratos' } },
->>>>>>> df74a0a9eb79fd2839694247f0493ee24901299e
     { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' } },
   ]
 

@@ -1,4 +1,3 @@
-divdiv
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -25,16 +24,6 @@ const bankItems = ref<{ label: string; code?: string; ispb?: string }[]>([]);
 const bankSearch = ref("");
 const bankLoading = ref(false);
 
-<<<<<<< HEAD
-  // === Identificador do banco escolhido (ISPB preferido; ou COMPE/slug) ===
-  const bankIspb = ref<string>('') // chave para backend (banco_id)
-  const CUSTOM_BANKS = [
-    { label: 'DEPÓSITO DIRETO NO CARTÃO', ispb: 'CARD-DEP' },
-    // 👇 Adicione seus extras aqui (use um ID curto, <=32, estável)
-    { label: 'BANCO OLE BONSUCESSO CONSIGNADO S.A.', ispb: 'CARD-OLE' },
-  // { label: 'AGIPLAN S.A.', ispb: 'CARD-AGI' },
-  ] as const
-=======
 // === Identificador do banco escolhido (ISPB preferido; ou COMPE/slug) ===
 const bankIspb = ref<string>(""); // chave para backend (banco_id)
 const CUSTOM_BANKS = [
@@ -43,7 +32,6 @@ const CUSTOM_BANKS = [
   { label: "BANCO OLE BONSUCESSO CONSIGNADO S.A.", ispb: "CARD-OLE" },
   // { label: 'AGIPLAN S.A.', ispb: 'CARD-AGI' },
 ] as const;
->>>>>>> df74a0a9eb79fd2839694247f0493ee24901299e
 
 // === Variações de descrição por banco (no servidor) ===
 const bankNotes = ref<BankDescricao[]>([]);
@@ -134,7 +122,7 @@ function extractCompeFromLabel(label: string): string {
 }
 
 function ensureCustomBanks(
-  list: { label: string; code?: string; ispb?: string }[]
+  list: { label: string; code?: string; ispb?: string }[],
 ) {
   // unshift na ordem inversa para manter a ordem definida acima no topo
   for (const cb of [...CUSTOM_BANKS].reverse()) {
@@ -166,12 +154,12 @@ async function refreshNotes() {
   const list = await contas.listDescricoes(bankIspb.value);
   bankNotes.value = list;
   const ativa = list.find((n) => n.is_ativa);
-  selectedNoteId.value = ativa ? ativa.id : list[0]?.id ?? null;
+  selectedNoteId.value = ativa ? ativa.id : (list[0]?.id ?? null);
 }
 
 // dispara ao trocar o banco no combobox
 async function onBankChange(val: any) {
-  const label = typeof val === "string" ? val : val?.label ?? "";
+  const label = typeof val === "string" ? val : (val?.label ?? "");
   // limpa estado
   bankIspb.value = "";
   bankNotes.value = [];
@@ -179,22 +167,9 @@ async function onBankChange(val: any) {
 
   if (!label) return;
 
-<<<<<<< HEAD
-  function ensureCustomBanks (
-    list: { label: string, code?: string, ispb?: string }[],
-  ) {
-    // unshift na ordem inversa para manter a ordem definida acima no topo
-    for (const cb of [...CUSTOM_BANKS].reverse()) {
-      if (!list.some(i => i.label === cb.label)) {
-        list.unshift({ label: cb.label, ispb: cb.ispb })
-      }
-    }
-  }
-=======
   await loadBankCatalog(); // garante catálogo em memória quando vindo de "Editar"
   const meta = findBankMetaByLabel(label);
   const compe = meta?.code || extractCompeFromLabel(label);
->>>>>>> df74a0a9eb79fd2839694247f0493ee24901299e
 
   // prioriza ISPB; se não houver, usa COMPE ou o próprio label como slug
   bankIspb.value = meta?.ispb || compe || normalizeBankId(label);
@@ -239,22 +214,6 @@ async function loadBankCatalog() {
   }
 }
 
-<<<<<<< HEAD
-  async function addNote () {
-    const nomeBanco = bankLabel()
-    if (!bankIspb.value || !nomeBanco) return
-    try {
-      await contas.createDescricaoBanco({
-        banco_id: bankIspb.value,
-        banco_nome: nomeBanco,
-        nome_banco: nomeBanco,
-        cnpj: '',
-        endereco: '',
-        is_ativa: false,
-      })
-
-      await refreshNotes()
-=======
 async function addNote() {
   const nomeBanco = bankLabel();
   if (!bankIspb.value || !nomeBanco) return;
@@ -262,12 +221,12 @@ async function addNote() {
     await contas.createDescricaoBanco({
       banco_id: bankIspb.value,
       banco_nome: nomeBanco,
-      descricao: "",
+      nome_banco: nomeBanco, // sugiro iniciar igual ao nome do banco selecionado
+      cnpj: "",
+      endereco: "",
       is_ativa: false,
     });
     await refreshNotes();
->>>>>>> df74a0a9eb79fd2839694247f0493ee24901299e
-    // não altera a ativa automaticamente — usuário decide com o radio
   } catch {
     /* erro já vai para store.error */
   }
@@ -284,25 +243,15 @@ async function setActiveNote(id: number | null) {
   }
 }
 
-<<<<<<< HEAD
-  async function updateNoteText (note: BankDescricao) {
-    try {
-      await contas.updateDescricaoBanco(note.id, {
-        nome_banco: note.nome_banco,
-        cnpj: note.cnpj,
-        endereco: note.endereco,
-      })
-    } catch {
-    /* erro já tratado na store */
-    }
-=======
 async function updateNoteText(note: BankDescricao) {
   try {
-    await contas.updateDescricaoBanco(note.id, { descricao: note.descricao });
-    // cache já é atualizado via listDescricoes no store; aqui mantemos responsivo
+    await contas.updateDescricaoBanco(note.id, {
+      nome_banco: note.nome_banco,
+      cnpj: note.cnpj,
+      endereco: note.endereco,
+    });
   } catch {
     /* erro já vai para store.error */
->>>>>>> df74a0a9eb79fd2839694247f0493ee24901299e
   }
 }
 
@@ -360,7 +309,7 @@ async function remove(acc: ContaBancaria) {
     !confirm(
       `Excluir a conta ${acc.banco_nome} (${acc.agencia}/${acc.conta}${
         acc.digito ? "-" + acc.digito : ""
-      })?`
+      })?`,
     )
   )
     return;
@@ -728,7 +677,7 @@ watch(() => route.params.id, load);
                                 try {
                                   await contas.removeDescricaoBanco(
                                     note.id,
-                                    note.banco_id
+                                    note.banco_id,
                                   );
                                   await refreshNotes(); // 🔹 força atualização imediata do estado local
                                 } catch (e) {
