@@ -34,7 +34,9 @@ export type BankDescricao = {
   id: number
   banco_id: string
   banco_nome: string
-  descricao: string
+  nome_banco: string
+  cnpj: string
+  endereco: string
   is_ativa: boolean
   criado_em?: string
   atualizado_em?: string
@@ -59,6 +61,29 @@ function toMessage (e: any): string {
     }
   }
   return 'Ocorreu um erro. Tente novamente.'
+}
+
+function formatDescricaoBanco (d?: BankDescricao | null): string | null {
+  if (!d) {
+    return null
+  }
+
+  const nome = d.nome_banco || d.banco_nome || ''
+  const cnpj = d.cnpj || ''
+  const endereco = d.endereco || ''
+
+  const parts: string[] = []
+  if (nome) {
+    parts.push(nome)
+  }
+  if (cnpj) {
+    parts.push(`CNPJ: ${cnpj}`)
+  }
+  if (endereco) {
+    parts.push(endereco)
+  }
+
+  return parts.length > 0 ? parts.join(' — ') : null
 }
 
 export const useContasStore = defineStore('contas', {
@@ -89,6 +114,7 @@ export const useContasStore = defineStore('contas', {
       }
       return m
     },
+
   },
   actions: {
     setCliente (id: number) {
@@ -122,14 +148,16 @@ export const useContasStore = defineStore('contas', {
             const cached = this.notesByBank[bankId]
             if (cached) {
               const ativa = cached.find(d => d.is_ativa)
-              conta.descricao_ativa = ativa ? ativa.descricao : null
+              conta.descricao_ativa = formatDescricaoBanco(ativa)
+
               continue
             }
             // 2) sem cache → carrega variações por banco_id
             try {
               const list = await this.listDescricoes(bankId)
               const ativa = list.find(d => d.is_ativa)
-              conta.descricao_ativa = ativa ? ativa.descricao : null
+              conta.descricao_ativa = formatDescricaoBanco(ativa)
+
               continue
             } catch {
               // segue para fallback por nome
@@ -137,9 +165,10 @@ export const useContasStore = defineStore('contas', {
           }
 
           // Fallback: não há banco_id → tenta lookup por nome
+          // Fallback: não há banco_id → tenta lookup por nome
           try {
             const found = await this.lookupDescricaoBanco({ banco_nome: conta.banco_nome })
-            conta.descricao_ativa = found?.descricao ?? null
+            conta.descricao_ativa = formatDescricaoBanco(found)
           } catch {
             conta.descricao_ativa = null
           }
@@ -258,7 +287,7 @@ export const useContasStore = defineStore('contas', {
      * ela é marcada ativa e as demais são desativadas pelo backend.
      * Após criar, refaz o cache via listDescricoes().
      */
-    async createDescricaoBanco (payload: { banco_id: string, banco_nome: string, descricao: string, is_ativa?: boolean }) {
+    async createDescricaoBanco (payload: { banco_id: string, banco_nome: string, nome_banco: string, cnpj: string, endereco: string, is_ativa?: boolean }) {
       this.error = ''
       try {
         const { data } = await api.post<BankDescricao>(NOTES_BASE, payload)
@@ -274,7 +303,7 @@ export const useContasStore = defineStore('contas', {
      * Edita uma descrição existente. Se is_ativa=true, torna-a ativa e
      * desativa as demais. Atualiza o cache em seguida.
      */
-    async updateDescricaoBanco (id: number, payload: Partial<Pick<BankDescricao, 'descricao' | 'is_ativa'>>) {
+    async updateDescricaoBanco (id: number, payload: Partial<Pick<BankDescricao, 'nome_banco' | 'cnpj' | 'endereco' | 'is_ativa'>>) {
       this.error = ''
       try {
         const { data } = await api.patch<BankDescricao>(`${NOTES_BASE}${id}/`, payload)
@@ -306,8 +335,18 @@ export const useContasStore = defineStore('contas', {
      * Mantida por compatibilidade, mas agora cria uma nova variação e define como ativa.
      * Use createDescricaoBanco/updateDescricaoBanco/setDescricaoAtiva nos fluxos novos.
      */
-    async upsertDescricaoBanco (payload: { banco_id: string, banco_nome: string, descricao: string }) {
+    async upsertDescricaoBanco (payload: { banco_id: string, banco_nome: string, nome_banco: string, cnpj: string, endereco: string }) {
       return this.createDescricaoBanco({ ...payload, is_ativa: true })
+    },
+    async removeDescricaoBanco (id: number, banco_id: string) {
+      this.error = ''
+      try {
+        await api.delete(`${NOTES_BASE}${id}/`)
+        await this.listDescricoes(banco_id)
+      } catch (error: any) {
+        this.error = toMessage(error)
+        throw error
+      }
     },
   },
 })

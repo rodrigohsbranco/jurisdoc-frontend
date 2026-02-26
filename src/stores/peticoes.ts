@@ -7,7 +7,11 @@ export interface Petition {
   id: number
   cliente: number // FK id
   template: number // FK id
-  context: Record<string, any>
+  context: Record<string, any> & {
+    nome_banco?: string
+    cnpj?: string
+    endereco_banco?: string
+  }
   created_at: string
   updated_at: string | null
   cliente_nome?: string | null // vem do serializer
@@ -17,13 +21,21 @@ export interface Petition {
 export interface CreatePetitionPayload {
   cliente: number
   template: number
-  context?: Record<string, any>
+  context?: Record<string, any> & {
+    nome_banco?: string
+    cnpj?: string
+    endereco_banco?: string
+  }
 }
 
 export interface UpdatePetitionPayload {
   cliente?: number
   template?: number
-  context?: Record<string, any>
+  context?: Record<string, any> & {
+    nome_banco?: string
+    cnpj?: string
+    endereco_banco?: string
+  }
 }
 
 export interface ListParams {
@@ -44,7 +56,7 @@ export interface Paginated<T> {
 
 export interface RenderOptions {
   filename?: string
-  context_override?: Record<string, any> // pode incluir "banco"
+  context_override?: Record<string, any> // sobrescreve variáveis do template
   strict?: boolean // default true no backend
 }
 
@@ -113,14 +125,8 @@ export const usePeticoesStore = defineStore('peticoes', {
       this.error = null
       try {
         const res = await api.get<Paginated<Petition>>('/api/petitions/', {
-          params: buildQuery({
-            page: params.page ?? 1,
-            page_size: params.page_size ?? 10,
-            search: params.search,
-            ordering: params.ordering,
-            cliente: params.cliente,
-            template: params.template,
-          }),
+          params: buildQuery(params as Record<string, unknown>),
+
         })
         this.items = res.data.results.map(p => normalize(p))
         this.count = res.data.count
@@ -220,14 +226,19 @@ export const usePeticoesStore = defineStore('peticoes', {
       }
     },
 
-    // RENDER (download .docx)
+    // RENDER (gera .docx)
     async render (id: number, opts: RenderOptions = {}): Promise<RenderResult> {
+      this.error = null
       try {
-        const res = await api.post(`/api/petitions/${id}/render/`, {
-          filename: opts.filename,
-          context_override: opts.context_override,
-          strict: opts.strict,
-        }, { responseType: 'blob' })
+        const res = await api.post(
+          `/api/petitions/${id}/render/`,
+          {
+            filename: opts.filename,
+            context_override: opts.context_override ?? {},
+            strict: opts.strict,
+          },
+          { responseType: 'blob' },
+        )
 
         const cd = res.headers['content-disposition'] as string | undefined
         const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'peticao'}.docx`
@@ -235,17 +246,15 @@ export const usePeticoesStore = defineStore('peticoes', {
       } catch (error) {
         const e = error as AxiosError<any>
         if (e.response && e.response.data instanceof Blob) {
+          const txt = await e.response.data.text()
           try {
-            const txt = await (e.response.data as Blob).text()
-            try {
-              const parsed: RenderError = JSON.parse(txt)
-              this.error = parsed.detail
-              console.warn('Campos ausentes:', parsed.missing)
-            } catch {
-              this.error = txt
+            const parsed: RenderError = JSON.parse(txt)
+            this.error = parsed.detail
+            if (parsed.missing?.length) {
+              console.warn('[peticoes] Campos ausentes no template:', parsed.missing)
             }
           } catch {
-            this.error = e.message
+            this.error = txt
           }
         } else {
           this.error = (e.response as any)?.data?.detail || e.message || 'Falha ao renderizar petição'
@@ -254,7 +263,7 @@ export const usePeticoesStore = defineStore('peticoes', {
       }
     },
 
-    // Helper de download
+    // DOWNLOAD (.docx)
     downloadRendered (result: RenderResult): void {
       const url = URL.createObjectURL(result.blob)
       const a = document.createElement('a')

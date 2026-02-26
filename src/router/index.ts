@@ -48,6 +48,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/PetitionsView.vue'),
         meta: { title: 'Petições' },
       },
+      // ✅ NOVA ROTA: Contratos
+      {
+        path: 'contracts',
+        name: 'contracts',
+        component: () => import('../views/ContractsView.vue'),
+        meta: { title: 'Contratos' },
+      },
       { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios' } },
     ],
   },

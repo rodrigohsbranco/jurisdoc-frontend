@@ -82,19 +82,19 @@
     ],
     cidadeuf: ['cidadeuf', 'localidade', 'cidade_uf'],
     // bancário (conta principal)
-    banco: [
-      'banco',
-      'banco_nome',
-      'nomebanco',
-      'bancodesc',
-      'codigo_banco',
-      'codigo_bco',
-      'bancoquerecebe',
-      'banco_que_recebe',
-      'bancodestino',
-      'bancorecebedor',
-      'bancobeneficiario',
-    ],
+    // banco: [
+    //   'banco',
+    //   'banco_nome',
+    //   'nomebanco',
+    //   'bancodesc',
+    //   'codigo_banco',
+    //   'codigo_bco',
+    //   'bancoquerecebe',
+    //   'banco_que_recebe',
+    //   'bancodestino',
+    //   'bancorecebedor',
+    //   'bancobeneficiario',
+    // ],
     agencia: [
       'agencia',
       'ag',
@@ -120,8 +120,23 @@
     // novos sinalizadores do cliente
     incapaz: ['incapaz', 'interditado', 'curatelado', 'tutelado'],
     criancaadolescente: [
-      'criancaadolescente', 'crianca_adolescente', 'menor',
-      'crianca', 'adolescente', 'criancaouadolescente',
+      'criancaadolescente',
+      'crianca_adolescente',
+      'menor',
+      'crianca',
+      'adolescente',
+      'criancaouadolescente',
+    ],
+
+    // novos campos da descrição bancária
+    nome_banco: ['nome_banco', 'nomebanco', 'banco_nome', 'banco'],
+    cnpj: ['cnpj', 'banco_cnpj', 'cnpjbanco'],
+    endereco_banco: [
+      'endereco_banco',
+      'enderecobanco',
+      'banco_endereco',
+      'bancoendereco',
+      'endereco_bco',
     ],
 
     // dados civis
@@ -153,7 +168,11 @@
     if (k.includes('cidadeuf')) return 'cidadeuf'
 
     // novos: criança/adolescente
-    if (k.includes('crianca') || k.includes('adolescente') || k.includes('menor')) {
+    if (
+      k.includes('crianca')
+      || k.includes('adolescente')
+      || k.includes('menor')
+    ) {
       return 'criancaadolescente'
     }
 
@@ -267,8 +286,29 @@
     // 2) campos bancários (conta principal)
     if (acc) {
       switch (canon) {
+        // novos campos da descrição ativa
+        case 'nome_banco': {
+          // se existir a descrição ativa, preferir ela
+          if ((acc as any).descricao_ativa_obj) {
+            return (acc as any).descricao_ativa_obj.nome_banco || ''
+          }
+          // fallback
+          return acc.banco_nome || ''
+        }
+        case 'cnpj': {
+          if ((acc as any).descricao_ativa_obj) {
+            return (acc as any).descricao_ativa_obj.cnpj || ''
+          }
+          return ''
+        }
+        case 'endereco_banco': {
+          if ((acc as any).descricao_ativa_obj) {
+            return (acc as any).descricao_ativa_obj.endereco_banco || ''
+          }
+          return ''
+        }
         case 'banco': {
-          // Agora busca a descrição ativa (se existir) ou o nome do banco
+          // compatibilidade com templates antigos
           return (acc as any).descricao_ativa || acc.banco_nome || ''
         }
         case 'agencia': {
@@ -431,10 +471,13 @@
       if (!cid) return
       ensureClientInCache(Number(cid))
 
-      const c = (clientes.items as Cliente[]).find(x => Number(x.id) === Number(cid))
+      const c = (clientes.items as Cliente[]).find(
+        x => Number(x.id) === Number(cid),
+      )
       if (c) {
         if (form.context.idoso === undefined) form.context.idoso = !!c.se_idoso
-        if (form.context.incapaz === undefined) form.context.incapaz = !!c.se_incapaz
+        if (form.context.incapaz === undefined)
+          form.context.incapaz = !!c.se_incapaz
 
         // cobre tanto camelCase quanto snake_case, caso o template use qualquer um:
         if (form.context.criancaAdolescente === undefined) {

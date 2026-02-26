@@ -1,3 +1,4 @@
+divdiv
 <script setup lang="ts">
   import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
@@ -30,7 +31,7 @@
     { label: 'DEPÓSITO DIRETO NO CARTÃO', ispb: 'CARD-DEP' },
     // 👇 Adicione seus extras aqui (use um ID curto, <=32, estável)
     { label: 'BANCO OLE BONSUCESSO CONSIGNADO S.A.', ispb: 'CARD-OLE' },
-    // { label: 'AGIPLAN S.A.', ispb: 'CARD-AGI' },
+  // { label: 'AGIPLAN S.A.', ispb: 'CARD-AGI' },
   ] as const
 
   // === Variações de descrição por banco (no servidor) ===
@@ -123,7 +124,9 @@
     return m ? m[1] : ''
   }
 
-  function ensureCustomBanks (list: { label: string, code?: string, ispb?: string }[]) {
+  function ensureCustomBanks (
+    list: { label: string, code?: string, ispb?: string }[],
+  ) {
     // unshift na ordem inversa para manter a ordem definida acima no topo
     for (const cb of [...CUSTOM_BANKS].reverse()) {
       if (!list.some(i => i.label === cb.label)) {
@@ -221,9 +224,12 @@
       await contas.createDescricaoBanco({
         banco_id: bankIspb.value,
         banco_nome: nomeBanco,
-        descricao: '',
+        nome_banco: nomeBanco,
+        cnpj: '',
+        endereco: '',
         is_ativa: false,
       })
+
       await refreshNotes()
     // não altera a ativa automaticamente — usuário decide com o radio
     } catch {
@@ -244,10 +250,13 @@
 
   async function updateNoteText (note: BankDescricao) {
     try {
-      await contas.updateDescricaoBanco(note.id, { descricao: note.descricao })
-    // cache já é atualizado via listDescricoes no store; aqui mantemos responsivo
+      await contas.updateDescricaoBanco(note.id, {
+        nome_banco: note.nome_banco,
+        cnpj: note.cnpj,
+        endereco: note.endereco,
+      })
     } catch {
-    /* erro já vai para store.error */
+    /* erro já tratado na store */
     }
   }
 
@@ -619,23 +628,68 @@
                             :value="note.id"
                           />
 
-                          <v-textarea
-                            v-model="note.descricao"
-                            auto-grow
-                            :class="
-                              note.id !== selectedNoteId ? 'opacity-60' : ''
+                          <v-card
+                            class="pa-3 mb-2"
+                            color="secondary"
+                            :variant="note.is_ativa ? 'tonal' : 'outlined'"
+                            width="100%"
+                          >
+                            <v-row dense>
+                              <v-col cols="12" lg="4" md="6">
+                                <v-text-field
+                                  v-model="note.nome_banco"
+                                  :disabled="note.id !== selectedNoteId"
+                                  label="Nome do banco"
+                                  @blur="updateNoteText(note)"
+                                />
+                              </v-col>
+
+                              <v-col cols="12" lg="4" md="6">
+                                <v-text-field
+                                  v-model="note.cnpj"
+                                  :disabled="note.id !== selectedNoteId"
+                                  label="CNPJ"
+                                  @blur="updateNoteText(note)"
+                                />
+                              </v-col>
+
+                              <v-col cols="12" lg="4">
+                                <v-text-field
+                                  v-model="note.endereco"
+                                  :disabled="note.id !== selectedNoteId"
+                                  label="Endereço"
+                                  @blur="updateNoteText(note)"
+                                />
+                              </v-col>
+                            </v-row>
+
+                            <div class="text-caption text-medium-emphasis mt-1">
+                              {{
+                                note.is_ativa
+                                  ? "Esta variação está ativa e será usada por padrão."
+                                  : "Para usar esta variação agora, selecione o rádio ao lado."
+                              }}
+                            </div>
+                          </v-card>
+                          <v-btn
+                            v-if="!note.is_ativa"
+                            color="error"
+                            prepend-icon="mdi-delete"
+                            size="small"
+                            variant="text"
+                            @click="
+                              async () => {
+                                try {
+                                  await contas.removeDescricaoBanco(
+                                    note.id,
+                                    note.banco_id
+                                  );
+                                  await refreshNotes(); // 🔹 força atualização imediata do estado local
+                                } catch (e) {
+                                  // opcional: log/alert
+                                }
+                              }
                             "
-                            :hint="
-                              note.is_ativa
-                                ? 'Esta variação está ativa e será usada por padrão.'
-                                : 'Para usar esta variação agora, selecione o rádio ao lado.'
-                            "
-                            :label="
-                              note.is_ativa ? 'Descrição (ativa)' : 'Descrição'
-                            "
-                            persistent-hint
-                            rows="2"
-                            @blur="updateNoteText(note)"
                           />
                         </div>
                       </v-col>

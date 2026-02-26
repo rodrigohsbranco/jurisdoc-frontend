@@ -76,6 +76,12 @@
       to: { name: 'templates' },
     },
     {
+      label: 'Novo Contrato', // ✅ Novo item
+      icon: 'mdi-file-sign', // Ícone de contrato
+      color: 'teal', // Verde-azulado (diferencia bem)
+      to: { name: 'contracts' }, // Rota já configurada
+    },
+    {
       label: 'Relatórios',
       icon: 'mdi-chart-bar',
       color: 'success',
