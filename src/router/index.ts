@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Contas bancárias' },
       },
       {
+        path: 'conta-reu',
+        name: 'conta-reu',
+        component: () => import('@/views/ContaReuView.vue'),
+        meta: { title: 'Bancos Réus' },
+      },
+      {
         path: 'templates',
         name: 'templates',
         component: () => import('../views/TemplatesView.vue'),
@@ -48,11 +54,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/PetitionsView.vue'),
         meta: { title: 'Petições' },
       },
+<<<<<<< HEAD
       // ✅ NOVA ROTA: Contratos
       {
         path: 'contracts',
         name: 'contracts',
         component: () => import('../views/ContractsView.vue'),
+=======
+      {
+        path: 'contratos',
+        name: 'contratos',
+        component: () => import('../views/ContratosView.vue'),
+>>>>>>> df74a0a9eb79fd2839694247f0493ee24901299e
         meta: { title: 'Contratos' },
       },
       { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios' } },

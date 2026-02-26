@@ -3,6 +3,7 @@ node_modules
 /dist
 
 # local env files
+.env
 .env.local
 .env.*.local
 
@@ -20,3 +21,16 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# TypeScript/Vue generated files
+# Arquivos .js gerados automaticamente (mantém apenas .ts como fonte)
+src/**/*.js
+# Arquivos .d.ts gerados pelo TypeScript (mantém apenas os gerados pelos plugins do Vite)
+src/**/*.d.ts
+!src/auto-imports.d.ts
+!src/components.d.ts
+!src/typed-router.d.ts
+# Arquivos de build info do TypeScript
+*.tsbuildinfo
+# Arquivos .mjs gerados
+vite.config.mjs

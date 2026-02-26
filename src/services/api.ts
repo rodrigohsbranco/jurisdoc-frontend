@@ -1,75 +1,83 @@
-import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
-import axios, { AxiosHeaders } from 'axios'
-import { useAuthStore } from '@/stores/auth'
+import type {
+  AxiosError,
+  AxiosRequestConfig,
+  InternalAxiosRequestConfig,
+} from "axios";
+import axios, { AxiosHeaders } from "axios";
+import { useAuthStore } from "@/stores/auth";
 
-const BASE_URL
-  = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+const BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || "http://192.168.0.250:8000";
 
 const api = axios.create({
   baseURL: BASE_URL,
   withCredentials: false,
-})
+});
 
 // injeta Authorization e tenta refresh se necessário
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
-  const auth = useAuthStore()
+  const auth = useAuthStore();
 
   try {
-    await auth.refreshIfNeeded()
+    await auth.refreshIfNeeded();
   } catch {
     // segue; se der 401, o response interceptor tenta 1x
   }
 
   if (auth?.accessToken) {
     // Garante que headers é uma instância de AxiosHeaders
-    const headers
-      = config.headers instanceof AxiosHeaders
+    const headers =
+      config.headers instanceof AxiosHeaders
         ? config.headers
-        : AxiosHeaders.from((config.headers || {}) as any)
+        : AxiosHeaders.from((config.headers || {}) as any);
 
-    headers.set('Authorization', `Bearer ${auth.accessToken}`)
-    config.headers = headers
+    headers.set("Authorization", `Bearer ${auth.accessToken}`);
+    config.headers = headers;
   }
 
-  return config
-})
+  return config;
+});
 
 // tenta 1x refresh e refaz a request
 api.interceptors.response.use(
-  resp => resp,
+  (resp) => resp,
   async (error: AxiosError) => {
-    const auth = useAuthStore()
+    const auth = useAuthStore();
     const original = error.config as
       | (AxiosRequestConfig & { _retry?: boolean })
-      | undefined
+      | undefined;
 
     if (!error.response || !original) {
-      throw error
+      throw error;
     }
 
-    if (error.response.status === 401 && auth.refreshToken && !original._retry) {
-      original._retry = true
+    if (
+      error.response.status === 401 &&
+      auth.refreshToken &&
+      !original._retry
+    ) {
+      original._retry = true;
       try {
-        await auth.refresh()
+        await auth.refresh();
 
         // Normaliza headers como AxiosHeaders e reatribui Authorization
-        const headers
-          = original.headers instanceof AxiosHeaders
+        const headers =
+          original.headers instanceof AxiosHeaders
             ? (original.headers as AxiosHeaders)
-            : AxiosHeaders.from((original.headers || {}) as any)
+            : AxiosHeaders.from((original.headers || {}) as any);
 
-        headers.set('Authorization', `Bearer ${auth.accessToken}`)
-        original.headers = headers
+        headers.set("Authorization", `Bearer ${auth.accessToken}`);
+        original.headers = headers;
 
-        return api.request(original)
+        return api.request(original);
       } catch (error_) {
-        await auth.logout()
-        throw error_
+        await auth.logout();
+        throw error_;
       }
     }
 
-    throw error
-  },
-)
+    throw error;
+  }
+);
 
-export default api
+export default api;

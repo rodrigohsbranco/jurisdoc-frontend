@@ -16,12 +16,6 @@ export type ContaBancaria = {
   banco_codigo?: string | null
 }
 
-export type Paginated<T> = {
-  count: number
-  next: string | null
-  previous: string | null
-  results: T[]
-}
 
 export type ContaExtras = {
   banco_id?: string
@@ -89,15 +83,12 @@ function formatDescricaoBanco (d?: BankDescricao | null): string | null {
 export const useContasStore = defineStore('contas', {
   state: () => ({
     items: [] as ContaBancaria[],
-    count: 0,
     loading: false,
     error: '' as string,
     clienteId: 0 as number,
     params: {
-      page: 1,
-      page_size: 20,
       ordering: 'banco_nome',
-    } as { page: number, page_size: number, ordering?: string },
+    } as { ordering?: string },
 
     // cache simples de descrições por banco_id
     notesByBank: {} as Record<string, BankDescricao[]>,
@@ -120,23 +111,22 @@ export const useContasStore = defineStore('contas', {
     setCliente (id: number) {
       this.clienteId = id
     },
-    setParams (p: Partial<{ page: number, page_size: number, ordering?: string }>) {
+    setParams (p: Partial<{ ordering?: string }>) {
       this.params = { ...this.params, ...p }
     },
 
     async fetchForCliente (
       cliente: number,
-      overrides?: Partial<{ page: number, page_size: number, ordering?: string }>,
+      overrides?: Partial<{ ordering?: string }>,
     ) {
       this.loading = true
       this.error = ''
       try {
         const params = { ...this.params, ...overrides, cliente }
-        const { data } = await api.get<Paginated<ContaBancaria>>(BASE, { params })
+        const { data } = await api.get<ContaBancaria[]>(BASE, { params })
 
         // 🔹 Substitui as contas do cliente no cache local
-        this.items = this.items.filter(i => i.cliente !== cliente).concat(data.results)
-        this.count = data.count
+        this.items = this.items.filter(i => i.cliente !== cliente).concat(Array.isArray(data) ? data : [])
         this.clienteId = cliente
 
         // 🔹 Para cada conta, tenta hidratar descricao_ativa priorizando banco_id (banco_codigo)
@@ -191,7 +181,6 @@ export const useContasStore = defineStore('contas', {
             i.cliente === data.cliente ? { ...i, is_principal: i.id === data.id } : i,
           )
         }
-        this.count += 1
         return data
       } catch (error: any) {
         this.error = toMessage(error)
@@ -228,7 +217,6 @@ export const useContasStore = defineStore('contas', {
       try {
         await api.delete(`${BASE}${id}/`)
         this.items = this.items.filter(i => i.id !== id)
-        this.count = Math.max(0, this.count - 1)
       } catch (error: any) {
         this.error = toMessage(error)
         throw error
