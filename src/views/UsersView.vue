@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   createUser,
   deleteUser,
@@ -8,13 +8,24 @@ import {
   updateUser,
   type User,
 } from "@/services/users";
+import { useSnackbar } from "@/composables/useSnackbar";
+import { friendlyError } from "@/utils/errorMessages";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import SidePanel from "@/components/SidePanel.vue";
 
-// estado básico
+const { showSuccess, showError } = useSnackbar();
+
+// estado
 const loading = ref(false);
 const items = ref<User[]>([]);
 const error = ref("");
 
-// busca e ordenação (tudo client-side)
+// Confirm dialog
+const confirmVisible = ref(false);
+const confirmMessage = ref("");
+const confirmAction = ref<(() => void) | null>(null);
+
+// busca e ordenação
 const search = ref("");
 const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
   { key: "username", order: "asc" },
@@ -31,33 +42,42 @@ const pwdDialog = ref(false);
 const pwdTarget = ref<User | null>(null);
 const newPassword = ref("");
 
-// cabeçalhos (simples; sem tipagem avançada)
+const totalUsuarios = computed(() => items.value.length);
+
 const headers = [
   { title: "Usuário", key: "username" },
-  { title: "Nome", key: "first_name" },
-  { title: "Sobrenome", key: "last_name" },
   { title: "Email", key: "email" },
-  { title: "Admin", key: "is_admin", sortable: true },
-  { title: "Ativo", key: "is_active", sortable: true },
-  { title: "Ações", key: "actions", sortable: false, align: "end" as const },
+  { title: "Perfil", key: "is_admin", sortable: true },
+  { title: "Status", key: "is_active", sortable: true },
+  { title: "", key: "actions", sortable: false, width: "48px" },
 ];
 
-// carregar todos os usuários (uma vez) — simples e eficiente para volumes modestos
 async function fetchUsers() {
   loading.value = true;
   error.value = "";
   try {
-    // carrega todos os usuários
     items.value = await listUsers({});
   } catch (error_: any) {
-    error.value =
-      error_?.response?.data?.detail || "Falha ao carregar usuários.";
+    error.value = friendlyError(error_, 'usuarios', 'list');
   } finally {
     loading.value = false;
   }
 }
 
 onMounted(fetchUsers);
+
+function getInitials(user: User) {
+  const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
+  if (!name) return user.username.slice(0, 2).toUpperCase();
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+
+function fullName(user: User) {
+  const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
+  return name || null;
+}
 
 function openCreate() {
   editing.value = null;
@@ -75,7 +95,6 @@ function openCreate() {
 
 function openEdit(u: User) {
   editing.value = u;
-  // não carregamos senha existente
   form.value = { ...u, password: undefined };
   dialog.value = true;
 }
@@ -83,34 +102,46 @@ function openEdit(u: User) {
 async function save() {
   try {
     if (editing.value) {
-      // editando
       const { password, ...rest } = form.value;
-      await updateUser(editing.value.id, rest);
-      // atualiza lista localmente
+      const updated = await updateUser(editing.value.id, rest);
       const idx = items.value.findIndex((i) => i.id === editing.value!.id);
-      if (idx !== -1)
-        items.value[idx] = { ...items.value[idx], ...(rest as any) };
+      if (idx !== -1) items.value[idx] = { ...items.value[idx], ...(rest as any) };
+      showSuccess("Usuário atualizado com sucesso!");
     } else {
-      // criando (senha obrigatória)
       if (!form.value.password || form.value.password.length < 6) {
         throw new Error("Senha mínima de 6 caracteres.");
       }
       const created = await createUser(form.value as any);
-      items.value.unshift(created); // coloca no topo
+      items.value.unshift(created);
+      showSuccess("Usuário criado com sucesso!");
     }
     dialog.value = false;
   } catch (error_: any) {
-    error.value =
-      error_?.response?.data?.detail || error_?.message || "Erro ao salvar.";
+    error.value = friendlyError(error_, 'usuarios', editing.value ? 'update' : 'create');
   }
 }
 
 async function remove(u: User) {
+  confirmMessage.value = `Excluir o usuário "${u.username}"?`;
+  confirmAction.value = async () => {
+    try {
+      await deleteUser(u.id);
+      items.value = items.value.filter((i) => i.id !== u.id);
+      showSuccess("Usuário excluído com sucesso!");
+    } catch (error_: any) {
+      error.value = friendlyError(error_, 'usuarios', 'remove');
+    }
+  };
+  confirmVisible.value = true;
+}
+
+async function toggleActive(u: User, val: boolean) {
   try {
-    await deleteUser(u.id);
-    items.value = items.value.filter((i) => i.id !== u.id);
-  } catch (error_: any) {
-    error.value = error_?.response?.data?.detail || "Não foi possível excluir.";
+    await updateUser(u.id, { is_active: val });
+    u.is_active = val;
+    showSuccess(val ? "Usuário ativado!" : "Usuário desativado!");
+  } catch {
+    showError("Falha ao alterar status.");
   }
 }
 
@@ -129,43 +160,52 @@ async function applyPassword() {
   try {
     await setUserPassword(pwdTarget.value.id, newPassword.value);
     pwdDialog.value = false;
+    showSuccess("Senha alterada com sucesso!");
   } catch (error_: any) {
-    error.value = error_?.response?.data?.detail || "Falha ao alterar senha.";
+    error.value = friendlyError(error_, 'usuarios', 'password');
   }
 }
 </script>
 
 <template>
   <v-container fluid>
-    <v-card class="rounded pt-2" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <span>Usuários</span>
-        <v-spacer />
-        <v-responsive max-width="300px" class="mx-auto">
+    <!-- Page header -->
+    <div class="d-flex align-center flex-wrap ga-4 mb-6">
+      <div class="flex-grow-1">
+        <div class="d-flex align-center ga-3">
+          <h1 class="text-h5 font-weight-bold text-primary">Usuários</h1>
+          <v-chip v-if="totalUsuarios" color="primary" size="small" variant="tonal">
+            {{ totalUsuarios }} {{ totalUsuarios === 1 ? 'usuário' : 'usuários' }}
+          </v-chip>
+        </div>
+        <p class="text-body-2 text-medium-emphasis mt-1">Gerenciamento de usuários do sistema</p>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-account-plus" @click="openCreate">
+        Novo usuário
+      </v-btn>
+    </div>
+
+    <!-- Table card -->
+    <v-card>
+      <v-card-text>
+        <div class="d-flex align-center mb-4">
           <v-text-field
             v-model="search"
             clearable
             density="compact"
-            variant="outlined"
-            size="sm"
             hide-details
-            label="Buscar"
+            placeholder="Buscar por nome, usuário, email..."
             prepend-inner-icon="mdi-magnify"
+            style="max-width: 360px"
           />
-        </v-responsive>
-        <v-btn class="ml-2" color="primary" @click="openCreate">
-          <v-icon icon="mdi-account-plus" start /> Novo usuário
-        </v-btn>
-      </v-card-title>
+        </div>
 
-      <v-card-text>
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
+        <v-alert v-if="error" class="mb-4" closable type="error" @click:close="error = ''">
           {{ error }}
         </v-alert>
 
         <v-data-table
           v-model:sort-by="sortBy"
-          class="rounded-lg"
           :headers="headers"
           item-key="id"
           :items="items"
@@ -173,123 +213,192 @@ async function applyPassword() {
           loading-text="Carregando..."
           :search="search"
         >
+          <!-- Usuário com avatar -->
+          <template #item.username="{ item }">
+            <div class="d-flex align-center py-2">
+              <v-avatar class="mr-3" color="primary" size="34" variant="tonal">
+                <span class="text-caption font-weight-bold">{{ getInitials(item) }}</span>
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">{{ item.username }}</div>
+                <div v-if="fullName(item)" class="text-caption text-medium-emphasis">
+                  {{ fullName(item) }}
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Email -->
+          <template #item.email="{ item }">
+            <span v-if="item.email" class="text-body-2">{{ item.email }}</span>
+            <span v-else class="text-medium-emphasis">--</span>
+          </template>
+
+          <!-- Perfil -->
           <template #item.is_admin="{ item }">
             <v-chip
-              :color="item.is_admin ? 'secondary' : undefined"
+              :color="item.is_admin ? 'secondary' : 'default'"
+              :prepend-icon="item.is_admin ? 'mdi-shield-crown-outline' : 'mdi-account-outline'"
               size="small"
               variant="tonal"
             >
-              {{ item.is_admin ? "Admin" : "—" }}
+              {{ item.is_admin ? "Admin" : "Usuário" }}
             </v-chip>
           </template>
 
+          <!-- Status -->
           <template #item.is_active="{ item }">
-            <v-switch
-              color="success"
-              density="compact"
-              hide-details
-              :model-value="item.is_active"
-              @update:model-value="
-                (val) => {
-                  updateUser(item.id, { is_active: !!val })
-                    .then(() => {
-                      item.is_active = !!val;
-                    })
-                    .catch(() => {
-                      /* volta visual se falhar */
-                    });
-                }
-              "
-            />
+            <v-chip
+              :color="item.is_active ? 'success' : 'error'"
+              size="small"
+              variant="tonal"
+            >
+              {{ item.is_active ? "Ativo" : "Inativo" }}
+            </v-chip>
           </template>
 
+          <!-- Ações (menu) -->
           <template #item.actions="{ item }">
-            <v-btn icon size="small" variant="text" @click="openEdit(item)">
-              <v-icon icon="mdi-pencil" />
-            </v-btn>
-            <v-btn
-              color="indigo"
-              icon
-              size="small"
-              variant="text"
-              @click="openSetPassword(item)"
-            >
-              <v-icon icon="mdi-lock-reset" />
-            </v-btn>
-            <v-btn
-              color="error"
-              icon
-              size="small"
-              variant="text"
-              @click="remove(item)"
-            >
-              <v-icon icon="mdi-delete" />
-            </v-btn>
+            <v-menu location="bottom end">
+              <template #activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  icon="mdi-dots-vertical"
+                  size="small"
+                  variant="text"
+                />
+              </template>
+              <v-list density="compact" min-width="200">
+                <v-list-item
+                  prepend-icon="mdi-pencil-outline"
+                  title="Editar"
+                  @click="openEdit(item)"
+                />
+                <v-list-item
+                  prepend-icon="mdi-lock-reset"
+                  title="Redefinir senha"
+                  @click="openSetPassword(item)"
+                />
+                <v-list-item
+                  :prepend-icon="item.is_active ? 'mdi-account-off-outline' : 'mdi-account-check-outline'"
+                  :title="item.is_active ? 'Desativar' : 'Ativar'"
+                  @click="toggleActive(item, !item.is_active)"
+                />
+                <v-divider class="my-1" />
+                <v-list-item
+                  class="text-error"
+                  prepend-icon="mdi-delete-outline"
+                  title="Excluir"
+                  @click="remove(item)"
+                />
+              </v-list>
+            </v-menu>
           </template>
 
           <template #no-data>
-            <v-sheet class="pa-6 text-center text-medium-emphasis">
-              Nenhum usuário encontrado.
-            </v-sheet>
+            <div class="pa-8 text-center">
+              <v-icon class="mb-2" color="grey-lighten-1" icon="mdi-account-off-outline" size="40" />
+              <div class="text-body-2 text-medium-emphasis">Nenhum usuário encontrado</div>
+            </div>
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
 
     <!-- Dialog criar/editar -->
-    <v-dialog v-model="dialog" max-width="560">
-      <v-card>
-        <v-card-title>{{
-          editing ? "Editar usuário" : "Novo usuário"
-        }}</v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="save">
-            <v-text-field v-model="form.username" label="Usuário" required />
-            <v-text-field v-model="form.first_name" label="Nome" />
-            <v-text-field v-model="form.last_name" label="Sobrenome" />
-            <v-text-field v-model="form.email" label="Email" type="email" />
-            <v-switch
-              v-model="form.is_admin"
-              color="secondary"
-              label="Administrador"
-            />
-            <v-switch v-model="form.is_active" color="success" label="Ativo" />
+    <SidePanel v-model="dialog" :width="560">
+      <template #header>
+        <v-avatar class="mr-3" color="primary" size="36" variant="tonal">
+          <v-icon :icon="editing ? 'mdi-pencil-outline' : 'mdi-account-plus-outline'" size="18" />
+        </v-avatar>
+        <div>
+          <div class="text-body-1 font-weight-bold">{{ editing ? "Editar usuário" : "Novo usuário" }}</div>
+          <div v-if="editing" class="text-caption text-medium-emphasis">{{ editing.username }}</div>
+        </div>
+      </template>
 
-            <v-text-field
-              v-if="!editing"
-              v-model="(form as any).password"
-              label="Senha"
-              required
-              :rules="[(v) => (!!v && v.length >= 6) || 'Mínimo 6 caracteres']"
-              type="password"
-            />
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialog = false">Cancelar</v-btn>
-          <v-btn color="primary" @click="save">Salvar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      <v-form @submit.prevent="save">
+        <v-text-field v-model="form.username" label="Usuário" required />
+        <v-row dense class="mt-1">
+          <v-col cols="6">
+            <v-text-field v-model="form.first_name" label="Nome" />
+          </v-col>
+          <v-col cols="6">
+            <v-text-field v-model="form.last_name" label="Sobrenome" />
+          </v-col>
+        </v-row>
+        <v-text-field v-model="form.email" class="mt-1" label="Email" type="email" />
+
+        <div class="text-caption text-medium-emphasis text-uppercase mb-2 mt-4" style="letter-spacing: 0.05em">
+          Permissões
+        </div>
+        <div class="d-flex ga-6 flex-wrap">
+          <v-switch
+            v-model="form.is_admin"
+            color="secondary"
+            density="compact"
+            hide-details
+            label="Administrador"
+          />
+          <v-switch
+            v-model="form.is_active"
+            color="success"
+            density="compact"
+            hide-details
+            label="Ativo"
+          />
+        </div>
+
+        <v-text-field
+          v-if="!editing"
+          v-model="(form as any).password"
+          class="mt-5"
+          label="Senha"
+          required
+          :rules="[(v: string) => (!!v && v.length >= 6) || 'Mínimo 6 caracteres']"
+          type="password"
+        />
+      </v-form>
+
+      <template #actions>
+        <v-spacer />
+        <v-btn variant="text" @click="dialog = false">Cancelar</v-btn>
+        <v-btn color="primary" variant="elevated" @click="save">Salvar</v-btn>
+      </template>
+    </SidePanel>
 
     <!-- Dialog definir senha -->
-    <v-dialog v-model="pwdDialog" max-width="480">
-      <v-card>
-        <v-card-title>Definir nova senha</v-card-title>
-        <v-card-text>
-          <v-text-field
-            v-model="newPassword"
-            label="Nova senha"
-            type="password"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="pwdDialog = false">Cancelar</v-btn>
-          <v-btn color="primary" @click="applyPassword">Aplicar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <SidePanel v-model="pwdDialog" :width="440">
+      <template #header>
+        <v-avatar class="mr-3" color="primary" size="36" variant="tonal">
+          <v-icon icon="mdi-lock-reset" size="18" />
+        </v-avatar>
+        <div>
+          <div class="text-body-1 font-weight-bold">Redefinir senha</div>
+          <div v-if="pwdTarget" class="text-caption text-medium-emphasis">{{ pwdTarget.username }}</div>
+        </div>
+      </template>
+
+      <v-text-field
+        v-model="newPassword"
+        label="Nova senha"
+        :rules="[(v: string) => (!!v && v.length >= 6) || 'Mínimo 6 caracteres']"
+        type="password"
+      />
+
+      <template #actions>
+        <v-spacer />
+        <v-btn variant="text" @click="pwdDialog = false">Cancelar</v-btn>
+        <v-btn color="primary" variant="elevated" @click="applyPassword">Aplicar</v-btn>
+      </template>
+    </SidePanel>
+
+    <ConfirmDialog
+      v-model="confirmVisible"
+      title="Confirmar exclusão"
+      :message="confirmMessage"
+      confirm-text="Excluir"
+      @confirm="confirmAction?.()"
+    />
   </v-container>
 </template>

@@ -6,9 +6,24 @@ import { useContratosStore, type Contrato, type ContratoItem } from "@/stores/co
 import { useContasStore, type ContaBancaria } from "@/stores/contas";
 import { useContasReuStore, type ContaBancariaReu } from "@/stores/contasReu";
 import { useNumeroExtenso } from "@/composables/useNumeroExtenso";
+import {
+  normKey,
+  isEmpty,
+  detectCanon,
+  isContratoField,
+  valueFromSources,
+  formatBancosEContratos,
+  formatBancosReus,
+} from "@/composables/useContratoPrefill";
+import { formatCurrency, parseCurrency, applyCurrencyMask } from "@/composables/useCurrencyMask";
 import api from "@/services/api";
+import { friendlyError } from "@/utils/errorMessages";
+import { useSnackbar } from "@/composables/useSnackbar";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import SidePanel from "@/components/SidePanel.vue";
 
 const { numeroParaExtenso, isExtensoField, getBaseFieldNameForExtenso } = useNumeroExtenso();
+const { showSuccess, showError, showInfo, showWarning } = useSnackbar();
 
 const clientesStore = useClientesStore();
 const templatesStore = useTemplatesStore();
@@ -16,78 +31,141 @@ const contratosStore = useContratosStore();
 const contasStore = useContasStore();
 const contasReuStore = useContasReuStore();
 
-// UI state
+// ── UI state ──────────────────────────────────────────────
 const search = ref("");
 const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
   { key: "cliente", order: "asc" },
 ]);
 
-// Snackbar para feedback
-const snackbar = ref(false);
-const snackbarMessage = ref("");
-const snackbarColor = ref<"success" | "error" | "info" | "warning">("success");
+// Confirm dialog
+const confirmVisible = ref(false);
+const confirmMessage = ref("");
+const confirmAction = ref<(() => void) | null>(null);
 
-function showSnackbar(message: string, color: "success" | "error" | "info" | "warning" = "success") {
-  snackbarMessage.value = message;
-  snackbarColor.value = color;
-  snackbar.value = true;
+function showSnackbar(msg: string, color: "success" | "error" | "info" | "warning" = "success") {
+  if (color === "success") showSuccess(msg);
+  else if (color === "error") showError(msg);
+  else if (color === "info") showInfo(msg);
+  else showWarning(msg);
 }
 
-// URL completa da imagem existente
-const imagemExistenteUrlCompleta = computed(() => {
-  if (!imagemExistenteUrl.value) return null;
-  // Se já for uma URL completa, retorna como está
-  if (imagemExistenteUrl.value.startsWith("http://") || imagemExistenteUrl.value.startsWith("https://")) {
-    return imagemExistenteUrl.value;
-  }
-  // Caso contrário, constrói a URL completa usando o baseURL da API
-  const baseURL = api.defaults.baseURL || "http://192.168.0.250:8000";
-  // Remove barra inicial se houver e adiciona a barra corretamente
-  const path = imagemExistenteUrl.value.startsWith("/") 
-    ? imagemExistenteUrl.value 
-    : `/${imagemExistenteUrl.value}`;
-  return `${baseURL}${path}`;
-});
-
-// Estado da lista (usa o store)
-const items = computed(() => contratosStore.items);
-const loading = computed(() => contratosStore.loading);
-const error = computed(() => contratosStore.error);
-
-// Headers da tabela
-const headers = [
-  { title: "Cliente", key: "cliente" },
-  { title: "Template", key: "template" },
-  { title: "Contrato", key: "contratos" },
-  { title: "Ações", key: "actions", sortable: false, align: "end" as const },
-];
-
-// Funções helper para exibição
+// ── Helpers de exibicao ───────────────────────────────────
 const clienteNome = (id?: number, fallback?: string | null) => {
   if (fallback && String(fallback).trim()) return String(fallback);
   const cid = Number(id);
-  if (!Number.isFinite(cid) || cid <= 0) return "—";
+  if (!Number.isFinite(cid) || cid <= 0) return "\u2014";
   const c = (clientesStore.items as Cliente[]).find((x) => Number(x.id) === cid);
-  if (c) return c.nome_completo || `#${cid}`;
-  return fallback || "—";
+  return c ? c.nome_completo || `#${cid}` : fallback || "\u2014";
 };
 
 const templateLabel = (id?: number, fallback?: string | null) => {
   if (fallback && String(fallback).trim()) return String(fallback);
   const tid = Number(id);
-  if (!Number.isFinite(tid) || tid <= 0) return "—";
+  if (!Number.isFinite(tid) || tid <= 0) return "\u2014";
   const t = templatesStore.byId(tid);
   return t ? t.name : `#${tid}`;
 };
 
 const formatContratos = (contratos?: ContratoItem[]) => {
-  if (!contratos || !Array.isArray(contratos) || contratos.length === 0) {
-    return "—";
-  }
+  if (!contratos?.length) return "\u2014";
   return `${contratos.length} contrato${contratos.length > 1 ? "s" : ""}`;
 };
 
-// Opções para selects
+// ── Filtros & KPIs ────────────────────────────────────────
+type QueueFilter = "todos" | "pendentes" | "ativos" | "inativos" | "sem-imagem";
+const queueFilter = ref<QueueFilter>("todos");
+
+const queueFilterOptions: Array<{ label: string; value: QueueFilter }> = [
+  { label: "Todos", value: "todos" },
+  { label: "Pendentes", value: "pendentes" },
+  { label: "Ativos", value: "ativos" },
+  { label: "Inativos", value: "inativos" },
+  { label: "Sem imagem", value: "sem-imagem" },
+];
+
+function firstContrato(item: Contrato): ContratoItem | undefined {
+  return item.contratos?.length ? item.contratos[0] : undefined;
+}
+
+function contratoSituacao(item: Contrato): string {
+  return String(firstContrato(item)?.situacao || "").trim().toLowerCase();
+}
+
+function isContratoPendente(item: Contrato): boolean {
+  const c = firstContrato(item);
+  if (!c) return true;
+  if (!c.numero_do_contrato?.trim()) return true;
+  if (!c.banco_do_contrato?.trim()) return true;
+  return contratoSituacao(item) === "pendente";
+}
+
+function statusLabel(item: Contrato): string {
+  if (isContratoPendente(item)) return "Pendente";
+  const s = contratoSituacao(item);
+  if (s === "ativo") return "Ativo";
+  if (s === "inativo") return "Inativo";
+  if (s === "cancelado") return "Cancelado";
+  return "Em an\u00e1lise";
+}
+
+function statusColor(item: Contrato): "warning" | "success" | "error" | undefined {
+  const l = statusLabel(item);
+  if (l === "Pendente") return "warning";
+  if (l === "Ativo") return "success";
+  if (l === "Inativo" || l === "Cancelado") return "error";
+  return undefined;
+}
+
+function hasImagemContrato(item: Contrato): boolean {
+  return Boolean(item.imagem_do_contrato?.trim());
+}
+
+const allItems = computed(() => contratosStore.items);
+const loading = computed(() => contratosStore.loading);
+const error = computed(() => contratosStore.error);
+
+const kpis = computed(() => {
+  const list = allItems.value;
+  return {
+    total: list.length,
+    pendentes: list.filter(isContratoPendente).length,
+    ativos: list.filter((i) => contratoSituacao(i) === "ativo").length,
+    semImagem: list.filter((i) => !hasImagemContrato(i)).length,
+  };
+});
+
+const items = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  return allItems.value.filter((item) => {
+    if (queueFilter.value === "pendentes" && !isContratoPendente(item)) return false;
+    if (queueFilter.value === "ativos" && contratoSituacao(item) !== "ativo") return false;
+    if (queueFilter.value === "inativos" && contratoSituacao(item) !== "inativo") return false;
+    if (queueFilter.value === "sem-imagem" && hasImagemContrato(item)) return false;
+    if (!q) return true;
+    const c = firstContrato(item);
+    return [
+      clienteNome(item.cliente, item.cliente_nome),
+      templateLabel(item.template, item.template_nome),
+      c?.numero_do_contrato || "",
+      c?.banco_do_contrato || "",
+      statusLabel(item),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(q);
+  });
+});
+
+// ── Table headers ─────────────────────────────────────────
+const headers = [
+  { title: "Nome", key: "cliente" },
+  { title: "Template", key: "template" },
+  { title: "Status", key: "status" },
+  { title: "Contrato", key: "contratos" },
+  { title: "", key: "actions", sortable: false, width: "48px" },
+];
+
+// ── Select options ────────────────────────────────────────
 const situacaoItems = [
   { title: "Ativo", value: "ativo" },
   { title: "Inativo", value: "inativo" },
@@ -96,511 +174,320 @@ const situacaoItems = [
 ];
 
 const origemAverbacaoItems = [
-  { title: "Averbação por Refinanciamento", value: "refinanciamento" },
-  { title: "Averbação nova", value: "nova" },
+  { title: "Averba\u00e7\u00e3o por Refinanciamento", value: "refinanciamento" },
+  { title: "Averba\u00e7\u00e3o nova", value: "nova" },
 ];
 
-// Lista de clientes para o select
-const clienteOptions = computed(() => {
-  return clientesStore.items.map((c: Cliente) => ({
-    title: c.nome_completo,
-    value: c.id,
-  }));
-});
+const clienteOptions = computed(() =>
+  clientesStore.items.map((c: Cliente) => ({ title: c.nome_completo, value: c.id })),
+);
 
-// Lista de templates para o select
-const templateOptions = computed(() => {
-  return templatesStore.items.map((t) => ({
-    title: t.name,
-    value: t.id,
-  }));
-});
+const templateOptions = computed(() =>
+  templatesStore.items.map((t) => ({ title: t.name, value: t.id })),
+);
 
-// Dialog criar/editar
-const dialog = ref(false);
-const editing = ref<Contrato | null>(null);
-const imagemExistenteUrl = ref<string | null>(null); // URL da imagem existente quando editando
-const form = ref<{
-  cliente?: number;
-  template?: number;
-  contratos: ContratoItem[];
-  imagem_do_contrato: File | null;
-}>({
-  contratos: [],
-  imagem_do_contrato: null,
-});
-
-// Bancos réus para o select de banco_do_contrato
 const bancosReuOptions = ref<Array<{ title: string; value: string }>>([]);
 const loadingBancosReu = ref(false);
 
-async function loadBancosReuForCliente(clienteId?: number) {
-  // Agora os bancos não estão mais atrelados a clientes, carregamos todos
-  // Se já tiver carregado, não precisa carregar novamente
-  if (bancosReuOptions.value.length > 0) {
-    return;
-  }
-  
+async function loadBancosReuOptions() {
+  if (bancosReuOptions.value.length > 0) return;
   loadingBancosReu.value = true;
   try {
     await contasReuStore.fetchAll();
-    const bancos = contasReuStore.items || [];
-    bancosReuOptions.value = bancos.map((banco) => ({
-      title: banco.banco_nome || "",
-      value: banco.banco_nome || "",
+    bancosReuOptions.value = (contasReuStore.items || []).map((b) => ({
+      title: b.banco_nome || "",
+      value: b.banco_nome || "",
     }));
-  } catch (error) {
-    console.error("Erro ao carregar bancos réus:", error);
+  } catch {
     bancosReuOptions.value = [];
   } finally {
     loadingBancosReu.value = false;
   }
 }
 
+// ── Imagem existente (edit) ───────────────────────────────
+const imagemExistenteUrl = ref<string | null>(null);
+const imagemExistenteUrlCompleta = computed(() => {
+  if (!imagemExistenteUrl.value) return null;
+  if (imagemExistenteUrl.value.startsWith("http")) return imagemExistenteUrl.value;
+  const baseURL = api.defaults.baseURL || "http://192.168.0.250:8000";
+  const path = imagemExistenteUrl.value.startsWith("/")
+    ? imagemExistenteUrl.value
+    : `/${imagemExistenteUrl.value}`;
+  return `${baseURL}${path}`;
+});
+
+// ── Create / Edit form ────────────────────────────────────
+const dialog = ref(false);
+const editing = ref<Contrato | null>(null);
+const selectedBeneficio = ref<number | null>(null);
+const form = ref<{
+  cliente?: number;
+  template?: number;
+  contratos: ContratoItem[];
+  imagem_do_contrato: File | null;
+}>({ contratos: [], imagem_do_contrato: null });
+
+const beneficioOptions = computed(() => {
+  if (!form.value.cliente) return [];
+  const c = (clientesStore.items as Cliente[]).find((x) => Number(x.id) === Number(form.value.cliente));
+  if (!c?.beneficios?.length) return [];
+  return c.beneficios.map((b, i) => ({
+    title: `${b.tipo || 'Benefício'} — ${b.numero}`,
+    value: i,
+  }));
+});
+
 async function openCreate() {
   editing.value = null;
   imagemExistenteUrl.value = null;
-  form.value = {
-    cliente: undefined,
-    template: undefined,
-    contratos: [{}], // Inicia com um contrato vazio
-    imagem_do_contrato: null,
-  };
-  // Carrega todos os bancos do réu ao abrir o dialog
-  await loadBancosReuForCliente();
+  selectedBeneficio.value = null;
+  currencyDisplay.value.clear();
+  form.value = { cliente: undefined, template: undefined, contratos: [{}], imagem_do_contrato: null };
+  await loadBancosReuOptions();
   dialog.value = true;
-}
-
-function addContrato() {
-  form.value.contratos.push({});
-}
-
-function removeContrato(index: number) {
-  if (form.value.contratos.length > 1) {
-    form.value.contratos.splice(index, 1);
-  }
 }
 
 async function openEdit(item: Contrato) {
   editing.value = item;
-  // Carrega a URL da imagem existente se houver
   imagemExistenteUrl.value = item.imagem_do_contrato || null;
+  selectedBeneficio.value = null;
+  currencyDisplay.value.clear();
   form.value = {
     cliente: item.cliente,
     template: item.template,
-    contratos: item.contratos && item.contratos.length > 0 
-      ? [...item.contratos] 
-      : [{}],
-    imagem_do_contrato: null, // Nova imagem será carregada se o usuário selecionar
+    contratos: item.contratos?.length ? [...item.contratos] : [{}],
+    imagem_do_contrato: null,
   };
-  // Carrega todos os bancos réus ao abrir o dialog
-  await loadBancosReuForCliente();
+  // Restaura benefício do verifica_documento
+  if (item.cliente && item.verifica_documento) {
+    const numSalvo = item.verifica_documento.numero_beneficio || item.verifica_documento.beneficio || "";
+    if (numSalvo) {
+      const c = (clientesStore.items as Cliente[]).find((x) => Number(x.id) === Number(item.cliente));
+      if (c?.beneficios?.length) {
+        const idx = c.beneficios.findIndex((b) => b.numero === numSalvo);
+        if (idx >= 0) selectedBeneficio.value = idx;
+      }
+    }
+  }
+  await loadBancosReuOptions();
   dialog.value = true;
+}
+
+// Quando benefício muda, salva no verifica_documento do contrato sendo editado
+watch(
+  () => selectedBeneficio.value,
+  (idx) => {
+    if (idx === null || idx === undefined || !form.value.cliente) return;
+    const c = (clientesStore.items as Cliente[]).find((x) => Number(x.id) === Number(form.value.cliente));
+    const b = c?.beneficios?.[idx];
+    if (!b) return;
+    // Guarda no editing.verifica_documento para que o verificação pegue depois
+    if (editing.value) {
+      if (!editing.value.verifica_documento) editing.value.verifica_documento = {};
+      editing.value.verifica_documento.numero_beneficio = b.numero || "";
+      editing.value.verifica_documento.tipo_beneficio = b.tipo || "";
+      editing.value.verifica_documento.beneficio = b.numero || "";
+    }
+  }
+);
+
+// Quando cliente muda no form, reseta ou restaura benefício
+watch(
+  () => form.value.cliente,
+  (cid) => {
+    if (!cid) { selectedBeneficio.value = null; return; }
+    selectedBeneficio.value = null;
+    // Tenta restaurar do verifica_documento
+    if (editing.value?.verifica_documento) {
+      const numSalvo = editing.value.verifica_documento.numero_beneficio || editing.value.verifica_documento.beneficio || "";
+      if (numSalvo) {
+        const c = (clientesStore.items as Cliente[]).find((x) => Number(x.id) === Number(cid));
+        if (c?.beneficios?.length) {
+          const idx = c.beneficios.findIndex((b) => b.numero === numSalvo);
+          if (idx >= 0) selectedBeneficio.value = idx;
+        }
+      }
+    }
+  }
+);
+
+function addContrato() {
+  form.value.contratos.push({});
+}
+function removeContrato(index: number) {
+  if (form.value.contratos.length > 1) form.value.contratos.splice(index, 1);
+}
+
+// ── Máscara monetária para campos do contrato ─────────────
+const CURRENCY_FIELDS = ['valor_parcela', 'iof', 'valor_do_emprestimo', 'valor_liberado'] as const;
+
+// Display cache: armazena o texto formatado para cada campo/contrato
+const currencyDisplay = ref<Map<string, string>>(new Map());
+
+function getCurrencyKey(contrato: ContratoItem, field: string): string {
+  // Usa o índice no array como parte da chave
+  const idx = form.value.contratos.indexOf(contrato);
+  return `${idx}_${field}`;
+}
+
+function getCurrencyDisplay(contrato: ContratoItem, field: typeof CURRENCY_FIELDS[number]): string {
+  const key = getCurrencyKey(contrato, field);
+  if (currencyDisplay.value.has(key)) return currencyDisplay.value.get(key)!;
+  // Valor inicial do modelo
+  return formatCurrency(contrato[field]);
+}
+
+function setCurrencyValue(contrato: ContratoItem, field: typeof CURRENCY_FIELDS[number], raw: string) {
+  const key = getCurrencyKey(contrato, field);
+  const masked = applyCurrencyMask(raw);
+  currencyDisplay.value.set(key, masked);
+  (contrato as any)[field] = parseCurrency(masked);
+}
+
+// ── Máscara mês/ano (MM/AAAA ↔ YYYY-MM) ─────────────────
+type MonthField = 'data_inicio_desconto' | 'data_fim_desconto';
+
+function getMonthDisplay(contrato: ContratoItem, field: MonthField): string {
+  const val = contrato[field];
+  if (!val) return '';
+  // YYYY-MM → MM/AAAA
+  const m = String(val).match(/^(\d{4})-(\d{2})$/);
+  if (m) return `${m[2]}/${m[1]}`;
+  // Já está em MM/AAAA
+  if (/^\d{2}\/\d{4}$/.test(String(val))) return String(val);
+  return String(val);
+}
+
+function setMonthValue(contrato: ContratoItem, field: MonthField, raw: string) {
+  // Só aceita dígitos
+  const digits = raw.replace(/\D/g, '').slice(0, 6);
+  // Formata como MM/AAAA enquanto digita
+  let display = digits;
+  if (digits.length > 2) {
+    display = digits.slice(0, 2) + '/' + digits.slice(2);
+  }
+  // Quando completo (6 dígitos), converte para YYYY-MM no modelo
+  if (digits.length === 6) {
+    const mm = digits.slice(0, 2);
+    const aaaa = digits.slice(2);
+    const month = parseInt(mm, 10);
+    if (month >= 1 && month <= 12) {
+      (contrato as any)[field] = `${aaaa}-${mm}`;
+    } else {
+      (contrato as any)[field] = display;
+    }
+  } else {
+    (contrato as any)[field] = display;
+  }
+  // Guarda display formatado
+  const key = getCurrencyKey(contrato, field);
+  currencyDisplay.value.set(key, display);
+}
+
+function getMonthDisplayCached(contrato: ContratoItem, field: MonthField): string {
+  const key = getCurrencyKey(contrato, field);
+  if (currencyDisplay.value.has(key)) return currencyDisplay.value.get(key)!;
+  return getMonthDisplay(contrato, field);
 }
 
 async function save() {
   try {
-    if (!form.value.cliente) {
-      contratosStore.error = "Selecione o cliente.";
-      showSnackbar("Selecione o cliente.", "error");
-      return;
-    }
-    if (!form.value.template) {
-      contratosStore.error = "Selecione o template.";
-      showSnackbar("Selecione o template.", "error");
-      return;
-    }
-    if (!form.value.contratos || form.value.contratos.length === 0) {
-      contratosStore.error = "Adicione pelo menos um contrato.";
-      showSnackbar("Adicione pelo menos um contrato.", "error");
-      return;
-    }
+    if (!form.value.cliente) { showSnackbar("Selecione o cliente.", "error"); return; }
+    if (!form.value.template) { showSnackbar("Selecione o template.", "error"); return; }
+    if (!form.value.contratos?.length) { showSnackbar("Adicione pelo menos um contrato.", "error"); return; }
 
-    // Prepara FormData para enviar imagem se houver nova imagem
     if (form.value.imagem_do_contrato) {
-      const formData = new FormData();
-      formData.append("cliente", String(form.value.cliente));
-      formData.append("template", String(form.value.template));
-      formData.append("contratos", JSON.stringify(form.value.contratos));
-      formData.append("imagem_do_contrato", form.value.imagem_do_contrato);
-      
+      const fd = new FormData();
+      fd.append("cliente", String(form.value.cliente));
+      fd.append("template", String(form.value.template));
+      fd.append("contratos", JSON.stringify(form.value.contratos));
+      fd.append("imagem_do_contrato", form.value.imagem_do_contrato);
       await (editing.value
-        ? contratosStore.updateWithFile(editing.value.id, formData)
-        : contratosStore.createWithFile(formData));
+        ? contratosStore.updateWithFile(editing.value.id, fd)
+        : contratosStore.createWithFile(fd));
     } else {
       const payload: any = {
         cliente: Number(form.value.cliente),
         template: Number(form.value.template),
         contratos: form.value.contratos,
       };
-      
-      // Se estiver editando e não houver nova imagem
-      if (editing.value) {
-        // Se a imagem existente foi removida explicitamente (imagemExistenteUrl foi limpo)
-        // e não há nova imagem, envia null para remover
-        if (!imagemExistenteUrl.value && !form.value.imagem_do_contrato) {
-          payload.imagem_do_contrato = null;
-        }
-        // Caso contrário, não envia o campo imagem_do_contrato
-        // O backend manterá a imagem existente
-      }
-
+      if (editing.value && !imagemExistenteUrl.value) payload.imagem_do_contrato = null;
       await (editing.value
         ? contratosStore.update(editing.value.id, payload)
         : contratosStore.create(payload));
     }
-    
-    showSnackbar(
-      editing.value ? "Contrato atualizado com sucesso!" : "Contrato criado com sucesso!",
-      "success"
-    );
+    showSnackbar(editing.value ? "Contrato atualizado com sucesso!" : "Contrato criado com sucesso!");
     dialog.value = false;
-  } catch (error_) {
-    // Erro já está no store
-    console.error(error_);
-    const errorMessage = contratosStore.error || "Erro ao salvar o contrato. Tente novamente.";
-    showSnackbar(errorMessage, "error");
+  } catch (e: any) {
+    showSnackbar(friendlyError(e, 'contratos', editing.value ? 'update' : 'create'), "error");
   }
 }
 
 async function remove(item: Contrato) {
-  if (!confirm(`Excluir o contrato #${item.id}?`)) return;
-  try {
-    await contratosStore.remove(item.id);
-    showSnackbar("Contrato excluído com sucesso!", "success");
-  } catch (error_) {
-    // Erro já está no store
-    console.error(error_);
-    const errorMessage = contratosStore.error || "Erro ao excluir o contrato. Tente novamente.";
-    showSnackbar(errorMessage, "error");
-  }
+  confirmMessage.value = `Excluir o contrato #${item.id}?`;
+  confirmAction.value = async () => {
+    try {
+      await contratosStore.remove(item.id);
+      showSnackbar("Contrato exclu\u00eddo com sucesso!");
+    } catch (error_: any) {
+      showSnackbar(friendlyError(error_, 'contratos', 'remove'), "error");
+    }
+  };
+  confirmVisible.value = true;
 }
 
-// =========================
-// Modal de Verificação - Helpers
-// =========================
-const normKey = (s: any) =>
-  String(s ?? "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-
-const isEmpty = (v: unknown) =>
-  v === undefined || v === null || (typeof v === "string" && v.trim() === "");
-
-
-// Sinônimos → chave canônica
-const SYNONYMS: Record<string, string[]> = {
-  // cliente
-  nome: ["nome", "nomecompleto", "nome_completo", "cliente", "cliente_nome"],
-  cpf: ["cpf"],
-  rg: ["rg"],
-  orgaoexpedidor: ["orgaoexpedidor", "orgao_expedidor", "orgao"],
-  logradouro: ["logradouro", "endereco", "rua"],
-  numero: ["numero", "num"],
-  bairro: ["bairro"],
-  cidade: ["cidade"],
-  cep: ["cep"],
-  uf: ["uf", "estado"],
-  profissao: ["profissao", "ocupacao"],
-  nacionalidade: ["nacionalidade"],
-  estadocivil: ["estadocivil", "estado_civil"],
-  qualificacao: ["qualificacao"],
-  idoso: ["idoso", "se_idoso"],
-  incapaz: ["incapaz", "se_incapaz", "interditado", "curatelado"],
-  criancaadolescente: ["criancaadolescente", "crianca_adolescente", "menor", "crianca", "adolescente"],
-  
-  // conta bancária
-  banco: ["banco", "bancocliente", "banco_cliente"],
-  agencia: ["agencia", "ag", "nragencia"],
-  conta: ["conta", "nconta", "contacorrente", "contanumero"],
-  digito: ["digito", "dv", "digitoverificador"],
-  tipoconta: ["tipoconta", "tipo", "contatipo", "tipo_conta"],
-  contaformatada: ["contaformatada", "agenciaconta", "contacompleta"],
-  
-  // banco do réu
-  banco_reu: ["banco_reu", "bancoreu", "banco_devedor", "bancodevedor"],
-  cnpj_banco: ["cnpj_banco", "cnpjbanco", "cnpj_banco_reu"],
-  logradouro_banco: ["logradouro_banco", "logradourobanco", "endereco_banco"],
-  cidade_banco: ["cidade_banco", "cidadebanco"],
-  estado_banco: ["estado_banco", "estadobanco", "uf_banco"],
-  cep_banco: ["cep_banco", "cepbanco"],
-  
-  // contrato
-  numero_contrato: ["numero_contrato", "numerocontrato", "numero_do_contrato", "numerodocontrato"],
-  banco_contrato: ["banco_contrato", "bancocontrato", "banco_do_contrato", "bancodocontrato"],
-  situacao: ["situacao", "situacao_contrato"],
-  origem_averbacao: ["origem_averbacao", "origemaverbacao", "origem"],
-  data_inclusao: ["data_inclusao", "datainclusao"],
-  data_inicio_desconto: ["data_inicio_desconto", "datainiciodesconto", "inicio_desconto"],
-  data_fim_desconto: ["data_fim_desconto", "datafimdesconto", "fim_desconto"],
-  quantidade_parcelas: ["quantidade_parcelas", "quantidadeparcelas", "parcelas"],
-  valor_parcela: ["valor_parcela", "valorparcela"],
-  iof: ["iof"],
-  valor_do_emprestimo: ["valor_do_emprestimo", "valordoemprestimo", "valor_emprestimo", "valoremprestado", "valor_emprestado_contrato", "valoremprestadocontrato"],
-  valor_liberado: ["valor_liberado", "valorliberado"],
-};
-
-const LOOKUP = new Map<string, string>();
-for (const [canon, list] of Object.entries(SYNONYMS)) {
-  LOOKUP.set(canon, canon);
-  for (const s of list) LOOKUP.set(s, canon);
+// ── Data-source helpers ───────────────────────────────────
+async function getContaPrincipal(clienteId?: number): Promise<ContaBancaria | null> {
+  const cid = Number(clienteId);
+  if (!Number.isFinite(cid) || cid <= 0) return null;
+  const cached = contasStore.principal(cid) || (contasStore.byCliente(cid) || [])[0];
+  if (cached) return cached;
+  try { await contasStore.fetchForCliente(cid); } catch { return null; }
+  return contasStore.principal(cid) || (contasStore.byCliente(cid) || [])[0] || null;
 }
 
-function detectCanon(k: string): string {
-  if (LOOKUP.has(k)) return LOOKUP.get(k)!;
-  
-  // Campos item.* (campos de contrato no Jinja)
-  // Remove o prefixo "item" e mapeia para o campo canônico
-  if (k.startsWith("item")) {
-    // Remove prefixo "item" (pode ser "item.", "item_", ou apenas "item")
-    const withoutItem = k.replace(/^item[._]?/, "");
-    // Mapeia campos item.* para canônicos
-    if (withoutItem === "banco_do_contrato" || withoutItem === "bancodocontrato") return "banco_contrato";
-    if (withoutItem === "data_inicio_desconto" || withoutItem === "datainiciodesconto") return "data_inicio_desconto";
-    if (withoutItem === "numero_do_contrato" || withoutItem === "numerodocontrato") return "numero_contrato";
-    if (withoutItem === "quantidade_parcelas" || withoutItem === "quantidadeparcelas") return "quantidade_parcelas";
-    if (withoutItem === "valor_do_emprestimo" || withoutItem === "valordoemprestimo" || withoutItem === "valoremprestimo") return "valor_do_emprestimo";
-    if (withoutItem === "valor_parcela" || withoutItem === "valorparcela") return "valor_parcela";
-    // Se não mapeou, tenta detectar pelo nome sem o prefixo item
-    k = withoutItem;
-  }
-  
-  // Bancário
-  if (k.includes("banco") && k.includes("reu")) return "banco_reu";
-  if (k.includes("banco") && (k.includes("contrato") || k.includes("do_contrato"))) return "banco_contrato";
-  if (k.includes("imagem") && k.includes("contrato")) return "imagem_do_contrato";
-  if (k.includes("banco")) return "banco";
-  if (k.includes("agencia") || k === "ag") return "agencia";
-  if (k.includes("conta") && !k.includes("reu")) return "conta";
-  if (k.includes("digito") || k === "dv") return "digito";
-  if (k.includes("tipo") && k.includes("conta")) return "tipoconta";
-  
-  // Cliente
-  if (k.includes("nome") && !k.includes("banco")) return "nome";
-  if (k.includes("qualificacao")) return "qualificacao";
-  if (k.includes("enderecocompleto") || (k.includes("endereco") && !k.includes("banco"))) return "logradouro";
-  if (k.includes("cidade") && !k.includes("banco")) return "cidade";
-  if (k.includes("cidade") && k.includes("uf")) return "cidadeuf";
-  
-  // Contrato
-  if (k.includes("numero") && k.includes("contrato")) return "numero_contrato";
-  if (k.includes("situacao")) return "situacao";
-  if (k.includes("origem") && k.includes("averbacao")) return "origem_averbacao";
-  if (k.includes("data") && k.includes("inclusao")) return "data_inclusao";
-  if (k.includes("data") && k.includes("inicio") && k.includes("desconto")) return "data_inicio_desconto";
-  if (k.includes("data") && k.includes("fim") && k.includes("desconto")) return "data_fim_desconto";
-  if (k.includes("quantidade") && k.includes("parcela")) return "quantidade_parcelas";
-  if (k.includes("valor") && k.includes("parcela")) return "valor_parcela";
-  if (k.includes("valor") && k.includes("emprestado")) return "valor_do_emprestimo";
-  if (k.includes("valor") && k.includes("liberado")) return "valor_liberado";
-  
-  return k;
+async function getBancoReu(): Promise<ContaBancariaReu | null> {
+  if (contasReuStore.items.length) return contasReuStore.items[0];
+  try { await contasReuStore.fetchAll(); } catch { return null; }
+  return contasReuStore.items[0] || null;
+}
+
+async function ensureCliente(clienteId: number): Promise<Cliente | null> {
+  let c = (clientesStore.items as Cliente[]).find((x) => x.id === clienteId) || null;
+  if (!c) { try { c = await clientesStore.getDetail(clienteId); } catch { /* noop */ } }
+  return c;
 }
 
 function extractPathOnly(urlOrPath: string | null | undefined): string {
   if (!urlOrPath) return "";
-  const value = String(urlOrPath);
-  try {
-    // Tenta usar URL para remover protocolo + host
-    const u = new URL(value);
-    return u.pathname || "";
-  } catch {
-    // Se não for uma URL completa, remove apenas padrão http(s)://host
-    return value.replace(/^https?:\/\/[^/]+/i, "");
-  }
+  try { return new URL(String(urlOrPath)).pathname || ""; } catch { return String(urlOrPath).replace(/^https?:\/\/[^/]+/i, ""); }
 }
 
-// Pega conta principal do cliente
-async function getContaPrincipalForCliente(
-  clienteId?: number
-): Promise<ContaBancaria | null> {
-  const cid = Number(clienteId);
-  if (!Number.isFinite(cid) || cid <= 0) return null;
-
-  // Tenta cache local primeiro
-  const inCache =
-    contasStore.principal(cid) || (contasStore.byCliente(cid) || [])[0] || null;
-  if (inCache) return inCache;
-
-  // Carrega do servidor e tenta de novo
-  try {
-    await contasStore.fetchForCliente(cid);
-  } catch {
-    return null;
-  }
-  return contasStore.principal(cid) || (contasStore.byCliente(cid) || [])[0] || null;
+// ── Verificacao helpers ───────────────────────────────────
+function isImageField(field: TemplateField): boolean {
+  const k = normKey(field.name);
+  const rawK = normKey(field.raw || "");
+  if (k.includes("imagemdocontrato") || rawK.includes("imagemdocontrato")) return false;
+  return k.includes("imagem") || rawK.includes("imagem");
 }
 
-// Pega banco do réu (primeiro banco do cliente como réu)
-async function getBancoReuForCliente(
-  clienteId?: number
-): Promise<ContaBancariaReu | null> {
-  // Agora os bancos não estão mais atrelados a clientes, retorna o primeiro disponível
-  // ou carrega todos e retorna o primeiro
-  if (contasReuStore.items.length > 0) {
-    return contasReuStore.items[0] || null;
-  }
-
-  // Carrega do servidor e tenta de novo
-  try {
-    await contasReuStore.fetchAll();
-  } catch {
-    return null;
-  }
-  return contasReuStore.items[0] || null;
+function isContratoFieldLocal(field: TemplateField): boolean {
+  return isContratoField(field.name, field.raw);
 }
 
-// Resolve valor para um field do template a partir das fontes
-const valueFromSources = (
-  c: Cliente | null,
-  acc: ContaBancaria | null,
-  bancoReu: ContaBancariaReu | null,
-  contrato: ContratoItem | null,
-  contratoRoot: Contrato | null,
-  rawFieldName: string
-) => {
-  const k = normKey(rawFieldName);
-  const canon = detectCanon(k);
-
-  // 1) Campos do cliente
-  if (c) {
-    switch (canon) {
-      case "nome":
-        return c.nome_completo || "";
-      case "cpf":
-        return c.cpf || "";
-      case "rg":
-        return c.rg || "";
-      case "orgaoexpedidor":
-        return c.orgao_expedidor || "";
-      case "logradouro":
-        return c.logradouro || "";
-      case "numero":
-        return c.numero || "";
-      case "bairro":
-        return c.bairro || "";
-      case "cidade":
-        return c.cidade || "";
-      case "cep":
-        return c.cep || "";
-      case "uf":
-        return (c.uf || "").toUpperCase();
-      case "profissao":
-        return c.profissao || "";
-      case "nacionalidade":
-        return c.nacionalidade || "";
-      case "estadocivil":
-        return c.estado_civil || "";
-      case "qualificacao": {
-        // Qualificação = "nacionalidade, estado civil"
-        const parts: string[] = [];
-        if (c.nacionalidade) parts.push(c.nacionalidade?.toLowerCase());
-        if (c.estado_civil) parts.push(c.estado_civil?.toLowerCase());
-        return parts.join(", ");
-      }
-      case "idoso":
-        return !!c.se_idoso;
-      case "incapaz":
-        return !!c.se_incapaz;
-      case "criancaadolescente":
-        return !!c.se_crianca_adolescente;
-    }
+/** Assign a resolved value to verificacaoData respecting field type. */
+function assignTyped(data: Record<string, any>, key: string, value: unknown, field: TemplateField) {
+  if (value === undefined || value === null || value === "") return;
+  if (field.type === "bool") { data[key] = Boolean(value); return; }
+  if (field.type === "int") {
+    const n = Number(value);
+    if (!Number.isNaN(n)) { data[key] = n; return; }
   }
+  data[key] = String(value);
+}
 
-  // 2) Campos bancários (conta principal)
-  if (acc) {
-    switch (canon) {
-      case "banco":
-        return (acc as any).descricao_ativa || acc.banco_nome || "";
-      case "agencia":
-        return acc.agencia || "";
-      case "conta":
-        return acc.conta || "";
-      case "digito":
-        return acc.digito || "";
-      case "tipoconta":
-        return acc.tipo || "";
-      case "contaformatada": {
-        const ag = acc.agencia ?? "";
-        const num = acc.conta ?? "";
-        const dv = acc.digito ?? "";
-        return [ag, num].filter(Boolean).join("/") + (dv ? `-${dv}` : "");
-      }
-    }
-  }
-
-  // 3) Campos do banco do réu
-  if (bancoReu) {
-    switch (canon) {
-      case "banco_reu":
-        return bancoReu.banco_nome || "";
-      case "cnpj_banco":
-        return bancoReu.cnpj || "";
-      case "logradouro_banco":
-        return bancoReu.logradouro || "";
-      case "cidade_banco":
-        return bancoReu.cidade || "";
-      case "estado_banco":
-        return bancoReu.estado || "";
-      case "cep_banco":
-        return bancoReu.cep || "";
-    }
-  }
-
-  // 4) Campos do contrato
-  if (contrato) {
-    switch (canon) {
-      case "numero_contrato":
-        return contrato.numero_do_contrato || "";
-      case "banco_contrato":
-        // banco_do_contrato vem apenas do contrato original, não do banco do réu
-        // O banco do réu é apenas para popular o select, não para preencher automaticamente
-        return contrato?.banco_do_contrato || "";
-      case "situacao":
-        return contrato.situacao || "";
-      case "origem_averbacao":
-        return contrato.origem_averbacao || "";
-      case "data_inclusao":
-        return contrato.data_inclusao || "";
-      case "data_inicio_desconto":
-        return contrato.data_inicio_desconto || "";
-      case "data_fim_desconto":
-        return contrato.data_fim_desconto || "";
-      case "quantidade_parcelas":
-        return contrato.quantidade_parcelas?.toString() || "";
-      case "valor_parcela":
-        return contrato.valor_parcela?.toString() || "";
-      case "iof":
-        return contrato.iof?.toString() || "";
-      case "valor_do_emprestimo":
-        // Retorna o valor do empréstimo do contrato
-        if (contrato.valor_do_emprestimo !== undefined && contrato.valor_do_emprestimo !== null) {
-          return contrato.valor_do_emprestimo.toString();
-        }
-        return "";
-      case "valor_liberado":
-        return contrato.valor_liberado?.toString() || "";
-    }
-  }
-
-  // 5) Campos do contrato raiz (registro de contrato)
-  if (contratoRoot) {
-    switch (canon) {
-      case "imagem_do_contrato":
-        // No modal de verificação, exibimos apenas o path, sem a URL/base
-        return extractPathOnly(contratoRoot.imagem_do_contrato);
-    }
-  }
-
-  // Sem match
-  return undefined;
-};
-
-// =========================
-// Modal de Verificação
-// =========================
+// ── Verificacao state ─────────────────────────────────────
 const dialogVerificacao = ref(false);
 const verificacaoLoading = ref(false);
 const verificacaoItem = ref<Contrato | null>(null);
@@ -610,6 +497,155 @@ const verificacaoImages = ref<Record<string, File | null>>({});
 const rendering = ref(false);
 const renderFilename = ref("");
 
+// ── Overview (preview do documento renderizado) ──────────
+const dialogOverview = ref(false);
+const overviewLoading = ref(false);
+const overviewError = ref("");
+const overviewItem = ref<Contrato | null>(null);
+const overviewBlob = ref<Blob | null>(null);
+const docxContainer = ref<HTMLElement | null>(null);
+
+async function openOverview(item: Contrato) {
+  overviewItem.value = item;
+  overviewBlob.value = null;
+  overviewError.value = "";
+  dialogOverview.value = true;
+  overviewLoading.value = true;
+
+  try {
+    if (!item.template) throw new Error("Template não encontrado.");
+
+    // Salva verificação primeiro (garante dados atualizados)
+    // Monta o contexto igual ao generateAndDownload
+    const cliente = await ensureCliente(item.cliente);
+    const conta = cliente ? await getContaPrincipal(cliente.id) : null;
+    const bancoReu = await getBancoReu();
+
+    const rawNameMap = new Map<string, string>();
+    let templateFields: TemplateField[] = [];
+    try {
+      const resp = await templatesStore.fetchFields(item.template, { force: false });
+      templateFields = resp.fields || [];
+      for (const f of templateFields) { if (f.raw && f.name) rawNameMap.set(f.name, f.raw); }
+    } catch { /* noop */ }
+
+    // Contexto base do verifica_documento
+    const context: Record<string, any> = {};
+    if (item.verifica_documento && typeof item.verifica_documento === "object") {
+      for (const [k, v] of Object.entries(item.verifica_documento)) {
+        if (v != null) context[k] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v);
+      }
+    }
+
+    // Preenche campos vazios das fontes
+    const primeiro = item.contratos?.length ? item.contratos[0] : null;
+    for (const field of templateFields) {
+      const cur = context[field.name] || (rawNameMap.get(field.name) ? context[rawNameMap.get(field.name)!] : undefined);
+      if (cur !== undefined && cur !== null && !(typeof cur === "string" && !cur.trim())) continue;
+      const v = valueFromSources(cliente, conta, bancoReu, primeiro, field.name);
+      if (v != null && v !== "") {
+        context[field.name] = typeof v === "boolean" || typeof v === "number" ? v : String(v);
+        const raw = rawNameMap.get(field.name);
+        if (raw && raw !== field.name) context[raw] = context[field.name];
+      }
+    }
+
+    // Contratos array
+    if (item.contratos?.length) {
+      context["contratos"] = item.contratos.map((c) => {
+        const clean: Record<string, any> = {};
+        for (const [k, v] of Object.entries(c)) {
+          if (v != null) { let ck = k === "banco_contrato" ? "banco_do_contrato" : k; clean[ck] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v); }
+        }
+        return clean;
+      });
+      if (!context["bancos_e_contratos"]) {
+        const bec = formatBancosEContratos(item.contratos);
+        if (bec) context["bancos_e_contratos"] = bec;
+      }
+      if (!context["bancos_reus"]) {
+        if (contasReuStore.items.length === 0) await contasReuStore.fetchAll();
+        const br = formatBancosReus(item.contratos, contasReuStore.items);
+        if (br) context["bancos_reus"] = br;
+      }
+    }
+
+    // Cliente extras
+    if (cliente) {
+      const nome = cliente.nome_completo || "";
+      context["nome_completo"] = nome; context["NOME_COMPLETO"] = nome;
+      context["nome"] = nome; context["NOME"] = nome;
+      context["idoso"] = Boolean(cliente.se_idoso);
+      context["incapaz"] = Boolean(cliente.se_incapaz);
+      context["criancaadolescente"] = Boolean(cliente.se_crianca_adolescente);
+      context["se_idoso"] = Boolean(cliente.se_idoso);
+      context["se_incapaz"] = Boolean(cliente.se_incapaz);
+      context["se_crianca_adolescente"] = Boolean(cliente.se_crianca_adolescente);
+    }
+
+    // Extenso
+    for (const [k, v] of Object.entries(context)) {
+      if (k.endsWith("_extenso")) continue;
+      const num = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v.replace(/[^\d,.-]/g, "").replace(",", ".")) : NaN;
+      if (!isNaN(num) && num !== 0) { const ek = `${k}_extenso`; if (!context[ek]) context[ek] = numeroParaExtenso(num); }
+    }
+
+    // Limpa contexto
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(context)) {
+      if (v == null) continue;
+      if (Array.isArray(v)) { if (v.length) clean[k] = v; continue; }
+      if (typeof v === "object" && v.constructor === Object) { clean[k] = v; continue; }
+      clean[k] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v);
+    }
+
+    // Renderiza o documento
+    const result = await templatesStore.render(item.template, {
+      context: clean,
+      filename: `preview_${item.id}`,
+    });
+    overviewBlob.value = result.blob;
+  } catch (err: any) {
+    overviewError.value = friendlyError(err, "contratos", "render");
+  } finally {
+    overviewLoading.value = false;
+  }
+
+  // Renderiza após loading=false para que o container exista no DOM
+  if (overviewBlob.value) {
+    await nextTick();
+    if (docxContainer.value) {
+      try {
+        const { renderAsync } = await import("docx-preview");
+        docxContainer.value.innerHTML = "";
+        await renderAsync(overviewBlob.value, docxContainer.value, undefined, {
+          className: "docx-preview",
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+        });
+      } catch {
+        overviewError.value = "Não foi possível renderizar a pré-visualização.";
+      }
+    }
+  }
+}
+
+function downloadOverview() {
+  if (!overviewBlob.value || !overviewItem.value) return;
+  const url = URL.createObjectURL(overviewBlob.value);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `contrato_${overviewItem.value.id}.docx`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showSnackbar("Documento baixado com sucesso!");
+}
+
 async function openVerificacao(item: Contrato) {
   verificacaoItem.value = item;
   verificacaoFields.value = [];
@@ -617,1838 +653,473 @@ async function openVerificacao(item: Contrato) {
   verificacaoImages.value = {};
   dialogVerificacao.value = true;
 
-  if (!item.template) {
-    contratosStore.error = "Template não encontrado.";
-    return;
-  }
+  if (!item.template) { contratosStore.error = "Template n\u00e3o encontrado."; return; }
 
   verificacaoLoading.value = true;
   try {
-    // Carrega os campos do template
-    const fieldsResp = await templatesStore.fetchFields(item.template, { force: true });
-    verificacaoFields.value = fieldsResp.fields || [];
+    const resp = await templatesStore.fetchFields(item.template, { force: true });
+    verificacaoFields.value = resp.fields || [];
 
-    // Garante que o cliente está no cache
-    let cliente =
-      (clientesStore.items as Cliente[]).find((c) => c.id === item.cliente) || null;
-    if (!cliente) {
-      try {
-        cliente = await clientesStore.getDetail(item.cliente);
-      } catch (err) {
-        console.warn("Erro ao carregar cliente:", err);
-      }
-    }
+    const cliente = await ensureCliente(item.cliente);
+    const conta = await getContaPrincipal(item.cliente);
+    const bancoReu = await getBancoReu();
+    const primeiro = item.contratos?.length ? item.contratos[0] : null;
+    const multiContratos = (item.contratos?.length || 0) > 1;
 
-    // Carrega conta principal do cliente
-    const conta = await getContaPrincipalForCliente(item.cliente);
+    const data: Record<string, any> = {};
+    const images: Record<string, File | null> = {};
 
-    // Carrega banco do réu
-    const bancoReu = await getBancoReuForCliente(item.cliente);
-
-    // Pega o primeiro contrato
-    const primeiroContrato =
-      item.contratos && item.contratos.length > 0 ? item.contratos[0] : null;
-
-    // Inicializa todos os campos do template primeiro (garante que todos existam)
-    const initialData: Record<string, any> = {};
-    const initialImages: Record<string, File | null> = {};
+    // STEP 1: init + prefill from sources
     for (const field of verificacaoFields.value) {
-      // Verifica se é um campo de imagem
-      const k = normKey(field.name);
-      const rawK = normKey(field.raw || "");
-      // imagem_do_contrato deve vir como path (texto), não como upload de arquivo
-      const isImageFieldCheck =
-        (k.includes("imagem") || rawK.includes("imagem")) &&
-        !k.includes("imagemdocontrato") &&
-        !rawK.includes("imagemdocontrato");
-      
-      // Se é campo de contrato e há múltiplos contratos, inicializa para cada contrato
-      if (isContratoField(field) && item.contratos && item.contratos.length > 1) {
-        for (let i = 0; i < item.contratos.length; i++) {
-          const fieldKey = `${field.name}_contrato_${i}`;
-          if (isImageFieldCheck) {
-            initialImages[fieldKey] = null;
-          } else {
-            // Inicializa com valor padrão baseado no tipo
-            if (field.type === "bool") {
-              initialData[fieldKey] = false;
-            } else if (field.type === "int") {
-              initialData[fieldKey] = "";
-            } else {
-              initialData[fieldKey] = "";
-            }
-          }
-        }
-      } else {
-        // Campo normal: inicializa uma vez
-        if (isImageFieldCheck) {
-          initialImages[field.name] = null;
-        } else {
-          // Inicializa com valor padrão baseado no tipo
-          if (field.type === "bool") {
-            initialData[field.name] = false;
-          } else if (field.type === "int") {
-            initialData[field.name] = "";
-          } else {
-            initialData[field.name] = "";
-          }
-        }
-      }
-    }
-    verificacaoData.value = initialData;
-    verificacaoImages.value = initialImages;
+      const isImg = isImageField(field);
+      const isCtr = isContratoFieldLocal(field);
 
-    // PASSO 1: Preenche primeiro com os dados das fontes (cliente, contas, contratos, etc.)
-    // Estes serão usados como fallback quando verifica_documento não tiver dados ou estiver vazio
-    for (const field of verificacaoFields.value) {
-      // Se é campo de contrato e há múltiplos contratos, preenche para cada contrato
-      if (isContratoField(field) && item.contratos && item.contratos.length > 1) {
-        for (let i = 0; i < item.contratos.length; i++) {
-          const contrato = item.contratos[i];
-          const fieldKey = `${field.name}_contrato_${i}`;
-          
-          // Para campos item.*, usa o nome original do campo para buscar
-          // O valueFromSources vai normalizar e detectar o canon corretamente
-          const v = valueFromSources(
-            cliente,
-            conta,
-            bancoReu,
-            contrato,
-            item,
-            field.name
-          );
-          
-          // Se encontrou um valor, preenche
-          if (v !== undefined && v !== null && v !== "") {
-            if (field.type === "bool") {
-              verificacaoData.value[fieldKey] = Boolean(v);
-            } else if (field.type === "int") {
-              const n = Number(v);
-              if (!Number.isNaN(n)) {
-                verificacaoData.value[fieldKey] = n;
-              } else if (String(v).trim() !== "") {
-                verificacaoData.value[fieldKey] = String(v);
-              }
-            } else {
-              verificacaoData.value[fieldKey] = String(v);
-            }
-          }
+      if (isCtr && multiContratos) {
+        for (let i = 0; i < item.contratos!.length; i++) {
+          const fk = `${field.name}_contrato_${i}`;
+          if (isImg) { images[fk] = null; continue; }
+          data[fk] = field.type === "bool" ? false : "";
+          const v = valueFromSources(cliente, conta, bancoReu, item.contratos![i], field.name);
+          assignTyped(data, fk, v, field);
         }
         continue;
       }
-      
-      // Verifica se é um campo "extenso" que precisa ser gerado a partir de um valor numérico
+
+      if (isImg) { images[field.name] = null; continue; }
+      data[field.name] = field.type === "bool" ? false : "";
+
+      // Extenso detection
       if (isExtensoField(field.name)) {
-        const baseFieldName = getBaseFieldNameForExtenso(field.name);
-        // Tenta encontrar o valor numérico correspondente
-        let valorNumerico: number | null = null;
-        
-        // Primeiro tenta buscar diretamente pelo nome base
-        const baseValue = valueFromSources(
-          cliente,
-          conta,
-          bancoReu,
-          primeiroContrato,
-          item,
-          baseFieldName
-        );
-        
-        if (baseValue !== undefined && baseValue !== null) {
-          const num = typeof baseValue === "string" 
-            ? parseFloat(baseValue.replace(/[^\d,.-]/g, "").replace(",", "."))
-            : Number(baseValue);
-          if (!isNaN(num)) {
-            valorNumerico = num;
-          }
-        }
-        
-        // Se não encontrou, tenta buscar em verificacaoData (caso já tenha sido preenchido)
-        if (valorNumerico === null && verificacaoData.value[baseFieldName] !== undefined) {
-          const num = Number(verificacaoData.value[baseFieldName]);
-          if (!isNaN(num)) {
-            valorNumerico = num;
-          }
-        }
-        
-        // Se encontrou um valor numérico, converte para extenso
-        if (valorNumerico !== null) {
-          verificacaoData.value[field.name] = numeroParaExtenso(valorNumerico);
-          continue;
+        const baseName = getBaseFieldNameForExtenso(field.name);
+        const baseVal = valueFromSources(cliente, conta, bancoReu, primeiro, baseName);
+        if (baseVal != null) {
+          const num = typeof baseVal === "string"
+            ? parseFloat(baseVal.replace(/[^\d,.-]/g, "").replace(",", "."))
+            : Number(baseVal);
+          if (!isNaN(num)) { data[field.name] = numeroParaExtenso(num); continue; }
         }
       }
-      
-      // Para campos normais, busca das fontes
-      const v = valueFromSources(
-        cliente,
-        conta,
-        bancoReu,
-        primeiroContrato,
-        item,
-        field.name
-      );
-      
-      // Se encontrou um valor, preenche
-      if (v !== undefined && v !== null && v !== "") {
-        if (field.type === "bool") {
-          verificacaoData.value[field.name] = Boolean(v);
-        } else if (field.type === "int") {
-          const n = Number(v);
-          if (!Number.isNaN(n)) {
-            verificacaoData.value[field.name] = n;
-          } else if (String(v).trim() !== "") {
-            verificacaoData.value[field.name] = String(v);
-          }
-        } else {
-          verificacaoData.value[field.name] = String(v);
-        }
+
+      const v = valueFromSources(cliente, conta, bancoReu, primeiro, field.name);
+      assignTyped(data, field.name, v, field);
+    }
+
+    // STEP 2: auto-generate extenso for ALL numeric fields
+    for (const [key, val] of Object.entries(data)) {
+      if (val === "" || val === null || val === undefined) continue;
+      const num = typeof val === "number" ? val : typeof val === "string" ? parseFloat(val.replace(/[^\d,.-]/g, "").replace(",", ".")) : NaN;
+      if (isNaN(num) || num === 0) continue;
+      // Generate extenso variant if not already present
+      const extensoKey = `${key}_extenso`;
+      if (!(extensoKey in data)) {
+        data[extensoKey] = numeroParaExtenso(num);
       }
     }
 
-    // PASSO 2: Sobrescreve com dados de verifica_documento quando existirem e não estiverem vazios
-    // Prioriza verifica_documento sobre os dados das fontes
+    // STEP 3: bancos_e_contratos & bancos_reus from composable
+    if (item.contratos?.length) {
+      const bec = formatBancosEContratos(item.contratos);
+      if (bec) data["bancos_e_contratos"] = bec;
+
+      if (contasReuStore.items.length === 0) await contasReuStore.fetchAll();
+      const br = formatBancosReus(item.contratos, contasReuStore.items);
+      if (br) data["bancos_reus"] = br;
+    }
+
+    // STEP 4: overlay verifica_documento (user-edited values take priority)
     if (item.verifica_documento && typeof item.verifica_documento === "object") {
       for (const [key, value] of Object.entries(item.verifica_documento)) {
         if (isEmpty(value)) continue;
-        
-        // Verifica se é um campo indexado de contrato (ex: numero_contrato_contrato_0)
-        if (key.includes("_contrato_")) {
-          // Preenche diretamente o campo indexado
-          verificacaoData.value[key] = value;
-          continue;
-        }
-        
-        // Verifica se o campo existe no template
-        const fieldExists = verificacaoFields.value.some(f => f.name === key);
-        if (fieldExists) {
-          // Preenche com os dados salvos, respeitando o tipo do campo
-          const field = verificacaoFields.value.find(f => f.name === key);
-          if (field) {
-            if (field.type === "bool") {
-              verificacaoData.value[key] = Boolean(value);
-            } else if (field.type === "int") {
-              const n = Number(value);
-              if (!Number.isNaN(n)) {
-                verificacaoData.value[key] = n;
-              } else {
-                verificacaoData.value[key] = String(value);
-              }
-            } else {
-              verificacaoData.value[key] = String(value);
-            }
-          } else {
-            // Se não encontrou o campo no template, ainda assim preenche (pode ser campo customizado)
-            verificacaoData.value[key] = value;
-          }
-        } else {
-          // Se não encontrou o campo no template, ainda assim preenche (pode ser campo customizado)
-          verificacaoData.value[key] = value;
-        }
+        if (key.includes("_contrato_")) { data[key] = value; continue; }
+        const field = verificacaoFields.value.find((f) => f.name === key);
+        if (field) { assignTyped(data, key, value, field); } else { data[key] = value; }
       }
     }
 
-    // PASSO 3: Gera o campo bancos_e_contratos com base nos contratos
-    // Este campo é gerado dinamicamente e não vem do template diretamente
-    if (item.contratos && item.contratos.length > 0) {
-      const bancosMap = new Map<string, string[]>(); // banco -> array de números de contrato
-      
-      for (const contrato of item.contratos) {
-        // Pega o banco e número do contrato
-        const banco = (contrato as any).banco_do_contrato || (contrato as any).banco_contrato || "";
-        const numeroContrato = contrato.numero_do_contrato || (contrato as any).numero_contrato || "";
-        
-        // Só adiciona se ambos existirem e não estiverem vazios
-        if (banco && banco.trim() !== "" && numeroContrato && String(numeroContrato).trim() !== "") {
-          if (!bancosMap.has(banco)) {
-            bancosMap.set(banco, []);
-          }
-          bancosMap.get(banco)!.push(String(numeroContrato));
-        }
-      }
-      
-      // Formata a string conforme os exemplos
-      if (bancosMap.size > 0) {
-        const partes: string[] = [];
-        for (const [banco, numeros] of bancosMap.entries()) {
-          if (numeros.length === 0) continue;
-          
-          let numerosFormatados = "";
-          if (numeros.length === 1) {
-            numerosFormatados = numeros[0];
-          } else if (numeros.length === 2) {
-            numerosFormatados = `${numeros[0]} e ${numeros[1]}`;
-          } else {
-            const todosMenosUltimo = numeros.slice(0, -1).join(", ");
-            const ultimo = numeros[numeros.length - 1];
-            numerosFormatados = `${todosMenosUltimo} e ${ultimo}`;
-          }
-          
-          const textoContrato = numeros.length > 1 ? "CONTRATOS" : "CONTRATO";
-          partes.push(`Banco ${banco}, ${textoContrato} Nº ${numerosFormatados}`);
-        }
-        
-        if (partes.length > 0) {
-          const bancosEContratosFormatado = partes.join(", ") + ":";
-          verificacaoData.value["bancos_e_contratos"] = bancosEContratosFormatado;
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:820',message:'bancos_e_contratos gerado no openVerificacao',data:{bancosEContratosFormatado,partes,bancosMapSize:bancosMap.size},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-          // #endregion
-        }
-      } else {
-        // Se não há bancos válidos, deixa vazio ou remove o campo
-        if (verificacaoData.value["bancos_e_contratos"]) {
-          delete verificacaoData.value["bancos_e_contratos"];
-        }
-      }
-    } else {
-      // Se não há contratos, remove o campo se existir
-      if (verificacaoData.value["bancos_e_contratos"]) {
-        delete verificacaoData.value["bancos_e_contratos"];
-      }
-    }
-    
-    // Se verifica_documento tem bancos_e_contratos, sobrescreve o valor gerado
-    if (item.verifica_documento && typeof item.verifica_documento === "object" && item.verifica_documento["bancos_e_contratos"]) {
-      const valorSalvo = item.verifica_documento["bancos_e_contratos"];
-      if (!isEmpty(valorSalvo)) {
-        verificacaoData.value["bancos_e_contratos"] = String(valorSalvo);
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:850',message:'bancos_e_contratos sobrescrito por verifica_documento',data:{valorSalvo},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
-      }
-    }
-
-    // Gera o campo bancos_reus
-    if (item.contratos && item.contratos.length > 0) {
-      const bancosUnicos = new Set<string>();
-      for (const contrato of item.contratos) {
-        const banco = (contrato as any).banco_do_contrato || (contrato as any).banco_contrato || "";
-        if (banco && banco.trim() !== "") {
-          bancosUnicos.add(banco.trim());
-        }
-      }
-
-      // Sempre formata o banco completo (mesmo com 1 contrato ou mesmo banco)
-      if (bancosUnicos.size > 0) {
-        const partesBanco: string[] = [];
-        
-        // Garante que os bancos do réu estão carregados
-        if (contasReuStore.items.length === 0) {
-          await contasReuStore.fetchAll();
-        }
-        
-        for (const nomeBanco of Array.from(bancosUnicos)) {
-          // Busca o banco do réu pelo nome
-          const bancoReu = contasReuStore.items.find(
-            b => b.banco_nome && b.banco_nome.trim().toLowerCase() === nomeBanco.trim().toLowerCase()
-          );
-          
-          if (bancoReu) {
-            // Formata: **Nome do banco**, descrição, CNPJ, endereço
-            const partes: string[] = [];
-            
-            // Nome do banco em negrito
-            partes.push(`**${bancoReu.banco_nome}**`);
-            
-            // Descrição
-            if (bancoReu.descricao && bancoReu.descricao.trim() !== "") {
-              partes.push(bancoReu.descricao.trim());
-            }
-            
-            // CNPJ
-            if (bancoReu.cnpj) {
-              const cnpjFormatado = bancoReu.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
-              partes.push(`CNPJ: ${cnpjFormatado}`);
-            }
-            
-            // Endereço completo
-            const enderecoParts: string[] = [];
-            if (bancoReu.logradouro) enderecoParts.push(bancoReu.logradouro);
-            if (bancoReu.numero) enderecoParts.push(bancoReu.numero);
-            if (bancoReu.bairro) enderecoParts.push(bancoReu.bairro);
-            if (bancoReu.cidade) enderecoParts.push(bancoReu.cidade);
-            if (bancoReu.estado) enderecoParts.push(bancoReu.estado);
-            if (bancoReu.cep) {
-              const cepFormatado = bancoReu.cep.replace(/^(\d{5})(\d{3})$/, "$1-$2");
-              enderecoParts.push(`CEP: ${cepFormatado}`);
-            }
-            
-            if (enderecoParts.length > 0) {
-              partes.push(enderecoParts.join(", "));
-            }
-            
-            partesBanco.push(partes.join(", "));
-          } else {
-            // Se não encontrou o banco, usa apenas o nome
-            partesBanco.push(`**${nomeBanco}**`);
-          }
-        }
-        
-        // Junta todos os bancos separados por ", e " (ou apenas um banco se for único)
-        verificacaoData.value["bancos_reus"] = partesBanco.join(", e ");
-      } else {
-        verificacaoData.value["bancos_reus"] = "";
-      }
-    } else {
-      verificacaoData.value["bancos_reus"] = "";
-    }
-
-    // Se verifica_documento tem bancos_reus, sobrescreve o valor gerado
-    if (item.verifica_documento && typeof item.verifica_documento === "object" && item.verifica_documento["bancos_reus"]) {
-      const valorSalvo = item.verifica_documento["bancos_reus"];
-      if (!isEmpty(valorSalvo)) {
-        verificacaoData.value["bancos_reus"] = String(valorSalvo);
-      }
-    }
-
-    // Aguarda o próximo tick para garantir que o DOM foi atualizado
+    verificacaoData.value = data;
+    verificacaoImages.value = images;
     await nextTick();
-  } catch (error_) {
-    const err = error_ as any;
-    console.error("Erro ao carregar verificação:", error_);
-    contratosStore.error =
-      err?.response?.data?.detail ||
-      err?.message ||
-      "Falha ao carregar campos do template";
+  } catch (err: any) {
+    contratosStore.error = friendlyError(err, 'templates', 'fields');
   } finally {
     verificacaoLoading.value = false;
   }
 }
 
-function isImageField(field: TemplateField): boolean {
-  const k = normKey(field.name);
-  const rawK = normKey(field.raw || "");
-  // No modal de verificação, a variável imagem_do_contrato deve ser um path de texto,
-  // então não tratamos esse campo como upload de imagem aqui.
-  if (k.includes("imagemdocontrato") || rawK.includes("imagemdocontrato")) {
-    return false;
-  }
-  return k.includes("imagem") || rawK.includes("imagem");
+async function resetVerificacao() {
+  if (!verificacaoItem.value) return;
+  if (!confirm("Deseja resetar o documento? Todos os campos ser\u00e3o limpos e recarregados das fontes originais.")) return;
+  // Re-open without verifica_documento overlay
+  const item = { ...verificacaoItem.value, verifica_documento: null } as Contrato;
+  await openVerificacao(item);
+  showSnackbar("Documento resetado. Campos recarregados das fontes originais.");
 }
 
-// Detecta se um campo é de contrato
-function isContratoField(field: TemplateField): boolean {
-  // Exceção: bancos_e_contratos é uma string única, não é campo de contrato
-  const rawName = (field.raw || "").toLowerCase();
-  const fieldName = (field.name || "").toLowerCase();
-  if (rawName.includes("bancos_e_contratos") || fieldName.includes("bancos_e_contratos")) {
-    return false;
-  }
-  
-  // Verifica se o campo tem "item." no nome original (raw) - indica que é campo de contrato no Jinja
-  // Exemplo: item.banco_do_contrato, item.valor_do_emprestimo
-  if (rawName.includes("item.")) {
-    return true;
-  }
-  
-  // Verifica também no nome normalizado (item_*)
-  const k = normKey(field.name);
-  if (k.startsWith("item") && k !== "item") {
-    return true;
-  }
-  
-  // Verifica pelos nomes canônicos conhecidos (apenas se não for bancos_e_contratos)
-  const canon = detectCanon(k);
-  const contratoFields = [
-    "numero_contrato", "banco_contrato", "situacao", "origem_averbacao",
-    "data_inclusao", "data_inicio_desconto", "data_fim_desconto",
-    "quantidade_parcelas", "valor_parcela", "iof", "valor_do_emprestimo",
-    "valor_liberado"
-  ];
-  return contratoFields.includes(canon);
-}
-
-// Watcher para atualizar automaticamente campos "extenso" quando valores numéricos mudam
+// Watcher for extenso auto-generation (template fields + dynamic numeric fields)
 watch(
   () => verificacaoData.value,
   (newData) => {
-    if (!verificacaoFields.value || verificacaoFields.value.length === 0) return;
-    
-    // Para cada campo "extenso", verifica se o valor base mudou
-    for (const field of verificacaoFields.value) {
-      if (isExtensoField(field.name)) {
-        const baseFieldName = getBaseFieldNameForExtenso(field.name);
-        const baseValue = newData[baseFieldName];
-        
-        if (baseValue !== undefined && baseValue !== null) {
-          const num = typeof baseValue === "string"
-            ? parseFloat(baseValue.toString().replace(/[^\d,.-]/g, "").replace(",", "."))
-            : Number(baseValue);
-          
-          if (!isNaN(num) && num !== 0) {
-            // Atualiza o campo extenso automaticamente
-            verificacaoData.value[field.name] = numeroParaExtenso(num);
-          } else if (num === 0 || baseValue === "" || baseValue === null) {
-            verificacaoData.value[field.name] = "";
-          }
+    // 1) Template extenso fields
+    if (verificacaoFields.value?.length) {
+      for (const field of verificacaoFields.value) {
+        if (!isExtensoField(field.name)) continue;
+        const baseName = getBaseFieldNameForExtenso(field.name);
+        const baseVal = newData[baseName];
+        if (baseVal == null) continue;
+        const num = typeof baseVal === "string"
+          ? parseFloat(baseVal.toString().replace(/[^\d,.-]/g, "").replace(",", "."))
+          : Number(baseVal);
+        if (!isNaN(num) && num !== 0) {
+          verificacaoData.value[field.name] = numeroParaExtenso(num);
+        } else if (num === 0 || baseVal === "" || baseVal === null) {
+          verificacaoData.value[field.name] = "";
         }
       }
     }
+
+    // 2) Auto-generate *_extenso for any numeric field that changed
+    for (const [key, val] of Object.entries(newData)) {
+      if (key.endsWith("_extenso")) continue; // skip extenso fields themselves
+      const extensoKey = `${key}_extenso`;
+      const num = typeof val === "number" ? val : typeof val === "string"
+        ? parseFloat(val.replace(/[^\d,.-]/g, "").replace(",", "."))
+        : NaN;
+      if (!isNaN(num) && num !== 0) {
+        const extensoVal = numeroParaExtenso(num);
+        if (verificacaoData.value[extensoKey] !== extensoVal) {
+          verificacaoData.value[extensoKey] = extensoVal;
+        }
+      } else if (extensoKey in verificacaoData.value && (val === "" || val === null || val === undefined || num === 0)) {
+        verificacaoData.value[extensoKey] = "";
+      }
+    }
   },
-  { deep: true }
+  { deep: true },
 );
 
 function countEmptyFields(): number {
-  if (!verificacaoFields.value || verificacaoFields.value.length === 0) {
-    return 0;
-  }
   let count = 0;
   for (const field of verificacaoFields.value) {
     if (isImageField(field)) {
-      // Para campos de imagem, verifica se há arquivo
-      if (!verificacaoImages.value[field.name]) {
-        count++;
-      }
+      if (!verificacaoImages.value[field.name]) count++;
     } else {
-      const value = verificacaoData.value[field.name];
-      const isEmpty =
-        value === undefined ||
-        value === null ||
-        value === false ||
-        (typeof value === "string" && value.trim() === "") ||
-        (typeof value === "number" && isNaN(value));
-      if (isEmpty) {
-        count++;
-      }
+      const v = verificacaoData.value[field.name];
+      if (v === undefined || v === null || v === false || (typeof v === "string" && !v.trim()) || (typeof v === "number" && isNaN(v))) count++;
     }
   }
   return count;
 }
 
-function onImageChange(fieldName: string, event: Event) {
-  const files = (event.target as HTMLInputElement).files;
-  if (files && files.length > 0) {
-    verificacaoImages.value[fieldName] = files[0];
-  } else {
-    verificacaoImages.value[fieldName] = null;
-  }
-}
-
-// Função para resetar o documento - limpa verifica_documento e recarrega das fontes
-async function resetVerificacao() {
-  if (!verificacaoItem.value) {
-    return;
-  }
-
-  if (!confirm("Deseja resetar o documento? Todos os campos serão limpos e recarregados das fontes originais (cliente, contas, contratos).")) {
-    return;
-  }
-
-  verificacaoLoading.value = true;
-  try {
-    const item = verificacaoItem.value;
-
-    // Limpa todos os dados do formulário
-    verificacaoData.value = {};
-    verificacaoImages.value = {};
-
-    // Inicializa todos os campos do template
-    const initialData: Record<string, any> = {};
-    const initialImages: Record<string, File | null> = {};
-    for (const field of verificacaoFields.value) {
-      const k = normKey(field.name);
-      const rawK = normKey(field.raw || "");
-      const isImageFieldCheck =
-        (k.includes("imagem") || rawK.includes("imagem")) &&
-        !k.includes("imagemdocontrato") &&
-        !rawK.includes("imagemdocontrato");
-      
-      if (isContratoField(field) && item.contratos && item.contratos.length > 1) {
-        for (let i = 0; i < item.contratos.length; i++) {
-          const fieldKey = `${field.name}_contrato_${i}`;
-          if (isImageFieldCheck) {
-            initialImages[fieldKey] = null;
-          } else {
-            if (field.type === "bool") {
-              initialData[fieldKey] = false;
-            } else if (field.type === "int") {
-              initialData[fieldKey] = "";
-            } else {
-              initialData[fieldKey] = "";
-            }
-          }
-        }
-      } else {
-        if (isImageFieldCheck) {
-          initialImages[field.name] = null;
-        } else {
-          if (field.type === "bool") {
-            initialData[field.name] = false;
-          } else if (field.type === "int") {
-            initialData[field.name] = "";
-          } else {
-            initialData[field.name] = "";
-          }
-        }
-      }
-    }
-    verificacaoData.value = initialData;
-    verificacaoImages.value = initialImages;
-
-    // Garante que o cliente está no cache
-    let cliente =
-      (clientesStore.items as Cliente[]).find((c) => c.id === item.cliente) || null;
-    if (!cliente) {
-      try {
-        cliente = await clientesStore.getDetail(item.cliente);
-      } catch (err) {
-        console.warn("Erro ao carregar cliente:", err);
-      }
-    }
-
-    // Carrega conta principal do cliente
-    const conta = await getContaPrincipalForCliente(item.cliente);
-
-    // Carrega banco do réu
-    const bancoReu = await getBancoReuForCliente(item.cliente);
-
-    // Pega o primeiro contrato
-    const primeiroContrato =
-      item.contratos && item.contratos.length > 0 ? item.contratos[0] : null;
-
-    // PASSO 1: Preenche apenas com os dados das fontes (SEM verifica_documento)
-    for (const field of verificacaoFields.value) {
-      if (isContratoField(field) && item.contratos && item.contratos.length > 1) {
-        for (let i = 0; i < item.contratos.length; i++) {
-          const contrato = item.contratos[i];
-          const fieldKey = `${field.name}_contrato_${i}`;
-          
-          const v = valueFromSources(
-            cliente,
-            conta,
-            bancoReu,
-            contrato,
-            item,
-            field.name
-          );
-          
-          if (v !== undefined && v !== null && v !== "") {
-            if (field.type === "bool") {
-              verificacaoData.value[fieldKey] = Boolean(v);
-            } else if (field.type === "int") {
-              const n = Number(v);
-              if (!Number.isNaN(n)) {
-                verificacaoData.value[fieldKey] = n;
-              } else if (String(v).trim() !== "") {
-                verificacaoData.value[fieldKey] = String(v);
-              }
-            } else {
-              verificacaoData.value[fieldKey] = String(v);
-            }
-          }
-        }
-        continue;
-      }
-      
-      // Verifica se é um campo "extenso"
-      if (isExtensoField(field.name)) {
-        const baseFieldName = getBaseFieldNameForExtenso(field.name);
-        let valorNumerico: number | null = null;
-        
-        const baseValue = valueFromSources(
-          cliente,
-          conta,
-          bancoReu,
-          primeiroContrato,
-          item,
-          baseFieldName
-        );
-        
-        if (baseValue !== undefined && baseValue !== null) {
-          const num = typeof baseValue === "string" 
-            ? parseFloat(baseValue.replace(/[^\d,.-]/g, "").replace(",", "."))
-            : Number(baseValue);
-          if (!isNaN(num)) {
-            valorNumerico = num;
-          }
-        }
-        
-        if (valorNumerico === null && verificacaoData.value[baseFieldName] !== undefined) {
-          const num = Number(verificacaoData.value[baseFieldName]);
-          if (!isNaN(num)) {
-            valorNumerico = num;
-          }
-        }
-        
-        if (valorNumerico !== null) {
-          verificacaoData.value[field.name] = numeroParaExtenso(valorNumerico);
-          continue;
-        }
-      }
-      
-      const v = valueFromSources(
-        cliente,
-        conta,
-        bancoReu,
-        primeiroContrato,
-        item,
-        field.name
-      );
-      
-      if (v !== undefined && v !== null && v !== "") {
-        if (field.type === "bool") {
-          verificacaoData.value[field.name] = Boolean(v);
-        } else if (field.type === "int") {
-          const n = Number(v);
-          if (!Number.isNaN(n)) {
-            verificacaoData.value[field.name] = n;
-          } else if (String(v).trim() !== "") {
-            verificacaoData.value[field.name] = String(v);
-          }
-        } else {
-          verificacaoData.value[field.name] = String(v);
-        }
-      }
-    }
-
-    // PASSO 2: Gera bancos_e_contratos (sem sobrescrever com verifica_documento)
-    if (item.contratos && item.contratos.length > 0) {
-      const bancosMap = new Map<string, string[]>();
-      
-      for (const contrato of item.contratos) {
-        const banco = (contrato as any).banco_do_contrato || (contrato as any).banco_contrato || "";
-        const numeroContrato = contrato.numero_do_contrato || (contrato as any).numero_contrato || "";
-        
-        if (banco && banco.trim() !== "" && numeroContrato && String(numeroContrato).trim() !== "") {
-          if (!bancosMap.has(banco)) {
-            bancosMap.set(banco, []);
-          }
-          bancosMap.get(banco)!.push(String(numeroContrato));
-        }
-      }
-      
-      if (bancosMap.size > 0) {
-        const partes: string[] = [];
-        for (const [banco, numeros] of bancosMap.entries()) {
-          if (numeros.length === 0) continue;
-          
-          let numerosFormatados = "";
-          if (numeros.length === 1) {
-            numerosFormatados = numeros[0];
-          } else if (numeros.length === 2) {
-            numerosFormatados = `${numeros[0]} e ${numeros[1]}`;
-          } else {
-            const todosMenosUltimo = numeros.slice(0, -1).join(", ");
-            const ultimo = numeros[numeros.length - 1];
-            numerosFormatados = `${todosMenosUltimo} e ${ultimo}`;
-          }
-          
-          const textoContrato = numeros.length > 1 ? "CONTRATOS" : "CONTRATO";
-          partes.push(`Banco ${banco}, ${textoContrato} Nº ${numerosFormatados}`);
-        }
-        
-        if (partes.length > 0) {
-          const bancosEContratosFormatado = partes.join(", ") + ":";
-          verificacaoData.value["bancos_e_contratos"] = bancosEContratosFormatado;
-        }
-      } else {
-        if (verificacaoData.value["bancos_e_contratos"]) {
-          delete verificacaoData.value["bancos_e_contratos"];
-        }
-      }
-    } else {
-      if (verificacaoData.value["bancos_e_contratos"]) {
-        delete verificacaoData.value["bancos_e_contratos"];
-      }
-    }
-
-    // Gera o campo bancos_reus
-    if (item.contratos && item.contratos.length > 0) {
-      const bancosUnicos = new Set<string>();
-      for (const contrato of item.contratos) {
-        const banco = (contrato as any).banco_do_contrato || (contrato as any).banco_contrato || "";
-        if (banco && banco.trim() !== "") {
-          bancosUnicos.add(banco.trim());
-        }
-      }
-
-      // Sempre formata o banco completo (mesmo com 1 contrato ou mesmo banco)
-      if (bancosUnicos.size > 0) {
-        const partesBanco: string[] = [];
-        
-        // Garante que os bancos do réu estão carregados
-        if (contasReuStore.items.length === 0) {
-          await contasReuStore.fetchAll();
-        }
-        
-        for (const nomeBanco of Array.from(bancosUnicos)) {
-          // Busca o banco do réu pelo nome
-          const bancoReu = contasReuStore.items.find(
-            b => b.banco_nome && b.banco_nome.trim().toLowerCase() === nomeBanco.trim().toLowerCase()
-          );
-          
-          if (bancoReu) {
-            // Formata: **Nome do banco**, descrição, CNPJ, endereço
-            const partes: string[] = [];
-            
-            // Nome do banco em negrito
-            partes.push(`**${bancoReu.banco_nome}**`);
-            
-            // Descrição
-            if (bancoReu.descricao && bancoReu.descricao.trim() !== "") {
-              partes.push(bancoReu.descricao.trim());
-            }
-            
-            // CNPJ
-            if (bancoReu.cnpj) {
-              const cnpjFormatado = bancoReu.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
-              partes.push(`CNPJ: ${cnpjFormatado}`);
-            }
-            
-            // Endereço completo
-            const enderecoParts: string[] = [];
-            if (bancoReu.logradouro) enderecoParts.push(bancoReu.logradouro);
-            if (bancoReu.numero) enderecoParts.push(bancoReu.numero);
-            if (bancoReu.bairro) enderecoParts.push(bancoReu.bairro);
-            if (bancoReu.cidade) enderecoParts.push(bancoReu.cidade);
-            if (bancoReu.estado) enderecoParts.push(bancoReu.estado);
-            if (bancoReu.cep) {
-              const cepFormatado = bancoReu.cep.replace(/^(\d{5})(\d{3})$/, "$1-$2");
-              enderecoParts.push(`CEP: ${cepFormatado}`);
-            }
-            
-            if (enderecoParts.length > 0) {
-              partes.push(enderecoParts.join(", "));
-            }
-            
-            partesBanco.push(partes.join(", "));
-          } else {
-            // Se não encontrou o banco, usa apenas o nome
-            partesBanco.push(`**${nomeBanco}**`);
-          }
-        }
-        
-        // Junta todos os bancos separados por ", e " (ou apenas um banco se for único)
-        verificacaoData.value["bancos_reus"] = partesBanco.join(", e ");
-      } else {
-        verificacaoData.value["bancos_reus"] = "";
-      }
-    } else {
-      verificacaoData.value["bancos_reus"] = "";
-    }
-
-    await nextTick();
-    showSnackbar("Documento resetado. Campos recarregados das fontes originais.", "success");
-  } catch (error_) {
-    const err = error_ as any;
-    console.error("Erro ao resetar verificação:", error_);
-    contratosStore.error =
-      err?.response?.data?.detail ||
-      err?.message ||
-      "Falha ao resetar documento";
-    showSnackbar("Erro ao resetar documento.", "error");
-  } finally {
-    verificacaoLoading.value = false;
-  }
-}
-
-// Função auxiliar para salvar todos os dados do formulário no JSONB verifica_documento
-// Salva todos os dados do formulário, incluindo os que já estão em contratos
+// ── Save verificacao ──────────────────────────────────────
 async function salvarDadosVerificacao(): Promise<void> {
-  if (!verificacaoItem.value) {
-    throw new Error("Item de verificação não encontrado");
+  if (!verificacaoItem.value) throw new Error("Item de verifica\u00e7\u00e3o n\u00e3o encontrado");
+
+  const dados: Record<string, any> = {};
+  for (const [key, value] of Object.entries(verificacaoData.value)) {
+    if (value === undefined || value === null) continue;
+    dados[key] = value;
   }
 
-  // Prepara os dados do formulário para salvar no verifica_documento
-  const dadosVerificacao: Record<string, any> = {};
-  
-  // Processa todos os campos do formulário
-  for (const [key, value] of Object.entries(verificacaoData.value)) {
-    // Ignora campos vazios/null/undefined, mas mantém valores falsy (false, 0, "")
-    if (value === undefined || value === null) {
-      continue;
-    }
-    
-    // Converte valores numéricos
-    if (typeof value === "number" || (typeof value === "string" && !isNaN(Number(value)) && value.trim() !== "")) {
-      const num = typeof value === "number" ? value : Number(value);
-      if (!isNaN(num)) {
-        dadosVerificacao[key] = num;
-      } else {
-        dadosVerificacao[key] = value;
-      }
-    } else if (typeof value === "boolean") {
-      dadosVerificacao[key] = value;
-    } else if (typeof value === "string") {
-      // Mantém strings, mesmo que vazias (podem ser campos de texto)
-      dadosVerificacao[key] = value;
-    } else {
-      dadosVerificacao[key] = value;
-    }
-  }
-  
-  // Também inclui os dados que já estão em contratos (mescla tudo)
-  const primeiroContrato = verificacaoItem.value.contratos && verificacaoItem.value.contratos.length > 0
-    ? verificacaoItem.value.contratos[0]
-    : {};
-  
-  // Mescla os dados de contratos com os dados do formulário
-  // Os dados do formulário têm prioridade (sobrescrevem se houver conflito)
-  const dadosCompletos = {
-    ...primeiroContrato,
-    ...dadosVerificacao,
-  };
-  
-  // Envia para o backend - salva no campo verifica_documento
-  await contratosStore.update(verificacaoItem.value.id, {
-    verifica_documento: dadosCompletos,
-  });
-  
-  // Atualiza o item local para refletir as mudanças
-  verificacaoItem.value.verifica_documento = dadosCompletos;
+  const primeiro = verificacaoItem.value.contratos?.length ? verificacaoItem.value.contratos[0] : {};
+  const completos = { ...primeiro, ...dados };
+
+  await contratosStore.update(verificacaoItem.value.id, { verifica_documento: completos });
+  verificacaoItem.value.verifica_documento = completos;
 }
 
 async function saveVerificacao() {
   try {
     await salvarDadosVerificacao();
-    showSnackbar("Dados salvos com sucesso!", "success");
+    showSnackbar("Dados salvos com sucesso!");
     dialogVerificacao.value = false;
-  } catch (error_) {
-    console.error("Erro ao salvar verificação:", error_);
-    const errorMessage = contratosStore.error || "Erro ao salvar os dados. Tente novamente.";
-    showSnackbar(errorMessage, "error");
+  } catch (error_: any) {
+    showSnackbar(friendlyError(error_, 'contratos', 'update'), "error");
   }
 }
 
+// ── Generate & Download ───────────────────────────────────
 async function generateAndDownload() {
-  if (!verificacaoItem.value || !verificacaoItem.value.template) {
-    contratosStore.error = "Template não encontrado.";
-    return;
-  }
+  if (!verificacaoItem.value?.template) { contratosStore.error = "Template n\u00e3o encontrado."; return; }
 
   rendering.value = true;
-  let contextLimpo: Record<string, any> = {}; // Declarado fora do try para estar acessível no catch
   try {
-    // Primeiro salva todos os dados do formulário no JSONB
     await salvarDadosVerificacao();
-    
-    // Prepara o contexto PRIMEIRO com os dados de verifica_documento (já formatados pelo usuário)
-    // Esses dados têm prioridade pois estão formatados de acordo com o que o usuário quer
-    let context: Record<string, any> = {};
-    
-    // Carrega dados de verifica_documento se existirem
-    if (verificacaoItem.value.verifica_documento && typeof verificacaoItem.value.verifica_documento === "object") {
-      for (const [key, value] of Object.entries(verificacaoItem.value.verifica_documento)) {
-        if (value !== undefined && value !== null) {
-          // Converte valores para tipos primitivos
-          if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-            context[key] = value;
-          } else {
-            context[key] = String(value);
-          }
-        }
-      }
-    }
-    
-    // Mapa de nomes normalizados para nomes originais (raw) dos campos
+
+    const cliente = await ensureCliente(verificacaoItem.value.cliente);
+    const conta = cliente ? await getContaPrincipal(cliente.id) : null;
+    const bancoReu = await getBancoReu();
+    const multiContratos = (verificacaoItem.value.contratos?.length || 0) > 1;
+
+    // Build raw name map
     const rawNameMap = new Map<string, string>();
-    for (const field of verificacaoFields.value) {
-      if (field.raw && field.name) {
-        rawNameMap.set(field.name, field.raw);
+    for (const f of verificacaoFields.value) { if (f.raw && f.name) rawNameMap.set(f.name, f.raw); }
+
+    // Start from verifica_documento
+    const context: Record<string, any> = {};
+    if (verificacaoItem.value.verifica_documento && typeof verificacaoItem.value.verifica_documento === "object") {
+      for (const [k, v] of Object.entries(verificacaoItem.value.verifica_documento)) {
+        if (v != null) context[k] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v);
       }
     }
-    
-    // Preenche campos vazios em verifica_documento com dados do contrato ou cliente
-    // Carrega dados necessários para valueFromSources
-    let cliente: Cliente | null = null;
-    let conta: ContaBancaria | null = null;
-    let bancoReu: ContaBancariaReu | null = null;
-    const primeiroContrato = verificacaoItem.value.contratos && verificacaoItem.value.contratos.length > 0
-      ? verificacaoItem.value.contratos[0]
-      : null;
-    
-    if (verificacaoItem.value.cliente) {
-      cliente = (clientesStore.items as Cliente[]).find((c) => c.id === verificacaoItem.value!.cliente) || null;
-      if (!cliente) {
-        try {
-          cliente = await clientesStore.getDetail(verificacaoItem.value.cliente);
-        } catch (err) {
-          console.warn("Erro ao carregar cliente para preencher campos vazios:", err);
-        }
-      }
-      
-      if (cliente) {
-        conta = await getContaPrincipalForCliente(cliente.id);
-        bancoReu = await getBancoReuForCliente(cliente.id);
-      }
-    }
-    
-    // Para cada campo do template, verifica se está vazio em verifica_documento
-    // Se estiver vazio, busca das fontes (cliente, conta, banco do réu, contrato)
+
+    // Fill empty fields from sources
     for (const field of verificacaoFields.value) {
-      // Ignora campos de contrato indexados (serão tratados no array de contratos)
-      if (isContratoField(field) && verificacaoItem.value.contratos && verificacaoItem.value.contratos.length > 1) {
-        continue; // Campos de múltiplos contratos serão tratados no array
-      }
-      
-      // Ignora bancos_e_contratos - será gerado depois se necessário
-      if (field.name === "bancos_e_contratos" || field.name.toLowerCase().includes("bancos_e_contratos")) {
-        continue;
-      }
-      
-      // Verifica se o campo está vazio ou não existe em verifica_documento
-      // Verifica tanto pelo nome normalizado quanto pelo nome raw (original)
+      if (isContratoFieldLocal(field) && multiContratos) continue;
+      if (field.name.toLowerCase().includes("bancos_e_contratos")) continue;
+
       const rawName = rawNameMap.get(field.name);
-      const fieldValue = context[field.name] || (rawName ? context[rawName] : undefined);
-      const isEmpty = fieldValue === undefined || 
-                     fieldValue === null || 
-                     (typeof fieldValue === "string" && fieldValue.trim() === "") ||
-                     fieldValue === "";
-      
-      // Se estiver vazio, busca das fontes
-      if (isEmpty) {
-        const valueFromSource = valueFromSources(
-          cliente,
-          conta,
-          bancoReu,
-          primeiroContrato,
-          verificacaoItem.value,
-          field.name
-        );
-        
-        // Se encontrou um valor, preenche
-        if (valueFromSource !== undefined && valueFromSource !== null && valueFromSource !== "") {
-          // Converte para o tipo correto
-          if (field.type === "bool") {
-            context[field.name] = Boolean(valueFromSource);
-          } else if (field.type === "int") {
-            const n = Number(valueFromSource);
-            if (!Number.isNaN(n)) {
-              context[field.name] = n;
-            } else if (String(valueFromSource).trim() !== "") {
-              context[field.name] = String(valueFromSource);
-            }
-          } else {
-            context[field.name] = String(valueFromSource);
-          }
-          
-          // Também adiciona com o nome original (raw) se for diferente
-          const rawName = rawNameMap.get(field.name);
-          if (rawName && rawName !== field.name) {
-            if (field.type === "bool") {
-              context[rawName] = Boolean(valueFromSource);
-            } else if (field.type === "int") {
-              const n = Number(valueFromSource);
-              if (!Number.isNaN(n)) {
-                context[rawName] = n;
-              } else if (String(valueFromSource).trim() !== "") {
-                context[rawName] = String(valueFromSource);
-              }
-            } else {
-              context[rawName] = String(valueFromSource);
-            }
-          }
-        }
+      const cur = context[field.name] || (rawName ? context[rawName] : undefined);
+      if (cur !== undefined && cur !== null && !(typeof cur === "string" && !cur.trim())) continue;
+
+      const primeiro = verificacaoItem.value.contratos?.length ? verificacaoItem.value.contratos[0] : null;
+      const v = valueFromSources(cliente, conta, bancoReu, primeiro, field.name);
+      if (v != null && v !== "") {
+        assignTyped(context, field.name, v, field);
+        if (rawName && rawName !== field.name) assignTyped(context, rawName, v, field);
       }
     }
-    
-    // Depois, mescla com os dados do formulário atual (verificacaoData)
-    // Os dados do formulário só sobrescrevem se não estiverem vazios
+
+    // Merge verificacaoData (non-indexed)
     for (const [key, value] of Object.entries(verificacaoData.value)) {
-      // Ignora campos indexados de contrato (ex: item_banco_do_contrato_contrato_0)
-      // Esses campos serão incluídos apenas no array de contratos
-      if (key.includes("_contrato_") && isContratoField({ name: key, raw: key, type: "string" } as TemplateField)) {
-        continue;
-      }
-      
-      // Se bancos_e_contratos já está em verifica_documento, usa esse valor (já formatado pelo usuário)
-      // Caso contrário, será gerado depois com base nos contratos
-      if (key === "bancos_e_contratos" || key.toLowerCase().includes("bancos_e_contratos")) {
-        // Se já existe em context (vindo de verifica_documento), mantém esse valor
-        // Se não existe, será gerado depois
-        if (context["bancos_e_contratos"] || context[key]) {
-          continue; // Mantém o valor de verifica_documento
-        }
-        // Se não existe em verifica_documento, será gerado depois
-        continue;
-      }
-      
-      // Converte valores para tipos primitivos
-      if (value === undefined || value === null) {
-        continue;
-      }
-      
-      let processedValue: any;
-      if (typeof value === "boolean") {
-        processedValue = value;
-      } else if (typeof value === "number") {
-        processedValue = value;
-      } else if (typeof value === "string") {
-        processedValue = value;
-      } else {
-        // Converte outros tipos para string
-        processedValue = String(value);
-      }
-      
-      // Adiciona com o nome normalizado (minúsculas/snake_case)
-      context[key] = processedValue;
-      
-      // Também adiciona com o nome original (raw) se for diferente
-      // Isso garante que templates com {{ NOME_COMPLETO }} funcionem
-      // MAS: não sobrescreve bancos_e_contratos que será gerado depois
-      const rawName = rawNameMap.get(key);
-      if (rawName && rawName !== key && rawName !== "bancos_e_contratos" && !rawName.toLowerCase().includes("bancos_e_contratos")) {
-        context[rawName] = processedValue;
-      }
+      if (key.includes("_contrato_") && isContratoField(key)) continue;
+      if (key.toLowerCase().includes("bancos_e_contratos")) continue;
+      if (value == null) continue;
+      context[key] = typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? value : String(value);
+      const raw = rawNameMap.get(key);
+      if (raw && raw !== key) context[raw] = context[key];
     }
-    
-    
-    // Adiciona os contratos como array para loops no Jinja
-    // Converte campos indexados de volta para arrays de contratos
-    // Exemplo de uso no template: {% for contrato in contratos %}
-    if (verificacaoItem.value.contratos && verificacaoItem.value.contratos.length > 0) {
-      // Se houver campos indexados no verificacaoData, usa eles para construir os contratos
+
+    // Build contratos array
+    if (verificacaoItem.value.contratos?.length) {
       const contratosArray: Record<string, any>[] = [];
       const contratosByIndex = new Map<number, Record<string, any>>();
-      
-      // Agrupa campos indexados por índice de contrato
+
+      // Group indexed fields
       for (const [key, value] of Object.entries(verificacaoData.value)) {
-        if (key.includes("_contrato_")) {
-          const parts = key.split("_contrato_");
-          if (parts.length === 2) {
-            let fieldName = parts[0];
-            const index = parseInt(parts[1]);
-            if (!isNaN(index)) {
-              if (!contratosByIndex.has(index)) {
-                contratosByIndex.set(index, {});
-              }
-              
-              // Remove prefixo "item_" dos campos para que o Jinja possa acessar corretamente
-              // Exemplo: item_banco_do_contrato → banco_do_contrato
-              if (fieldName.startsWith("item_")) {
-                fieldName = fieldName.replace(/^item_/, "");
-              }
-              
-              contratosByIndex.get(index)![fieldName] = value;
-            }
-          }
-        }
+        if (!key.includes("_contrato_")) continue;
+        const parts = key.split("_contrato_");
+        if (parts.length !== 2) continue;
+        const idx = parseInt(parts[1]);
+        if (isNaN(idx)) continue;
+        if (!contratosByIndex.has(idx)) contratosByIndex.set(idx, {});
+        let fn = parts[0].replace(/^item_/, "");
+        if (fn === "banco_contrato") fn = "banco_do_contrato";
+        contratosByIndex.get(idx)![fn] = value;
       }
-      
-      // Constrói array de contratos a partir dos dados indexados ou usa os contratos originais
-      if (contratosByIndex.size > 0) {
-        for (let i = 0; i < Math.max(contratosByIndex.size, verificacaoItem.value.contratos.length); i++) {
-          const contratoData = contratosByIndex.get(i) || {};
-          const contratoOriginal = verificacaoItem.value.contratos[i] || {};
-          
-          // Limpa e converte valores para primitivos serializáveis
-          const contratoLimpo: Record<string, any> = {};
-          
-          // Primeiro adiciona dados originais (convertidos)
-          for (const [key, value] of Object.entries(contratoOriginal)) {
-            if (value !== undefined && value !== null) {
-              // Mapeia banco_contrato para banco_do_contrato (nome esperado pelo template)
-              let finalKey = key;
-              if (key === "banco_contrato") {
-                finalKey = "banco_do_contrato";
-              }
-              
-              if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-                contratoLimpo[finalKey] = value;
-              } else {
-                contratoLimpo[finalKey] = String(value);
-              }
-            }
-          }
-          
-          // Depois sobrescreve com dados indexados (convertidos)
-          for (const [key, value] of Object.entries(contratoData)) {
-            if (value !== undefined && value !== null) {
-              // Remove prefixo "item_" se existir
-              let cleanKey = key;
-              if (cleanKey.startsWith("item_")) {
-                cleanKey = cleanKey.replace(/^item_/, "");
-              }
-              
-              // Mapeia banco_contrato para banco_do_contrato (nome esperado pelo template)
-              if (cleanKey === "banco_contrato") {
-                cleanKey = "banco_do_contrato";
-              }
-              
-              if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-                contratoLimpo[cleanKey] = value;
-              } else {
-                contratoLimpo[cleanKey] = String(value);
-              }
-            }
-          }
-          
-          // Também remove prefixo "item_" dos campos originais se existirem e mapeia banco_contrato
-          const keysToClean = Object.keys(contratoLimpo);
-          for (const key of keysToClean) {
-            if (key.startsWith("item_")) {
-              const cleanKey = key.replace(/^item_/, "");
-              const finalKey = cleanKey === "banco_contrato" ? "banco_do_contrato" : cleanKey;
-              if (!contratoLimpo[finalKey]) {
-                contratoLimpo[finalKey] = contratoLimpo[key];
-                delete contratoLimpo[key];
-              }
-            } else if (key === "banco_contrato" && !contratoLimpo["banco_do_contrato"]) {
-              // Se existe banco_contrato mas não banco_do_contrato, cria banco_do_contrato
-              contratoLimpo["banco_do_contrato"] = contratoLimpo[key];
-            }
-          }
-          
-          // Preenche campos vazios do contrato com dados das fontes
-          // Verifica campos de contrato que podem estar vazios
-          for (const field of verificacaoFields.value) {
-            if (isContratoField(field)) {
-              // Remove prefixo "item_" se existir para verificar o campo
-              let fieldNameToCheck = field.name;
-              if (fieldNameToCheck.startsWith("item_")) {
-                fieldNameToCheck = fieldNameToCheck.replace(/^item_/, "");
-              }
-              
-              // Verifica se o campo está vazio no contrato
-              const contratoFieldValue = contratoLimpo[fieldNameToCheck];
-              const isEmpty = contratoFieldValue === undefined || 
-                             contratoFieldValue === null || 
-                             (typeof contratoFieldValue === "string" && contratoFieldValue.trim() === "") ||
-                             contratoFieldValue === "";
-              
-              // Se estiver vazio, busca das fontes usando o contrato atual
-              if (isEmpty) {
-                const valueFromSource = valueFromSources(
-                  cliente,
-                  conta,
-                  bancoReu,
-                  contratoOriginal as ContratoItem,
-                  verificacaoItem.value,
-                  field.name
-                );
-                
-                // Se encontrou um valor, preenche
-                if (valueFromSource !== undefined && valueFromSource !== null && valueFromSource !== "") {
-                  if (field.type === "bool") {
-                    contratoLimpo[fieldNameToCheck] = Boolean(valueFromSource);
-                  } else if (field.type === "int") {
-                    const n = Number(valueFromSource);
-                    if (!Number.isNaN(n)) {
-                      contratoLimpo[fieldNameToCheck] = n;
-                    } else if (String(valueFromSource).trim() !== "") {
-                      contratoLimpo[fieldNameToCheck] = String(valueFromSource);
-                    }
-                  } else {
-                    contratoLimpo[fieldNameToCheck] = String(valueFromSource);
-                  }
-                }
-              }
-            }
-          }
-          
-          // banco_do_contrato só vem do contrato original, não preenche com fallbacks
-          // Se não existir no contrato original, não adiciona
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1145',message:'Contrato limpo adicionado ao array (com indexados)',data:{contratoLimpo,bancoDoContrato:contratoLimpo.banco_do_contrato,numeroDoContrato:contratoLimpo.numero_do_contrato},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
-          
-          contratosArray.push(contratoLimpo);
-        }
-      } else {
-        // Se não há campos indexados, usa os contratos originais (convertidos)
-        for (const contrato of verificacaoItem.value.contratos) {
-          const contratoLimpo: Record<string, any> = {};
-          for (const [key, value] of Object.entries(contrato)) {
-            if (value !== undefined && value !== null) {
-              // Remove prefixo "item_" se existir
-              let cleanKey = key;
-              if (cleanKey.startsWith("item_")) {
-                cleanKey = cleanKey.replace(/^item_/, "");
-              }
-              
-              // Mapeia banco_contrato para banco_do_contrato (nome esperado pelo template)
-              if (cleanKey === "banco_contrato") {
-                cleanKey = "banco_do_contrato";
-              }
-              
-              if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-                contratoLimpo[cleanKey] = value;
-              } else {
-                contratoLimpo[cleanKey] = String(value);
-              }
-            }
-          }
-          
-          // Preenche campos vazios do contrato com dados das fontes
-          // Verifica campos de contrato que podem estar vazios
-          for (const field of verificacaoFields.value) {
-            if (isContratoField(field)) {
-              // Remove prefixo "item_" se existir para verificar o campo
-              let fieldNameToCheck = field.name;
-              if (fieldNameToCheck.startsWith("item_")) {
-                fieldNameToCheck = fieldNameToCheck.replace(/^item_/, "");
-              }
-              
-              // Verifica se o campo está vazio no contrato
-              const contratoFieldValue = contratoLimpo[fieldNameToCheck];
-              const isEmpty = contratoFieldValue === undefined || 
-                             contratoFieldValue === null || 
-                             (typeof contratoFieldValue === "string" && contratoFieldValue.trim() === "") ||
-                             contratoFieldValue === "";
-              
-              // Se estiver vazio, busca das fontes usando o contrato atual
-              if (isEmpty) {
-                const valueFromSource = valueFromSources(
-                  cliente,
-                  conta,
-                  bancoReu,
-                  contrato as ContratoItem,
-                  verificacaoItem.value,
-                  field.name
-                );
-                
-                // Se encontrou um valor, preenche
-                if (valueFromSource !== undefined && valueFromSource !== null && valueFromSource !== "") {
-                  if (field.type === "bool") {
-                    contratoLimpo[fieldNameToCheck] = Boolean(valueFromSource);
-                  } else if (field.type === "int") {
-                    const n = Number(valueFromSource);
-                    if (!Number.isNaN(n)) {
-                      contratoLimpo[fieldNameToCheck] = n;
-                    } else if (String(valueFromSource).trim() !== "") {
-                      contratoLimpo[fieldNameToCheck] = String(valueFromSource);
-                    }
-                  } else {
-                    contratoLimpo[fieldNameToCheck] = String(valueFromSource);
-                  }
-                }
-              }
-            }
-          }
-          
-          // banco_do_contrato só vem do contrato original, não preenche com fallbacks
-          // Se não existir no contrato original, não adiciona
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1175',message:'Contrato limpo adicionado ao array (sem indexados)',data:{contratoLimpo,bancoDoContrato:contratoLimpo.banco_do_contrato,numeroDoContrato:contratoLimpo.numero_do_contrato,contratoOriginal:contrato},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
-          
-          contratosArray.push(contratoLimpo);
-        }
-      }
-      
-      // Adiciona apenas se houver contratos válidos
-      if (contratosArray.length > 0) {
-        context["contratos"] = contratosArray;
-        
-        // Gera o campo bancos_e_contratos agrupando contratos por banco
-        // MAS: só gera se não existir em verifica_documento (já formatado pelo usuário)
-        // Se já existe em context (vindo de verifica_documento), mantém esse valor
-        if (!context["bancos_e_contratos"]) {
-          // Remove qualquer valor anterior de bancos_e_contratos do contexto (se houver)
-          delete context["bancos_e_contratos"];
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1200',message:'Iniciando geração bancos_e_contratos',data:{contratosArrayLength:contratosArray.length,contratosArray:contratosArray},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
-        const bancosMap = new Map<string, string[]>(); // banco -> array de números de contrato
-        
-        // Usa os dados do contratosArray que já foi construído (inclui dados atualizados)
-        console.log("=== INICIANDO GERAÇÃO DE bancos_e_contratos ===");
-        console.log("contratosArray completo:", JSON.stringify(contratosArray, null, 2));
-        console.log("Número de contratos no array:", contratosArray.length);
-        
-        for (let i = 0; i < contratosArray.length; i++) {
-          const contrato = contratosArray[i];
-          // Pega o banco e número do contrato - tenta diferentes variações do nome
-          const banco = contrato.banco_do_contrato || contrato.banco_contrato || contrato["banco_do_contrato"] || "";
-          // Tenta todas as variações possíveis do número do contrato
-          const numeroContrato = contrato.numero_do_contrato || contrato.numero_contrato || contrato["numero_do_contrato"] || contrato["numero_contrato"] || "";
-          
-          // #region agent log
-          const contratoValues: Record<string, any> = {};
-          for (const [k, v] of Object.entries(contrato)) {
-            contratoValues[k] = v;
-          }
-          fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1205',message:'Valores extraídos do contrato',data:{index:i,banco,numeroContrato,contratoKeys:Object.keys(contrato),contratoValues},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1210',message:'Processando contrato para bancos_e_contratos',data:{index:i,banco,numeroContrato,bancoTipo:typeof banco,numeroTipo:typeof numeroContrato,bancoVazio:!banco||banco.trim()==='',numeroVazio:!numeroContrato||String(numeroContrato).trim()==='',todasChaves:Object.keys(contrato)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
-          
-          // Debug: log para verificar os dados
-          console.log(`Processando contrato ${i + 1} para bancos_e_contratos:`, {
-            banco,
-            numeroContrato,
-            bancoTipo: typeof banco,
-            numeroTipo: typeof numeroContrato,
-            bancoVazio: !banco || banco.trim() === "",
-            numeroVazio: !numeroContrato || String(numeroContrato).trim() === "",
-            todasChaves: Object.keys(contrato),
-            contratoCompleto: contrato
-          });
-          
-          // Só adiciona se ambos existirem e não estiverem vazios
-          const bancoValido = banco && banco.trim() !== "";
-          const numeroValido = numeroContrato && String(numeroContrato).trim() !== "";
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1220',message:'Validando banco e numero',data:{index:i,bancoValido,numeroValido,banco,numeroContrato},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
-          
-          if (bancoValido && numeroValido) {
-            if (!bancosMap.has(banco)) {
-              bancosMap.set(banco, []);
-            }
-            const numerosAntes = bancosMap.get(banco)!.length;
-            bancosMap.get(banco)!.push(String(numeroContrato));
-            const numerosDepois = bancosMap.get(banco)!.length;
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1230',message:'Adicionado ao mapa',data:{banco,numeroContrato,numerosAntes,numerosDepois,arrayCompleto:bancosMap.get(banco)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-            // #endregion
-            
-            console.log(`✓ Adicionado ao mapa: Banco "${banco}" - Contrato "${numeroContrato}"`);
-          } else {
-            console.warn(`✗ Ignorado: Banco="${banco}", Numero="${numeroContrato}"`);
-            if (!banco || banco.trim() === "") {
-              console.warn(`  → Razão: Banco está vazio ou não encontrado`);
-            }
-            if (!numeroContrato || String(numeroContrato).trim() === "") {
-              console.warn(`  → Razão: Número do contrato está vazio ou não encontrado`);
-            }
-          }
-        }
-        
-        // Debug: log do mapa de bancos
-        console.log("=== MAPA DE BANCOS GERADO ===");
-        console.log("Tamanho do mapa:", bancosMap.size);
-        
-        // #region agent log
-        const mapaData: Record<string, any> = {};
-        for (const [banco, numeros] of bancosMap.entries()) {
-          mapaData[banco] = {count: numeros.length, numeros: numeros};
-        }
-        fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1240',message:'Mapa de bancos gerado',data:{tamanho:bancosMap.size,mapa:mapaData},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
-        
-        for (const [banco, numeros] of bancosMap.entries()) {
-          console.log(`Banco: "${banco}" - Contratos: [${numeros.join(", ")}]`);
-        }
-        
-        // Só gera o campo se houver dados válidos (com banco e número de contrato)
-        if (bancosMap.size > 0) {
-          console.log("=== FORMATANDO bancos_e_contratos ===");
-          // Formata a string conforme os exemplos
-          // Exemplo 1: "Banco AGIBANK SA, CONTRATOS Nº 1512287291, 1240335985 e 1240335033:"
-          // Exemplo 2: "Banco AGIBANK SA, CONTRATOS Nº 1512287291, 1240335985 e 1240335033, Banco do Brasil SA, CONTRATOS Nº 121344345, 234324234:"
-          const partes: string[] = [];
-          for (const [banco, numeros] of bancosMap.entries()) {
-            console.log(`Formatando banco "${banco}" com ${numeros.length} contrato(s):`, numeros);
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1250',message:'Formatando banco',data:{banco,numerosLength:numeros.length,numeros},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-            // #endregion
-            
-            if (numeros.length === 0) {
-              console.warn(`⚠ Banco "${banco}" não tem números de contrato, pulando...`);
-              continue;
-            }
-            
-            let numerosFormatados = "";
-            if (numeros.length === 1) {
-              numerosFormatados = numeros[0];
-            } else if (numeros.length === 2) {
-              numerosFormatados = `${numeros[0]} e ${numeros[1]}`;
-            } else {
-              // Mais de 2: "num1, num2 e num3"
-              const todosMenosUltimo = numeros.slice(0, -1).join(", ");
-              const ultimo = numeros[numeros.length - 1];
-              numerosFormatados = `${todosMenosUltimo} e ${ultimo}`;
-            }
-            
-            const textoContrato = numeros.length > 1 ? "CONTRATOS" : "CONTRATO";
-            const parteFormatada = `Banco ${banco}, ${textoContrato} Nº ${numerosFormatados}`;
-            partes.push(parteFormatada);
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1270',message:'Parte formatada',data:{banco,numerosFormatados,parteFormatada,partesLength:partes.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-            // #endregion
-            
-            console.log(`✓ Parte formatada: "${parteFormatada}"`);
-          }
-          
-          // Só adiciona se houver partes válidas
-          if (partes.length > 0) {
-            // Junta as partes com vírgula e espaço, e adiciona dois pontos no final
-            const bancosEContratosFormatado = partes.join(", ") + ":";
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1280',message:'Antes de adicionar ao context',data:{bancosEContratosFormatado,partes,contextAntes:context["bancos_e_contratos"]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-            // #endregion
-            
-            context["bancos_e_contratos"] = bancosEContratosFormatado;
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1285',message:'Depois de adicionar ao context',data:{bancosEContratosFormatado,contextDepois:context["bancos_e_contratos"]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-            // #endregion
-            
-            console.log("✓ bancos_e_contratos gerado e adicionado ao context:", bancosEContratosFormatado);
-            console.log("✓ Context após adicionar bancos_e_contratos:", context["bancos_e_contratos"]);
-            console.log("✓ Partes formatadas:", partes);
-          } else {
-            console.warn("⚠ Nenhuma parte válida foi formatada, mesmo com bancos no mapa");
-          }
-        } else {
-          console.warn("⚠ Nenhum banco válido encontrado nos contratos para gerar bancos_e_contratos");
-          console.warn("⚠ Tamanho do bancosMap:", bancosMap.size);
-          console.warn("⚠ Contratos processados:", contratosArray.length);
-        }
-        // Se não houver dados válidos, não adiciona o campo (ou deixa vazio)
-        } else {
-          // Se bancos_e_contratos já existe em context (vindo de verifica_documento), mantém
-          console.log("✓ bancos_e_contratos já existe em verifica_documento, mantendo valor:", context["bancos_e_contratos"]);
+
+      const len = Math.max(contratosByIndex.size, verificacaoItem.value.contratos.length);
+      for (let i = 0; i < len; i++) {
+        const orig = verificacaoItem.value.contratos[i] || {};
+        const indexed = contratosByIndex.get(i) || {};
+        const clean: Record<string, any> = {};
+
+        // Original fields
+        for (const [k, v] of Object.entries(orig)) {
+          if (v == null) continue;
+          let ck = k.replace(/^item_/, "");
+          if (ck === "banco_contrato") ck = "banco_do_contrato";
+          clean[ck] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v);
         }
 
-        // Gera o campo bancos_reus
-        // Só gera se não existir em verifica_documento (já formatado pelo usuário)
-        if (!context["bancos_reus"]) {
-          const contratos = verificacaoItem.value.contratos || [];
-          
-          // Se não houver contratos, não gera
-          if (contratos.length === 0) {
-            context["bancos_reus"] = "";
-          } else {
-            // Coleta todos os bancos únicos dos contratos
-            const bancosUnicos = new Set<string>();
-            for (const contrato of contratos) {
-              const banco = (contrato as any).banco_do_contrato || (contrato as any).banco_contrato || "";
-              if (banco && banco.trim() !== "") {
-                bancosUnicos.add(banco.trim());
-              }
-            }
-
-            // Sempre formata o banco completo (mesmo com 1 contrato ou mesmo banco)
-            if (bancosUnicos.size > 0) {
-              const partesBanco: string[] = [];
-              
-              // Garante que os bancos do réu estão carregados
-              if (contasReuStore.items.length === 0) {
-                await contasReuStore.fetchAll();
-              }
-              
-              for (const nomeBanco of Array.from(bancosUnicos)) {
-                // Busca o banco do réu pelo nome
-                const bancoReu = contasReuStore.items.find(
-                  b => b.banco_nome && b.banco_nome.trim().toLowerCase() === nomeBanco.trim().toLowerCase()
-                );
-                
-                if (bancoReu) {
-                  // Formata: **Nome do banco**, descrição, CNPJ, endereço
-                  const partes: string[] = [];
-                  
-                  // Nome do banco em negrito (usando ** para markdown/HTML)
-                  partes.push(`**${bancoReu.banco_nome}**`);
-                  
-                  // Descrição
-                  if (bancoReu.descricao && bancoReu.descricao.trim() !== "") {
-                    partes.push(bancoReu.descricao.trim());
-                  }
-                  
-                  // CNPJ
-                  if (bancoReu.cnpj) {
-                    const cnpjFormatado = bancoReu.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
-                    partes.push(`CNPJ: ${cnpjFormatado}`);
-                  }
-                  
-                  // Endereço completo
-                  const enderecoParts: string[] = [];
-                  if (bancoReu.logradouro) enderecoParts.push(bancoReu.logradouro);
-                  if (bancoReu.numero) enderecoParts.push(bancoReu.numero);
-                  if (bancoReu.bairro) enderecoParts.push(bancoReu.bairro);
-                  if (bancoReu.cidade) enderecoParts.push(bancoReu.cidade);
-                  if (bancoReu.estado) enderecoParts.push(bancoReu.estado);
-                  if (bancoReu.cep) {
-                    const cepFormatado = bancoReu.cep.replace(/^(\d{5})(\d{3})$/, "$1-$2");
-                    enderecoParts.push(`CEP: ${cepFormatado}`);
-                  }
-                  
-                  if (enderecoParts.length > 0) {
-                    partes.push(enderecoParts.join(", "));
-                  }
-                  
-                  partesBanco.push(partes.join(", "));
-                } else {
-                  // Se não encontrou o banco, usa apenas o nome
-                  partesBanco.push(`**${nomeBanco}**`);
-                }
-              }
-              
-              // Junta todos os bancos separados por ", e " (ou apenas um banco se for único)
-              context["bancos_reus"] = partesBanco.join(", e ");
-            } else {
-              // Nenhum banco válido encontrado
-              context["bancos_reus"] = "";
-            }
-          }
+        // Indexed overrides
+        for (const [k, v] of Object.entries(indexed)) {
+          if (v == null) continue;
+          clean[k] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v);
         }
-      }
-    }
-    
-    // Por enquanto, não incluímos imagens no contexto
-    // O docxtpl precisa de objetos InlineImage especiais para imagens
-    // TODO: Implementar suporte a imagens usando InlineImage do docxtpl no backend
-    // for (const [fieldName, file] of Object.entries(verificacaoImages.value)) {
-    //   if (file) {
-    //     // Converte File para base64
-    //     const base64 = await new Promise<string>((resolve, reject) => {
-    //       const reader = new FileReader();
-    //       reader.onload = () => {
-    //         const result = reader.result as string;
-    //         // Remove o prefixo data:image/...;base64,
-    //         const base64String = result.split(',')[1];
-    //         resolve(base64String);
-    //       };
-    //       reader.onerror = reject;
-    //       reader.readAsDataURL(file);
-    //     });
-    //     context[fieldName] = base64;
-    //   }
-    // }
 
-    // Inclui campos do cliente que podem não estar no template mas são necessários
-    // (idoso, incapaz, criancaadolescente)
-    if (verificacaoItem.value.cliente) {
-      let cliente =
-        (clientesStore.items as Cliente[]).find((c) => c.id === verificacaoItem.value!.cliente) || null;
-      if (!cliente) {
-        try {
-          cliente = await clientesStore.getDetail(verificacaoItem.value.cliente);
-        } catch (err) {
-          console.warn("Erro ao carregar cliente para contexto:", err);
+        // Fill empty contract fields from sources
+        for (const field of verificacaoFields.value) {
+          if (!isContratoFieldLocal(field)) continue;
+          let fn = field.name.replace(/^item_/, "");
+          if (fn === "banco_contrato") fn = "banco_do_contrato";
+          const cur = clean[fn];
+          if (cur !== undefined && cur !== null && !(typeof cur === "string" && !cur.trim())) continue;
+          const v = valueFromSources(cliente, conta, bancoReu, orig as ContratoItem, field.name);
+          if (v != null && v !== "") assignTyped(clean, fn, v, field);
         }
+
+        contratosArray.push(clean);
       }
-      
-      if (cliente) {
-        // Adiciona campos do cliente ao contexto com todas as variações de nomes
-        const nomeCompleto = cliente.nome_completo || "";
-        
-        // Variações de nome_completo (case-insensitive)
-        context["nome_completo"] = nomeCompleto;
-        context["NOME_COMPLETO"] = nomeCompleto;
-        context["nome"] = nomeCompleto;
-        context["NOME"] = nomeCompleto;
-        
-        // Adiciona campos booleanos do cliente ao contexto (mesmo que não estejam no template)
-        // Usa os nomes canônicos que o valueFromSources usa
-        context["idoso"] = Boolean(cliente.se_idoso);
-        context["incapaz"] = Boolean(cliente.se_incapaz);
-        context["criancaadolescente"] = Boolean(cliente.se_crianca_adolescente);
-        // Também adiciona variações comuns de nomes
-        context["se_idoso"] = Boolean(cliente.se_idoso);
-        context["se_incapaz"] = Boolean(cliente.se_incapaz);
-        context["se_crianca_adolescente"] = Boolean(cliente.se_crianca_adolescente);
+
+      if (contratosArray.length) context["contratos"] = contratosArray;
+
+      // bancos_e_contratos
+      if (!context["bancos_e_contratos"]) {
+        const bec = formatBancosEContratos(contratosArray.map((c) => ({
+          banco_do_contrato: c.banco_do_contrato || "",
+          numero_do_contrato: c.numero_do_contrato || "",
+        }) as ContratoItem));
+        if (bec) context["bancos_e_contratos"] = bec;
+      }
+
+      // bancos_reus
+      if (!context["bancos_reus"]) {
+        if (contasReuStore.items.length === 0) await contasReuStore.fetchAll();
+        const br = formatBancosReus(
+          verificacaoItem.value.contratos,
+          contasReuStore.items,
+        );
+        if (br) context["bancos_reus"] = br;
       }
     }
 
-    // Limpa o contexto final: remove valores undefined, null e objetos complexos
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1350',message:'Antes de limpar context',data:{bancosEContratosAntes:context["bancos_e_contratos"]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
-    
-    contextLimpo = {};
-    for (const [key, value] of Object.entries(context)) {
-      if (value === undefined || value === null) {
-        continue;
-      }
-      
-      // Se for array, verifica se está vazio ou se tem valores válidos
-      if (Array.isArray(value)) {
-        if (value.length > 0) {
-          contextLimpo[key] = value;
-        }
-        continue;
-      }
-      
-      // Se for objeto, verifica se é um objeto simples (não Date, etc)
-      if (typeof value === "object" && value.constructor === Object) {
-        contextLimpo[key] = value;
-        continue;
-      }
-      
-      // Valores primitivos
-      if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
-        contextLimpo[key] = value;
-      } else {
-        // Converte outros tipos para string
-        contextLimpo[key] = String(value);
+    // Client boolean / name fields
+    if (cliente) {
+      const nome = cliente.nome_completo || "";
+      context["nome_completo"] = nome;
+      context["NOME_COMPLETO"] = nome;
+      context["nome"] = nome;
+      context["NOME"] = nome;
+      context["idoso"] = Boolean(cliente.se_idoso);
+      context["incapaz"] = Boolean(cliente.se_incapaz);
+      context["criancaadolescente"] = Boolean(cliente.se_crianca_adolescente);
+      context["se_idoso"] = Boolean(cliente.se_idoso);
+      context["se_incapaz"] = Boolean(cliente.se_incapaz);
+      context["se_crianca_adolescente"] = Boolean(cliente.se_crianca_adolescente);
+    }
+
+    // Auto-generate *_extenso for any numeric value in context
+    for (const [k, v] of Object.entries(context)) {
+      if (k.endsWith("_extenso")) continue;
+      const num = typeof v === "number" ? v : typeof v === "string"
+        ? parseFloat(v.replace(/[^\d,.-]/g, "").replace(",", ".")) : NaN;
+      if (!isNaN(num) && num !== 0) {
+        const ek = `${k}_extenso`;
+        if (!context[ek]) context[ek] = numeroParaExtenso(num);
       }
     }
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1380',message:'Depois de limpar context',data:{bancosEContratosDepois:contextLimpo["bancos_e_contratos"]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
-    
-    // Gera o documento usando o template store
+
+    // Clean context (remove nulls, keep primitives + arrays)
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(context)) {
+      if (v == null) continue;
+      if (Array.isArray(v)) { if (v.length) clean[k] = v; continue; }
+      if (typeof v === "object" && v.constructor === Object) { clean[k] = v; continue; }
+      clean[k] = typeof v === "boolean" || typeof v === "number" || typeof v === "string" ? v : String(v);
+    }
+
     const filename = renderFilename.value.trim() || `contrato_${verificacaoItem.value.id}.docx`;
-    
-    console.log("bancos_e_contratos FINAL no contextLimpo:", contextLimpo["bancos_e_contratos"]);
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1400',message:'Verificação final antes de enviar',data:{bancosEContratos:contextLimpo["bancos_e_contratos"],temContrato:typeof contextLimpo["bancos_e_contratos"]==='string'&&contextLimpo["bancos_e_contratos"].includes('CONTRATO')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
-    
-    // Verificação final: se bancos_e_contratos não está correto E não veio de verifica_documento, força a regeneração
-    // Se veio de verifica_documento, mantém o valor mesmo que não tenha "CONTRATO" (usuário pode ter formatado diferente)
-    const bancosEContratosVeioDeVerificaDocumento = verificacaoItem.value.verifica_documento && 
-      typeof verificacaoItem.value.verifica_documento === "object" && 
-      verificacaoItem.value.verifica_documento["bancos_e_contratos"];
-    
-    if (!bancosEContratosVeioDeVerificaDocumento && 
-        (!contextLimpo["bancos_e_contratos"] || (typeof contextLimpo["bancos_e_contratos"] === "string" && !contextLimpo["bancos_e_contratos"].includes("CONTRATO")))) {
-      console.warn("bancos_e_contratos não está correto e não veio de verifica_documento, regenerando...");
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/353bb56a-b58f-461f-b5be-a4cf4a869b22',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContratosView.vue:1405',message:'Regenerando bancos_e_contratos',data:{valorAtual:contextLimpo["bancos_e_contratos"],veioDeVerificaDocumento:bancosEContratosVeioDeVerificaDocumento},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
-      // Regenera bancos_e_contratos se necessário
-      if (contextLimpo["contratos"] && Array.isArray(contextLimpo["contratos"]) && contextLimpo["contratos"].length > 0) {
-        const bancosMapFinal = new Map<string, string[]>();
-        for (const contrato of contextLimpo["contratos"]) {
-          const banco = contrato.banco_do_contrato || "";
-          const numeroContrato = contrato.numero_do_contrato || "";
-          if (banco && banco.trim() !== "" && numeroContrato && String(numeroContrato).trim() !== "") {
-            if (!bancosMapFinal.has(banco)) {
-              bancosMapFinal.set(banco, []);
-            }
-            bancosMapFinal.get(banco)!.push(String(numeroContrato));
-          }
-        }
-        
-        if (bancosMapFinal.size > 0) {
-          const partesFinal: string[] = [];
-          for (const [banco, numeros] of bancosMapFinal.entries()) {
-            if (numeros.length === 0) continue;
-            let numerosFormatados = "";
-            if (numeros.length === 1) {
-              numerosFormatados = numeros[0];
-            } else if (numeros.length === 2) {
-              numerosFormatados = `${numeros[0]} e ${numeros[1]}`;
-            } else {
-              const todosMenosUltimo = numeros.slice(0, -1).join(", ");
-              const ultimo = numeros[numeros.length - 1];
-              numerosFormatados = `${todosMenosUltimo} e ${ultimo}`;
-            }
-            const textoContrato = numeros.length > 1 ? "CONTRATOS" : "CONTRATO";
-            partesFinal.push(`Banco ${banco}, ${textoContrato} Nº ${numerosFormatados}`);
-          }
-          if (partesFinal.length > 0) {
-            contextLimpo["bancos_e_contratos"] = partesFinal.join(", ") + ":";
-            console.log("bancos_e_contratos regenerado:", contextLimpo["bancos_e_contratos"]);
-          }
-        }
-      }
-    }
-    
-    // Chama o render do template store
-    const result = await templatesStore.render(verificacaoItem.value.template, {
-      context: contextLimpo,
-      filename: filename,
-    });
-    
-    // Faz o download
+    const result = await templatesStore.render(verificacaoItem.value.template, { context: clean, filename });
     templatesStore.downloadRendered(result);
-    showSnackbar("Documento gerado e baixado com sucesso!", "success");
-  } catch (error_) {
-    console.error("Erro ao gerar documento:", error_);
-    const err = error_ as any;
-    const errorDetail = err?.response?.data;
-    console.error("Detalhes do erro:", errorDetail);
-    // Log do contexto para debug (se disponível)
-    try {
-      console.error("Contexto que causou erro:", JSON.stringify(contextLimpo || {}, null, 2));
-    } catch {
-      console.error("Não foi possível serializar o contexto");
-    }
-    
-    const errorMessage = err?.response?.data?.detail || 
-                        templatesStore.lastError || 
-                        "Erro ao gerar o documento. Tente novamente.";
-    showSnackbar(errorMessage, "error");
-    
-    // Tenta extrair mensagem de erro do blob se for o caso
+    showSnackbar("Documento gerado e baixado com sucesso!");
+  } catch (err: any) {
+    const msg = friendlyError(err, 'contratos', 'render');
+    showSnackbar(msg, "error");
     if (err?.response?.data instanceof Blob) {
       try {
         const text = await err.response.data.text();
-        console.error("Mensagem de erro do backend:", text);
         const json = JSON.parse(text);
-        contratosStore.error = json.detail || text || "Erro ao gerar documento";
-      } catch (parseError) {
-        console.error("Erro ao parsear resposta:", parseError);
-        contratosStore.error = "Erro ao gerar documento";
+        contratosStore.error = json.detail || text;
+      } catch {
+        contratosStore.error = friendlyError(err, 'contratos', 'render');
       }
-    } else if (errorDetail?.detail) {
-      contratosStore.error = errorDetail.detail;
-    } else if (err?.message) {
-      contratosStore.error = err.message;
     } else {
-      contratosStore.error = "Erro ao gerar documento. Verifique o console para mais detalhes.";
+      contratosStore.error = friendlyError(err, 'contratos', 'render');
     }
   } finally {
     rendering.value = false;
   }
 }
 
-// Carregar dados necessários
+// ── Mount ─────────────────────────────────────────────────
 onMounted(async () => {
-  if (clientesStore.items.length === 0) {
-    await clientesStore.fetchList({});
-  }
-  if (templatesStore.items.length === 0) {
-    await templatesStore.fetch({});
-  }
-  if (contratosStore.items.length === 0) {
-    await contratosStore.fetchList({});
-  }
+  if (!clientesStore.items.length) await clientesStore.fetchList({});
+  if (!templatesStore.items.length) await templatesStore.fetch({});
+  if (!contratosStore.items.length) await contratosStore.fetchList({});
 });
 </script>
 
 <template>
   <v-container fluid>
-    <!-- Cabeçalho -->
-    <v-card class="rounded mb-4" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <div>
-          <div class="text-subtitle-1">Contratos</div>
-          <div class="text-body-2 text-medium-emphasis">
-            Gerenciamento de contratos
-          </div>
+    <!-- Page header -->
+    <div class="d-flex align-center flex-wrap ga-4 mb-6">
+      <div class="flex-grow-1">
+        <div class="d-flex align-center ga-3">
+          <h1 class="text-h5 font-weight-bold text-primary">Contratos</h1>
+          <v-chip v-if="kpis.total" color="primary" size="small" variant="tonal">
+            {{ kpis.total }} {{ kpis.total === 1 ? 'contrato' : 'contratos' }}
+          </v-chip>
         </div>
-        <v-spacer />
-        <v-btn
-          color="primary"
-          prepend-icon="mdi-file-document-plus"
-          @click="openCreate"
-        >
-          Novo contrato
-        </v-btn>
-      </v-card-title>
-    </v-card>
+        <p class="text-body-2 text-medium-emphasis mt-1">
+          Opera&ccedil;&atilde;o di&aacute;ria com foco em pend&ecirc;ncias, revis&atilde;o e assinatura
+        </p>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-file-document-plus" @click="openCreate">
+        Novo contrato
+      </v-btn>
+    </div>
 
-    <!-- Lista -->
-    <v-card class="rounded" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <v-responsive max-width="300px" class="mx-2">
+    <!-- KPIs -->
+    <v-row class="mb-4" dense>
+      <v-col cols="12" md="3" sm="6">
+        <v-card class="rounded" elevation="1" variant="tonal">
+          <v-card-text>
+            <div class="text-caption text-medium-emphasis">Total de contratos</div>
+            <div class="text-h5 font-weight-bold">{{ kpis.total }}</div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="12" md="3" sm="6">
+        <v-card class="rounded" elevation="1" variant="tonal" color="warning">
+          <v-card-text>
+            <div class="text-caption text-medium-emphasis">Pendentes</div>
+            <div class="text-h5 font-weight-bold">{{ kpis.pendentes }}</div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="12" md="3" sm="6">
+        <v-card class="rounded" elevation="1" variant="tonal" color="success">
+          <v-card-text>
+            <div class="text-caption text-medium-emphasis">Ativos</div>
+            <div class="text-h5 font-weight-bold">{{ kpis.ativos }}</div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="12" md="3" sm="6">
+        <v-card class="rounded" elevation="1" variant="tonal" color="error">
+          <v-card-text>
+            <div class="text-caption text-medium-emphasis">Sem imagem</div>
+            <div class="text-h5 font-weight-bold">{{ kpis.semImagem }}</div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- Table card -->
+    <v-card>
+      <v-card-text class="pb-0">
+        <div class="d-flex align-center flex-wrap ga-3 mb-4">
+          <v-chip-group
+            v-model="queueFilter"
+            color="primary"
+            mandatory
+            variant="outlined"
+          >
+            <v-chip
+              v-for="f in queueFilterOptions"
+              :key="f.value"
+              :color="queueFilter === f.value ? 'primary' : undefined"
+              :value="f.value"
+              :variant="queueFilter === f.value ? 'flat' : 'outlined'"
+            >
+              {{ f.label }}
+            </v-chip>
+          </v-chip-group>
+          <v-spacer />
           <v-text-field
             v-model="search"
             clearable
             density="compact"
-            variant="outlined"
             hide-details
-            label="Buscar"
+            placeholder="Buscar por cliente, template, banco ou n&ordm; contrato"
             prepend-inner-icon="mdi-magnify"
+            style="max-width: 380px"
           />
-        </v-responsive>
-      </v-card-title>
+        </div>
+      </v-card-text>
 
       <v-card-text>
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
-          {{ error }}
-        </v-alert>
+        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">{{ error }}</v-alert>
 
         <v-data-table
           v-model:sort-by="sortBy"
@@ -2458,272 +1129,278 @@ onMounted(async () => {
           :items="items"
           :loading="loading"
           loading-text="Carregando..."
-          :search="search"
         >
+          <!-- Nome com avatar -->
           <template #item.cliente="{ item }">
-            {{ clienteNome(item.cliente, item.cliente_nome) }}
+            <div class="d-flex align-center py-2">
+              <v-avatar class="mr-3" color="primary" size="34" variant="tonal">
+                <v-icon icon="mdi-file-sign" size="18" />
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">
+                  {{ clienteNome(item.cliente, item.cliente_nome) }}
+                </div>
+                <div class="text-caption text-medium-emphasis">
+                  {{ formatContratos(item.contratos) }}
+                </div>
+              </div>
+            </div>
           </template>
 
           <template #item.template="{ item }">
             {{ templateLabel(item.template, item.template_nome) }}
           </template>
 
-          <template #item.contratos="{ item }">
-            {{ formatContratos(item.contratos) }}
+          <template #item.status="{ item }">
+            <v-chip :color="statusColor(item)" size="small" variant="tonal">
+              {{ statusLabel(item) }}
+            </v-chip>
           </template>
 
+          <template #item.contratos="{ item }">
+            <span v-if="firstContrato(item)?.numero_do_contrato" class="text-body-2">
+              {{ firstContrato(item)!.numero_do_contrato }}
+            </span>
+            <span v-else class="text-medium-emphasis">&mdash;</span>
+          </template>
+
+          <!-- Actions menu (3-dots) -->
           <template #item.actions="{ item }">
-            <v-btn
-              color="primary"
-              icon
-              size="small"
-              variant="text"
-              @click="openVerificacao(item)"
-              title="Verificar documento"
-            >
-              <v-icon icon="mdi-file-check" />
-            </v-btn>
-            <v-btn icon size="small" variant="text" @click="openEdit(item)">
-              <v-icon icon="mdi-pencil" />
-            </v-btn>
-            <v-btn
-              color="error"
-              icon
-              size="small"
-              variant="text"
-              @click="remove(item)"
-            >
-              <v-icon icon="mdi-delete" />
-            </v-btn>
+            <v-menu location="bottom end">
+              <template #activator="{ props }">
+                <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
+              </template>
+              <v-list density="compact" min-width="200">
+                <v-list-item
+                  prepend-icon="mdi-eye-outline"
+                  title="Visualizar"
+                  @click="openOverview(item)"
+                />
+                <v-list-item
+                  prepend-icon="mdi-file-check-outline"
+                  title="Verificar documento"
+                  @click="openVerificacao(item)"
+                />
+                <v-list-item
+                  prepend-icon="mdi-pencil-outline"
+                  title="Editar"
+                  @click="openEdit(item)"
+                />
+                <v-divider class="my-1" />
+                <v-list-item
+                  class="text-error"
+                  prepend-icon="mdi-delete-outline"
+                  title="Excluir"
+                  @click="remove(item)"
+                />
+              </v-list>
+            </v-menu>
           </template>
 
           <template #no-data>
             <v-sheet class="pa-6 text-center text-medium-emphasis">
-              Nenhum contrato encontrado.
+              <div class="mb-2">Nenhum contrato para o filtro atual.</div>
+              <v-btn color="primary" prepend-icon="mdi-file-document-plus" variant="tonal" @click="openCreate">
+                Criar novo contrato
+              </v-btn>
             </v-sheet>
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
 
-    <!-- Dialog criar/editar -->
-    <v-dialog v-model="dialog" max-width="900" scrollable>
-      <v-card>
-        <v-card-title>
-          {{ editing ? "Editar contrato" : "Novo contrato" }}
-        </v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="save">
-            <!-- Cliente e Template -->
-            <v-row>
-              <v-col cols="12" md="4">
-                <v-select
-                  v-model="form.cliente"
-                  :items="clienteOptions"
-                  label="Cliente *"
-                  required
-                />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-select
-                  v-model="form.template"
-                  :items="templateOptions"
-                  label="Template *"
-                  required
-                />
-              </v-col>
-              <!-- Imagem do Contrato -->
-              <v-col cols="12" md="4">
-                <v-file-input
-                  v-model="form.imagem_do_contrato"
-                  :label="imagemExistenteUrl && !form.imagem_do_contrato ? 'Trocar imagem' : 'Imagem do contrato'"
-                  accept="image/*"
-                  prepend-icon="mdi-image"
-                  clearable
-                  show-size
-                  class="-mb-4"
-                />
-                <!-- Mostra path da imagem existente como link se houver e não houver nova imagem selecionada -->
-                <div v-if="imagemExistenteUrl && !form.imagem_do_contrato && imagemExistenteUrlCompleta" class="mt-0 d-flex align-center">
-                  <a
-                    :href="imagemExistenteUrlCompleta || '#'"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="text-decoration-none text-truncate"
-                    style="font-size: 0.875rem; flex: 1; min-width: 0;"
-                  >
-                    <v-icon icon="mdi-link" size="small" class="mr-1" />
-                    {{ imagemExistenteUrl }}
-                  </a>
-                  <v-btn
-                    icon="mdi-close"
-                    size="x-small"
-                    variant="text"
-                    class="ml-2 flex-shrink-0"
-                    @click="imagemExistenteUrl = null; form.imagem_do_contrato = null"
-                  />
-                </div>
-              </v-col>
-            </v-row>
+    <!-- ─── SidePanel: Create / Edit ─── -->
+    <SidePanel v-model="dialog" :width="700">
+      <template #header>
+        {{ editing ? 'Editar contrato' : 'Novo contrato' }}
+      </template>
 
-            <!-- Lista de Contratos -->
+      <v-form @submit.prevent="save">
+        <v-row>
+          <v-col cols="12" md="6">
+            <v-select v-model="form.cliente" :items="clienteOptions" label="Cliente *" required />
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-select v-model="form.template" :items="templateOptions" label="Template *" required />
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-select
+              v-model="selectedBeneficio"
+              clearable
+              :disabled="!form.cliente || !beneficioOptions.length"
+              item-title="title"
+              item-value="value"
+              :items="beneficioOptions"
+              label="Benefício"
+              :no-data-text="form.cliente ? 'Nenhum benefício cadastrado' : 'Selecione um cliente'"
+              :return-object="false"
+            />
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-file-input
+              v-model="form.imagem_do_contrato"
+              :label="imagemExistenteUrl && !form.imagem_do_contrato ? 'Trocar imagem' : 'Imagem do contrato'"
+              accept="image/*"
+              prepend-inner-icon="mdi-image"
+              clearable
+              show-size
+              class="-mb-4"
+            />
             <div
-              v-for="(contrato, index) in form.contratos"
-              :key="index"
-              class="mb-6"
+              v-if="imagemExistenteUrl && !form.imagem_do_contrato && imagemExistenteUrlCompleta"
+              class="mt-0 d-flex align-center"
             >
-              <v-divider class="mb-4" v-if="index > 0" />
-              <div class="d-flex align-center mb-4">
-                <h3 class="text-h6">Contrato {{ index + 1 }}</h3>
-                <v-spacer />
-                <v-btn
-                  v-if="form.contratos.length > 1"
-                  color="error"
-                  icon
-                  size="small"
-                  variant="text"
-                  @click="removeContrato(index)"
-                >
-                  <v-icon icon="mdi-delete" />
-                </v-btn>
-              </div>
-
-              <v-row>
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model="contrato.numero_do_contrato"
-                    label="Número do contrato"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-autocomplete
-                    v-model="contrato.banco_do_contrato"
-                    :items="bancosReuOptions"
-                    label="Banco"
-                    :loading="loadingBancosReu"
-                    clearable
-                    item-title="title"
-                    item-value="value"
-                    variant="outlined"
-                    density="comfortable"
-                    hint="Digite para buscar o banco"
-                    persistent-hint
-                  />
-                </v-col>
-          
-                <v-col cols="12" md="4">
-                  <v-select
-                    v-model="contrato.situacao"
-                    :items="situacaoItems"
-                    label="Situação"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-select
-                    v-model="contrato.origem_averbacao"
-                    :items="origemAverbacaoItems"
-                    label="Origem da averbação"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model="contrato.data_inclusao"
-                    label="Data de inclusão"
-                    type="date"
-                  />
-                </v-col>
-
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model="contrato.data_inicio_desconto"
-                    label="Data início desconto"
-                    type="month"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model="contrato.data_fim_desconto"
-                    label="Data fim desconto"
-                    type="month"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model.number="contrato.quantidade_parcelas"
-                    label="Quantidade de parcelas"
-                    type="number"
-                    min="0"
-                  />
-                </v-col>
-      
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model.number="contrato.valor_parcela"
-                    label="Valor da parcela"
-                    prefix="R$"
-                    type="number"
-                    step="0.01"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model.number="contrato.iof"
-                    label="IOF"
-                    prefix="R$"
-                    type="number"
-                    step="0.01"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model.number="contrato.valor_do_emprestimo"
-                    label="Valor do empréstimo"
-                    prefix="R$"
-                    type="number"
-                    step="0.01"
-                  />
-                </v-col>
-       
-                <v-col cols="12" md="4">
-                  <v-text-field
-                    v-model.number="contrato.valor_liberado"
-                    label="Valor liberado"
-                    prefix="R$"
-                    type="number"
-                    step="0.01"
-                  />
-                </v-col>
-              </v-row>
+              <a
+                :href="imagemExistenteUrlCompleta || '#'"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-decoration-none text-truncate"
+                style="font-size: 0.875rem; flex: 1; min-width: 0"
+              >
+                <v-icon icon="mdi-link" size="small" class="mr-1" />
+                {{ imagemExistenteUrl }}
+              </a>
+              <v-btn
+                icon="mdi-close"
+                size="x-small"
+                variant="text"
+                class="ml-2 flex-shrink-0"
+                @click="imagemExistenteUrl = null; form.imagem_do_contrato = null"
+              />
             </div>
+          </v-col>
+        </v-row>
 
-            <!-- Botão para adicionar mais contratos -->
+        <!-- Contratos list -->
+        <div v-for="(contrato, index) in form.contratos" :key="index" class="mb-6">
+          <v-divider v-if="index > 0" class="mb-4" />
+          <div class="d-flex align-center mb-4">
+            <h3 class="text-h6">Contrato {{ index + 1 }}</h3>
+            <v-spacer />
             <v-btn
-              color="primary"
-              variant="outlined"
-              prepend-icon="mdi-plus"
-              @click="addContrato"
-              class="mb-4"
+              v-if="form.contratos.length > 1"
+              color="error"
+              icon
+              size="small"
+              variant="text"
+              @click="removeContrato(index)"
             >
-              Adicionar Contrato
+              <v-icon icon="mdi-delete" />
             </v-btn>
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialog = false">Cancelar</v-btn>
-          <v-btn color="primary" @click="save">Salvar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+          </div>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="contrato.numero_do_contrato" label="N&uacute;mero do contrato" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-autocomplete
+                v-model="contrato.banco_do_contrato"
+                :items="bancosReuOptions"
+                label="Banco"
+                :loading="loadingBancosReu"
+                clearable
+                item-title="title"
+                item-value="value"
+                variant="outlined"
+                density="comfortable"
+                hint="Digite para buscar o banco"
+                persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="contrato.situacao" :items="situacaoItems" label="Situa&ccedil;&atilde;o" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="contrato.origem_averbacao" :items="origemAverbacaoItems" label="Origem da averba&ccedil;&atilde;o" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="contrato.data_inclusao" label="Data de inclus&atilde;o" type="date" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                :model-value="getMonthDisplayCached(contrato, 'data_inicio_desconto')"
+                label="Data início desconto"
+                placeholder="MM/AAAA"
+                inputmode="numeric"
+                maxlength="7"
+                @update:model-value="setMonthValue(contrato, 'data_inicio_desconto', $event)"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                :model-value="getMonthDisplayCached(contrato, 'data_fim_desconto')"
+                label="Data fim desconto"
+                placeholder="MM/AAAA"
+                inputmode="numeric"
+                maxlength="7"
+                @update:model-value="setMonthValue(contrato, 'data_fim_desconto', $event)"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model.number="contrato.quantidade_parcelas" label="Quantidade de parcelas" type="number" min="0" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                :model-value="getCurrencyDisplay(contrato, 'valor_parcela')"
+                label="Valor da parcela"
+                prefix="R$"
+                inputmode="decimal"
+                placeholder="0,00"
+                @update:model-value="setCurrencyValue(contrato, 'valor_parcela', $event)"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                :model-value="getCurrencyDisplay(contrato, 'iof')"
+                label="IOF"
+                prefix="R$"
+                inputmode="decimal"
+                placeholder="0,00"
+                @update:model-value="setCurrencyValue(contrato, 'iof', $event)"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                :model-value="getCurrencyDisplay(contrato, 'valor_do_emprestimo')"
+                label="Valor do empréstimo"
+                prefix="R$"
+                inputmode="decimal"
+                placeholder="0,00"
+                @update:model-value="setCurrencyValue(contrato, 'valor_do_emprestimo', $event)"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                :model-value="getCurrencyDisplay(contrato, 'valor_liberado')"
+                label="Valor liberado"
+                prefix="R$"
+                inputmode="decimal"
+                placeholder="0,00"
+                @update:model-value="setCurrencyValue(contrato, 'valor_liberado', $event)"
+              />
+            </v-col>
+          </v-row>
+        </div>
 
-    <!-- Dialog Verificação -->
-    <v-dialog v-model="dialogVerificacao" max-width="900" scrollable>
-      <v-card>
-        <v-card-title class="d-flex align-center">
+        <v-btn color="primary" variant="outlined" prepend-icon="mdi-plus" class="mb-4" @click="addContrato">
+          Adicionar Contrato
+        </v-btn>
+      </v-form>
+
+      <template #actions>
+        <v-btn variant="text" @click="dialog = false">Cancelar</v-btn>
+        <v-btn color="primary" @click="save">Salvar</v-btn>
+      </template>
+    </SidePanel>
+
+    <!-- ─── SidePanel: Verificacao ─── -->
+    <SidePanel v-model="dialogVerificacao" :width="700">
+      <template #header>
+        <div class="d-flex align-center" style="width: 100%">
           <div>
-            <div class="text-subtitle-1">Verificação do Documento</div>
+            <div class="text-subtitle-1">Verifica&ccedil;&atilde;o do Documento</div>
             <div class="text-body-2 text-medium-emphasis">
-              {{ verificacaoItem ? `Cliente: ${clienteNome(verificacaoItem.cliente, verificacaoItem.cliente_nome)}` : "" }}
+              {{ verificacaoItem ? `Cliente: ${clienteNome(verificacaoItem.cliente, verificacaoItem.cliente_nome)}` : '' }}
             </div>
           </div>
           <v-spacer />
@@ -2733,186 +1410,194 @@ onMounted(async () => {
             size="small"
             variant="tonal"
           >
-            {{ countEmptyFields() > 0 ? `${countEmptyFields()} campo(s) vazio(s)` : "Todos os campos preenchidos" }}
+            {{ countEmptyFields() > 0 ? `${countEmptyFields()} campo(s) vazio(s)` : 'Todos os campos preenchidos' }}
           </v-chip>
-        </v-card-title>
-        <v-card-text>
-          <v-skeleton-loader v-if="verificacaoLoading" type="table" />
-          <div v-else>
-            <v-alert
-              v-if="verificacaoFields.length === 0"
-              type="info"
-              variant="tonal"
-              class="mb-4"
+        </div>
+      </template>
+
+      <v-skeleton-loader v-if="verificacaoLoading" type="table" />
+      <div v-else>
+        <v-alert v-if="verificacaoFields.length === 0" type="info" variant="tonal" class="mb-4">
+          Nenhum campo detectado no template.
+        </v-alert>
+        <v-form v-else>
+          <!-- Normal fields (non-contract or single contract) -->
+          <v-row dense>
+            <v-col
+              v-for="field in verificacaoFields.filter(f =>
+                !(isContratoFieldLocal(f) && verificacaoItem && verificacaoItem.contratos && verificacaoItem.contratos.length > 1)
+              )"
+              :key="field.name"
+              cols="12"
+              :md="isImageField(field) ? 12 : 6"
             >
-              Nenhum campo detectado no template.
-            </v-alert>
-            <div v-else>              
-              <v-form v-if="verificacaoFields.length > 0">
-                <!-- Campos normais: todos os campos EXCETO campos de contrato quando há múltiplos contratos -->
-                <v-row dense>
-                  <v-col
-                    v-for="field in verificacaoFields.filter(f => {
-                      // Se é campo de contrato E há múltiplos contratos, não mostra aqui (mostra nas seções)
-                      if (isContratoField(f) && verificacaoItem && verificacaoItem.contratos && verificacaoItem.contratos.length > 1) {
-                        return false;
-                      }
-                      // Todos os outros campos aparecem aqui
-                      return true;
-                    })"
-                    :key="field.name"
-                    cols="12"
-                    :md="isImageField(field) ? 12 : 6"
-                  >
-                    <v-switch
-                      v-if="field.type === 'bool'"
-                      v-model="verificacaoData[field.name]"
-                      :label="field.raw || field.name"
-                      hide-details
-                    />
-                    <v-file-input
-                      v-else-if="isImageField(field)"
-                      :label="field.raw || field.name"
-                      accept="image/*"
-                      prepend-icon="mdi-image"
-                      :model-value="verificacaoImages[field.name] ? [verificacaoImages[field.name]!] : []"
-                      @update:model-value="(files: File | File[]) => {
-                        if (Array.isArray(files)) {
-                          verificacaoImages[field.name] = files.length > 0 ? files[0] : null;
-                        } else {
-                          verificacaoImages[field.name] = files || null;
-                        }
-                      }"
-                      hide-details="auto"
-                    />
-                    <v-text-field
-                      v-else
-                      v-model="verificacaoData[field.name]"
-                      :label="field.raw || field.name"
-                      :type="
-                        field.type === 'int'
-                          ? 'number'
-                          : field.type === 'date'
-                          ? 'date'
-                          : 'text'
-                      "
-                      hide-details="auto"
-                    />
-                  </v-col>
-                </v-row>
-                
-                <!-- Campos de contrato: mostra em seções repetidas se houver múltiplos contratos -->
-                <template v-if="verificacaoItem && verificacaoItem.contratos && verificacaoItem.contratos.length > 1">
-                  <template v-for="(contrato, contratoIndex) in verificacaoItem.contratos" :key="`contrato-section-${contratoIndex}`">
-                    <v-divider v-if="contratoIndex > 0" class="my-4" />
-                    <div class="text-subtitle-2 pa-2 font-weight-medium mb-2">
-                      Contrato {{ contratoIndex + 1 }}
-                    </div>
-                    <v-row dense>
-                      <v-col
-                        v-for="field in verificacaoFields.filter(f => isContratoField(f))"
-                        :key="`${field.name}-${contratoIndex}`"
-                        cols="12"
-                        :md="isImageField(field) ? 12 : 6"
-                      >
-                        <v-switch
-                          v-if="field.type === 'bool'"
-                          v-model="verificacaoData[`${field.name}_contrato_${contratoIndex}`]"
-                          :label="field.raw || field.name"
-                          hide-details
-                        />
-                        <v-file-input
-                          v-else-if="isImageField(field)"
-                          :label="field.raw || field.name"
-                          accept="image/*"
-                          prepend-icon="mdi-image"
-                          :model-value="verificacaoImages[`${field.name}_contrato_${contratoIndex}`] ? [verificacaoImages[`${field.name}_contrato_${contratoIndex}`]!] : []"
-                          @update:model-value="(files: File | File[]) => {
-                            const key = `${field.name}_contrato_${contratoIndex}`;
-                            if (Array.isArray(files)) {
-                              verificacaoImages[key] = files.length > 0 ? files[0] : null;
-                            } else {
-                              verificacaoImages[key] = files || null;
-                            }
-                          }"
-                          hide-details="auto"
-                        />
-                        <v-text-field
-                          v-else
-                          v-model="verificacaoData[`${field.name}_contrato_${contratoIndex}`]"
-                          :label="field.raw || field.name"
-                          :type="
-                            field.type === 'int'
-                              ? 'number'
-                              : field.type === 'date'
-                              ? 'date'
-                              : 'text'
-                          "
-                          hide-details="auto"
-                        />
-                      </v-col>
-                    </v-row>
-                  </template>
-                </template>
-              </v-form>
-              
-              <v-alert
+              <v-switch
+                v-if="field.type === 'bool'"
+                v-model="verificacaoData[field.name]"
+                :label="field.raw || field.name"
+                hide-details
+              />
+              <v-file-input
+                v-else-if="isImageField(field)"
+                :label="field.raw || field.name"
+                accept="image/*"
+                prepend-inner-icon="mdi-image"
+                :model-value="verificacaoImages[field.name] ? [verificacaoImages[field.name]!] : []"
+                @update:model-value="(files: File | File[]) => {
+                  verificacaoImages[field.name] = Array.isArray(files) ? (files[0] || null) : (files || null);
+                }"
+                hide-details="auto"
+              />
+              <v-text-field
                 v-else
-                type="warning"
-                variant="tonal"
-                class="mb-4"
-              >
-                Nenhum campo encontrado no template. Verifique se o template possui variáveis definidas.
-              </v-alert>
-            </div>
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-btn
-            color="warning"
-            variant="outlined"
-            prepend-icon="mdi-refresh"
-            :loading="verificacaoLoading"
-            @click="resetVerificacao"
-          >
-            Resetar Documento
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="dialogVerificacao = false">Cancelar</v-btn>
-          <v-btn
-            color="primary"
-            variant="outlined"
-            @click="saveVerificacao"
-          >
-            Salvar
-          </v-btn>
-          <v-btn
-            color="primary"
-            :loading="rendering"
-            @click="generateAndDownload"
-          >
-            Gerar e Baixar
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-    
-    <!-- Snackbar para feedback -->
-    <v-snackbar
-      v-model="snackbar"
-      :color="snackbarColor"
-      :timeout="4000"
-      location="top right"
-    >
-      {{ snackbarMessage }}
+                v-model="verificacaoData[field.name]"
+                :label="field.raw || field.name"
+                :type="field.type === 'int' ? 'number' : field.type === 'date' ? 'date' : 'text'"
+                hide-details="auto"
+              />
+            </v-col>
+          </v-row>
+
+          <!-- Multi-contract indexed fields -->
+          <template v-if="verificacaoItem && verificacaoItem.contratos && verificacaoItem.contratos.length > 1">
+            <template v-for="(_, cIdx) in verificacaoItem.contratos" :key="`cs-${cIdx}`">
+              <v-divider v-if="cIdx > 0" class="my-4" />
+              <div class="text-subtitle-2 pa-2 font-weight-medium mb-2">Contrato {{ cIdx + 1 }}</div>
+              <v-row dense>
+                <v-col
+                  v-for="field in verificacaoFields.filter(f => isContratoFieldLocal(f))"
+                  :key="`${field.name}-${cIdx}`"
+                  cols="12"
+                  :md="isImageField(field) ? 12 : 6"
+                >
+                  <v-switch
+                    v-if="field.type === 'bool'"
+                    v-model="verificacaoData[`${field.name}_contrato_${cIdx}`]"
+                    :label="field.raw || field.name"
+                    hide-details
+                  />
+                  <v-file-input
+                    v-else-if="isImageField(field)"
+                    :label="field.raw || field.name"
+                    accept="image/*"
+                    prepend-inner-icon="mdi-image"
+                    :model-value="verificacaoImages[`${field.name}_contrato_${cIdx}`] ? [verificacaoImages[`${field.name}_contrato_${cIdx}`]!] : []"
+                    @update:model-value="(files: File | File[]) => {
+                      const k = `${field.name}_contrato_${cIdx}`;
+                      verificacaoImages[k] = Array.isArray(files) ? (files[0] || null) : (files || null);
+                    }"
+                    hide-details="auto"
+                  />
+                  <v-text-field
+                    v-else
+                    v-model="verificacaoData[`${field.name}_contrato_${cIdx}`]"
+                    :label="field.raw || field.name"
+                    :type="field.type === 'int' ? 'number' : field.type === 'date' ? 'date' : 'text'"
+                    hide-details="auto"
+                  />
+                </v-col>
+              </v-row>
+            </template>
+          </template>
+        </v-form>
+      </div>
+
       <template #actions>
         <v-btn
-          variant="text"
-          @click="snackbar = false"
+          color="warning"
+          variant="outlined"
+          prepend-icon="mdi-refresh"
+          :loading="verificacaoLoading"
+          @click="resetVerificacao"
         >
-          Fechar
+          Resetar Documento
+        </v-btn>
+        <v-btn variant="text" @click="dialogVerificacao = false">Cancelar</v-btn>
+        <v-btn color="primary" variant="outlined" @click="saveVerificacao">Salvar</v-btn>
+        <v-btn color="primary" :loading="rendering" @click="generateAndDownload">Gerar e Baixar</v-btn>
+      </template>
+    </SidePanel>
+
+    <!-- ─── SidePanel: Overview (documento renderizado) ─── -->
+    <SidePanel v-model="dialogOverview" :width="820">
+      <template #header>
+        <div class="d-flex align-center">
+          <v-avatar class="mr-3" color="primary" size="36" variant="tonal">
+            <v-icon icon="mdi-file-eye-outline" size="18" />
+          </v-avatar>
+          <div>
+            <div class="text-body-1 font-weight-bold">Visualização do documento</div>
+            <div v-if="overviewItem" class="text-caption text-medium-emphasis">
+              {{ clienteNome(overviewItem.cliente, overviewItem.cliente_nome) }}
+              — {{ templateLabel(overviewItem.template, overviewItem.template_nome) }}
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <div v-if="overviewLoading" class="d-flex flex-column align-center justify-center py-12">
+        <v-progress-circular color="primary" indeterminate size="48" width="4" />
+        <div class="text-body-2 text-medium-emphasis mt-4">Gerando pré-visualização...</div>
+      </div>
+
+      <v-alert v-else-if="overviewError" type="error" class="mb-4">
+        {{ overviewError }}
+      </v-alert>
+
+      <div v-else ref="docxContainer" class="docx-container" />
+
+      <template #actions>
+        <v-btn variant="text" @click="dialogOverview = false">Fechar</v-btn>
+        <v-btn
+          color="primary"
+          prepend-icon="mdi-file-check-outline"
+          variant="outlined"
+          @click="dialogOverview = false; overviewItem && openVerificacao(overviewItem)"
+        >
+          Editar campos
+        </v-btn>
+        <v-btn
+          color="primary"
+          :disabled="!overviewBlob"
+          prepend-icon="mdi-download"
+          @click="downloadOverview"
+        >
+          Baixar .docx
         </v-btn>
       </template>
-    </v-snackbar>
+    </SidePanel>
+
+    <ConfirmDialog
+      v-model="confirmVisible"
+      title="Confirmar exclusão"
+      :message="confirmMessage"
+      confirm-text="Excluir"
+      @confirm="confirmAction?.()"
+    />
   </v-container>
 </template>
+
+<style scoped>
+.docx-container {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 400px;
+}
+</style>
+
+<style>
+/* docx-preview renderiza com classes próprias */
+.docx-container .docx-wrapper {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  padding: 20px;
+}
+
+.docx-container .docx-wrapper > section.docx {
+  margin: 0 auto;
+  padding: 40px 60px;
+  box-shadow: none;
+}
+</style>

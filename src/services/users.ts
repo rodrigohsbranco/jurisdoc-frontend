@@ -1,4 +1,4 @@
-import api from '@/services/api'
+import api, { fetchAllPages } from '@/services/api'
 
 export type User = {
   id: number
@@ -14,8 +14,9 @@ export async function listUsers (params: {
   search?: string
   ordering?: string
 }) {
-  const { data } = await api.get<User[]>('/api/accounts/users/', { params })
-  return Array.isArray(data) ? data : []
+  return await fetchAllPages<User>('/api/accounts/users/', {
+    params: { ...params, page_size: 100 },
+  })
 }
 
 export async function createUser (payload: User & { password: string }) {

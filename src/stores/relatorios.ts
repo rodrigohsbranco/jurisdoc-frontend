@@ -1,7 +1,7 @@
-import type { AxiosError } from 'axios'
 // src/stores/relatorios.ts
 import { defineStore } from 'pinia'
 import api from '@/services/api'
+import { friendlyError } from '@/utils/errorMessages'
 
 // ===== Tipos =====
 export type Bucket = 'day' | 'week' | 'month'
@@ -62,15 +62,6 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
   return q
 }
 
-function toErrorMessage (e: any): string {
-  const ax = e as AxiosError<any>
-  return (
-    ax.response?.data?.detail
-    || ax.message
-    || 'Falha ao carregar relatórios'
-  )
-}
-
 // ===== Store =====
 export const useRelatoriosStore = defineStore('relatorios', {
   state: () => ({
@@ -118,7 +109,7 @@ export const useRelatoriosStore = defineStore('relatorios', {
         })
         this.timeseries = data
       } catch (error) {
-        this.error = toErrorMessage(error)
+        this.error = friendlyError(error, 'relatorios', 'list')
         throw error
       } finally {
         this.loading.timeseries = false
@@ -143,7 +134,7 @@ export const useRelatoriosStore = defineStore('relatorios', {
         })
         this.templatesUsage = data
       } catch (error) {
-        this.error = toErrorMessage(error)
+        this.error = friendlyError(error, 'relatorios', 'list')
         throw error
       } finally {
         this.loading.templates = false
@@ -158,7 +149,7 @@ export const useRelatoriosStore = defineStore('relatorios', {
         const { data } = await api.get<DataQualityResponse>('/api/reports/data-quality/')
         this.dataQuality = data
       } catch (error) {
-        this.error = toErrorMessage(error)
+        this.error = friendlyError(error, 'relatorios', 'list')
         throw error
       } finally {
         this.loading.quality = false
@@ -193,7 +184,7 @@ export const useRelatoriosStore = defineStore('relatorios', {
         a.remove()
         URL.revokeObjectURL(url)
       } catch (error) {
-        this.error = toErrorMessage(error)
+        this.error = friendlyError(error, 'relatorios', 'list')
         throw error
       } finally {
         this.loading.export = false

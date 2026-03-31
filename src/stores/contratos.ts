@@ -1,6 +1,6 @@
-import type { AxiosError } from 'axios'
 import { defineStore } from 'pinia'
-import api from '@/services/api'
+import api, { fetchAllPages } from '@/services/api'
+import { friendlyError } from '@/utils/errorMessages'
 
 // ===== Tipos =====
 export interface ContratoItem {
@@ -73,24 +73,6 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
   return q
 }
 
-function toMessage (e: any): string {
-  if (!e?.response) {
-    return 'Falha de rede. Verifique se a API está no ar.'
-  }
-  const d = e.response.data
-  if (d?.detail) {
-    return d.detail
-  }
-  if (d && typeof d === 'object') {
-    const k = Object.keys(d)[0]
-    const msg = Array.isArray(d[k]) ? d[k][0] : d[k]
-    if (msg) {
-      return String(msg)
-    }
-  }
-  return e.message || 'Ocorreu um erro inesperado.'
-}
-
 // ===== Store =====
 export const useContratosStore = defineStore('contratos', {
   state: () => ({
@@ -112,21 +94,21 @@ export const useContratosStore = defineStore('contratos', {
       this.loading = true
       this.error = null
       try {
-        const res = await api.get<Contrato[]>('/api/cadastro/contratos/', {
+        const data = await fetchAllPages<Contrato>("/api/cadastro/contratos/", {
           params: buildQuery({
             search: params.search,
             ordering: params.ordering,
             cliente: params.cliente,
             template: params.template,
+            page_size: 100,
           }),
         })
-        this.items = (Array.isArray(res.data) ? res.data : []).map(c => normalize(c))
+        this.items = data.map(c => normalize(c))
         for (const it of this.items) {
           this.byIdCache.set(it.id, it)
         }
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'list')
         throw error
       } finally {
         this.loading = false
@@ -147,8 +129,7 @@ export const useContratosStore = defineStore('contratos', {
         }
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'list')
         throw error
       } finally {
         this.loading = false
@@ -166,8 +147,7 @@ export const useContratosStore = defineStore('contratos', {
         this.byIdCache.set(data.id, data)
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'create')
         throw error
       } finally {
         this.loadingMutation = false
@@ -187,8 +167,7 @@ export const useContratosStore = defineStore('contratos', {
         this.byIdCache.set(data.id, data)
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'create')
         throw error
       } finally {
         this.loadingMutation = false
@@ -209,8 +188,7 @@ export const useContratosStore = defineStore('contratos', {
         this.byIdCache.set(id, data)
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'update')
         throw error
       } finally {
         this.loadingMutation = false
@@ -233,8 +211,7 @@ export const useContratosStore = defineStore('contratos', {
         this.byIdCache.set(id, data)
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'update')
         throw error
       } finally {
         this.loadingMutation = false
@@ -250,8 +227,7 @@ export const useContratosStore = defineStore('contratos', {
         this.items = this.items.filter(i => i.id !== id)
         this.byIdCache.delete(id)
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = toMessage(e)
+        this.error = friendlyError(error, 'contratos', 'remove')
         throw error
       } finally {
         this.loadingMutation = false

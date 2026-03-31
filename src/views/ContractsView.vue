@@ -2,10 +2,19 @@
   import { computed, onMounted, reactive, ref } from 'vue'
   import { useClientesStore } from '@/stores/clientes'
   import { useContractsStore } from '@/stores/contracts'
+  import { useSnackbar } from '@/composables/useSnackbar'
+  import ConfirmDialog from '@/components/ConfirmDialog.vue'
+  import SidePanel from '@/components/SidePanel.vue'
 
   // Stores
   const contracts = useContractsStore()
   const clientes = useClientesStore()
+  const { showSuccess, showError } = useSnackbar()
+
+  // Confirm dialog
+  const confirmVisible = ref(false)
+  const confirmMessage = ref('')
+  const confirmAction = ref<(() => void) | null>(null)
 
   // ======= Helpers =======
   const clienteNome = (id?: number) => {
@@ -138,13 +147,17 @@
   }
 
   async function removeContract (item: any) {
-    if (!confirm('Excluir este contrato?')) return
-    try {
-      await contracts.remove(item.id)
-    } catch (error_: any) {
-      contracts.error
-        = error_?.response?.data?.detail || 'Erro ao excluir contrato.'
+    confirmMessage.value = 'Excluir este contrato?'
+    confirmAction.value = async () => {
+      try {
+        await contracts.remove(item.id)
+        showSuccess('Contrato excluído com sucesso!')
+      } catch (error_: any) {
+        contracts.error
+          = error_?.response?.data?.detail || 'Erro ao excluir contrato.'
+      }
     }
+    confirmVisible.value = true
   }
 
   // ======= Carregamento inicial =======
@@ -157,42 +170,33 @@
 
 <template>
   <v-container fluid>
-    <!-- Header -->
-    <v-card class="rounded-xl mb-4" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <div>
-          <div class="text-subtitle-1">Contratos</div>
-          <div class="text-body-2 text-medium-emphasis">
-            Cadastro e gerenciamento de contratos dos clientes
-          </div>
-        </div>
-        <v-spacer />
-        <v-btn
-          color="primary"
-          prepend-icon="mdi-file-document-plus"
-          @click="openCreate"
-        >
-          Novo contrato
-        </v-btn>
-      </v-card-title>
-    </v-card>
+    <!-- Page header -->
+    <div class="d-flex align-center flex-wrap ga-4 mb-6">
+      <div class="flex-grow-1">
+        <h1 class="text-h5 font-weight-bold text-primary">Contratos</h1>
+        <p class="text-body-2 text-medium-emphasis mt-1">Cadastro e gerenciamento de contratos dos clientes</p>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-file-document-plus" @click="openCreate">
+        Novo contrato
+      </v-btn>
+    </div>
 
-    <!-- Lista -->
-    <v-card class="rounded-xl" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <v-text-field
-          v-model="search"
-          clearable
-          density="comfortable"
-          hide-details
-          label="Buscar"
-          prepend-inner-icon="mdi-magnify"
-          style="max-width: 320px"
-        />
-      </v-card-title>
-
+    <!-- Table card -->
+    <v-card>
       <v-card-text>
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
+        <div class="d-flex align-center mb-4">
+          <v-text-field
+            v-model="search"
+            clearable
+            density="compact"
+            hide-details
+            label="Buscar contratos..."
+            prepend-inner-icon="mdi-magnify"
+            style="max-width: 320px"
+          />
+        </div>
+
+        <v-alert v-if="error" class="mb-4" type="error">
           {{ error }}
         </v-alert>
 
@@ -200,7 +204,6 @@
           v-model:items-per-page="itemsPerPage"
           v-model:page="page"
           v-model:sort-by="sortBy"
-          class="rounded-lg"
           :headers="headers"
           item-key="id"
           :items="items"
@@ -231,154 +234,157 @@
           </template>
 
           <template #item.actions="{ item }">
-            <v-btn icon size="small" variant="text" @click="openEdit(item)">
-              <v-icon icon="mdi-pencil" />
-            </v-btn>
-            <v-btn
-              color="error"
-              icon
-              size="small"
-              variant="text"
-              @click="removeContract(item)"
-            >
-              <v-icon icon="mdi-delete" />
-            </v-btn>
+            <div class="d-flex ga-1 justify-end">
+              <v-btn color="primary" icon size="small" variant="text" @click="openEdit(item)">
+                <v-icon icon="mdi-pencil-outline" size="18" />
+                <v-tooltip activator="parent" location="top">Editar</v-tooltip>
+              </v-btn>
+              <v-btn color="error" icon size="small" variant="text" @click="removeContract(item)">
+                <v-icon icon="mdi-delete-outline" size="18" />
+                <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
+              </v-btn>
+            </div>
           </template>
 
           <template #no-data>
-            <v-sheet class="pa-6 text-center text-medium-emphasis">
-              Nenhum contrato cadastrado.
-            </v-sheet>
+            <div class="pa-8 text-center">
+              <v-icon class="mb-2" color="grey-lighten-1" icon="mdi-file-document-outline" size="40" />
+              <div class="text-body-2 text-medium-emphasis">Nenhum contrato cadastrado</div>
+            </div>
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
 
-    <!-- Dialog: criar/editar -->
-    <v-dialog v-model="dialogUpsert" max-width="920">
-      <v-card>
-        <v-card-title>
-          {{ editing ? "Editar contrato" : "Novo contrato" }}
-        </v-card-title>
+    <!-- SidePanel: criar/editar -->
+    <SidePanel v-model="dialogUpsert" :width="680">
+      <template #header>
+        <v-icon class="mr-2" :icon="editing ? 'mdi-pencil-outline' : 'mdi-file-document-plus'" color="primary" />
+        {{ editing ? "Editar contrato" : "Novo contrato" }}
+      </template>
 
-        <v-card-text>
-          <v-form @submit.prevent="saveUpsert">
-            <v-row dense>
-              <v-col cols="12" md="6">
-                <v-select
-                  v-model="form.cliente"
-                  clearable
-                  item-title="title"
-                  item-value="value"
-                  :items="clientOptions"
-                  label="Cliente"
-                  :rules="[(v:any) => !!v || 'Obrigatório']"
-                />
-              </v-col>
+      <v-form @submit.prevent="saveUpsert">
+        <v-row dense>
+          <v-col cols="12" md="6">
+            <v-select
+              v-model="form.cliente"
+              clearable
+              item-title="title"
+              item-value="value"
+              :items="clientOptions"
+              label="Cliente"
+              :rules="[(v:any) => !!v || 'Obrigatório']"
+            />
+          </v-col>
 
-              <v-col cols="12" md="6">
-                <v-text-field
-                  v-model="form.numero_contrato"
-                  label="Número do contrato"
-                />
-              </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.numero_contrato"
+              label="Número do contrato"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.banco" label="Banco" />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field v-model="form.banco" label="Banco" />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.situacao" label="Situação" />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field v-model="form.situacao" label="Situação" />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="form.origem_averbacao"
-                  label="Origem de averbação"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model="form.origem_averbacao"
+              label="Origem de averbação"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="form.data_inclusao"
-                  label="Data de inclusão"
-                  type="date"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model="form.data_inclusao"
+              label="Data de inclusão"
+              type="date"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="form.data_inicio_desconto"
-                  label="Data início desconto"
-                  type="date"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model="form.data_inicio_desconto"
+              label="Data início desconto"
+              type="date"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="form.data_fim_desconto"
-                  label="Data fim desconto"
-                  type="date"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model="form.data_fim_desconto"
+              label="Data fim desconto"
+              type="date"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model.number="form.quantidade_parcelas"
-                  label="Quantidade de parcelas"
-                  type="number"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model.number="form.quantidade_parcelas"
+              label="Quantidade de parcelas"
+              type="number"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model.number="form.valor_parcela"
-                  label="Valor da parcela"
-                  prefix="R$"
-                  step="0.01"
-                  type="number"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model.number="form.valor_parcela"
+              label="Valor da parcela"
+              prefix="R$"
+              step="0.01"
+              type="number"
+            />
+          </v-col>
 
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model.number="form.iof"
-                  label="IOF"
-                  step="0.01"
-                  type="number"
-                />
-              </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field
+              v-model.number="form.iof"
+              label="IOF"
+              step="0.01"
+              type="number"
+            />
+          </v-col>
 
-              <v-col cols="12" md="6">
-                <v-text-field
-                  v-model.number="form.emprestado"
-                  label="Valor emprestado"
-                  prefix="R$"
-                  step="0.01"
-                  type="number"
-                />
-              </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model.number="form.emprestado"
+              label="Valor emprestado"
+              prefix="R$"
+              step="0.01"
+              type="number"
+            />
+          </v-col>
 
-              <v-col cols="12" md="6">
-                <v-text-field
-                  v-model.number="form.liberado"
-                  label="Valor liberado"
-                  prefix="R$"
-                  step="0.01"
-                  type="number"
-                />
-              </v-col>
-            </v-row>
-          </v-form>
-        </v-card-text>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model.number="form.liberado"
+              label="Valor liberado"
+              prefix="R$"
+              step="0.01"
+              type="number"
+            />
+          </v-col>
+        </v-row>
+      </v-form>
 
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialogUpsert = false">Cancelar</v-btn>
-          <v-btn color="primary" @click="saveUpsert">Salvar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      <template #actions>
+        <v-btn variant="text" @click="dialogUpsert = false">Cancelar</v-btn>
+        <v-btn color="primary" variant="elevated" @click="saveUpsert">Salvar</v-btn>
+      </template>
+    </SidePanel>
+
+    <ConfirmDialog
+      v-model="confirmVisible"
+      title="Confirmar exclusão"
+      :message="confirmMessage"
+      confirm-text="Excluir"
+      @confirm="confirmAction?.()"
+    />
   </v-container>
 </template>
 

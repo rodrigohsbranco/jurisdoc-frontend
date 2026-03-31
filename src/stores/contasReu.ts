@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import api from '@/services/api'
+import api, { fetchAllPages } from '@/services/api'
+import { friendlyError } from '@/utils/errorMessages'
 
 export type ContaBancariaReu = {
   id: number
@@ -27,24 +28,6 @@ export type ContaReuExtras = {
 const BASE = '/api/cadastro/contas-reu/'
 const NOTES_BASE = '/api/cadastro/bancos-descricoes/'
 
-function toMessage (e: any): string {
-  if (!e?.response) {
-    return 'Falha de rede. Verifique se a API está no ar.'
-  }
-  const d = e.response.data
-  if (d?.detail) {
-    return d.detail
-  }
-  if (d && typeof d === 'object') {
-    const k = Object.keys(d)[0]
-    const msg = Array.isArray(d[k]) ? d[k][0] : d[k]
-    if (msg) {
-      return String(msg)
-    }
-  }
-  return 'Ocorreu um erro. Tente novamente.'
-}
-
 export const useContasReuStore = defineStore('contasReu', {
   state: () => ({
     items: [] as ContaBancariaReu[],
@@ -69,11 +52,11 @@ export const useContasReuStore = defineStore('contasReu', {
       this.error = ''
       try {
         const params = { ...this.params, ...overrides }
-        const { data } = await api.get<ContaBancariaReu[]>(BASE, { params })
+        const data = await fetchAllPages<ContaBancariaReu>(BASE, { params: { ...params, page_size: 100 } })
         this.items = data
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'list')
         throw error
       } finally {
         this.loading = false
@@ -92,7 +75,7 @@ export const useContasReuStore = defineStore('contasReu', {
         this.items.push(data)
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'create')
         throw error
       } finally {
         this.loading = false
@@ -115,7 +98,7 @@ export const useContasReuStore = defineStore('contasReu', {
         }
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'update')
         throw error
       } finally {
         this.loading = false
@@ -129,7 +112,7 @@ export const useContasReuStore = defineStore('contasReu', {
         await api.delete(`${BASE}${id}/`)
         this.items = this.items.filter(i => i.id !== id)
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'remove')
         throw error
       } finally {
         this.loading = false

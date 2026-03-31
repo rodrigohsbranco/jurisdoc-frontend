@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import api from '@/services/api'
+import api, { fetchAllPages, listFromResponse } from '@/services/api'
+import { friendlyError } from '@/utils/errorMessages'
 
 export type ContaBancaria = {
   id: number
@@ -38,24 +39,6 @@ export type BankDescricao = {
 
 const BASE = '/api/cadastro/contas/'
 const NOTES_BASE = '/api/cadastro/bancos-descricoes/'
-
-function toMessage (e: any): string {
-  if (!e?.response) {
-    return 'Falha de rede. Verifique se a API está no ar.'
-  }
-  const d = e.response.data
-  if (d?.detail) {
-    return d.detail
-  }
-  if (d && typeof d === 'object') {
-    const k = Object.keys(d)[0]
-    const msg = Array.isArray(d[k]) ? d[k][0] : d[k]
-    if (msg) {
-      return String(msg)
-    }
-  }
-  return 'Ocorreu um erro. Tente novamente.'
-}
 
 function formatDescricaoBanco (d?: BankDescricao | null): string | null {
   if (!d) {
@@ -123,10 +106,10 @@ export const useContasStore = defineStore('contas', {
       this.error = ''
       try {
         const params = { ...this.params, ...overrides, cliente }
-        const { data } = await api.get<ContaBancaria[]>(BASE, { params })
+        const data = await fetchAllPages<ContaBancaria>(BASE, { params: { ...params, page_size: 100 } })
 
         // 🔹 Substitui as contas do cliente no cache local
-        this.items = this.items.filter(i => i.cliente !== cliente).concat(Array.isArray(data) ? data : [])
+        this.items = this.items.filter(i => i.cliente !== cliente).concat(data)
         this.clienteId = cliente
 
         // 🔹 Para cada conta, tenta hidratar descricao_ativa priorizando banco_id (banco_codigo)
@@ -164,7 +147,7 @@ export const useContasStore = defineStore('contas', {
           }
         }
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'list')
         throw error
       } finally {
         this.loading = false
@@ -183,7 +166,7 @@ export const useContasStore = defineStore('contas', {
         }
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'create')
         throw error
       }
     },
@@ -203,7 +186,7 @@ export const useContasStore = defineStore('contas', {
         }
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'update')
         throw error
       }
     },
@@ -218,7 +201,7 @@ export const useContasStore = defineStore('contas', {
         await api.delete(`${BASE}${id}/`)
         this.items = this.items.filter(i => i.id !== id)
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'remove')
         throw error
       }
     },
@@ -247,7 +230,7 @@ export const useContasStore = defineStore('contas', {
         }
         return null // 204
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'list')
         throw error
       }
     },
@@ -259,13 +242,13 @@ export const useContasStore = defineStore('contas', {
     async listDescricoes (banco_id: string) {
       this.error = ''
       try {
-        const { data } = await api.get<BankDescricao[]>(`${NOTES_BASE}variacoes/`, {
-          params: { bank_id: banco_id },
+        const { data } = await api.get<BankDescricao[] | any>(`variacoes/`, {
+          params: { bank_id: banco_id, page_size: 100 },
         })
-        this.notesByBank[banco_id] = Array.isArray(data) ? data : []
+        this.notesByBank[banco_id] = listFromResponse<BankDescricao>(data)
         return this.notesByBank[banco_id]
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'list')
         throw error
       }
     },
@@ -282,7 +265,7 @@ export const useContasStore = defineStore('contas', {
         await this.listDescricoes(data.banco_id)
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'create')
         throw error
       }
     },
@@ -298,7 +281,7 @@ export const useContasStore = defineStore('contas', {
         await this.listDescricoes(data.banco_id)
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'update')
         throw error
       }
     },
@@ -314,7 +297,7 @@ export const useContasStore = defineStore('contas', {
         await this.listDescricoes(data.banco_id)
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'update')
         throw error
       }
     },
@@ -332,7 +315,7 @@ export const useContasStore = defineStore('contas', {
         await api.delete(`${NOTES_BASE}${id}/`)
         await this.listDescricoes(banco_id)
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'contas', 'remove')
         throw error
       }
     },

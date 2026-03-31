@@ -7,11 +7,24 @@ import {
   type ContaBancaria,
   useContasStore,
 } from "@/stores/contas";
+import { onlyDigits } from "@/utils/formatters";
+import { useBankCatalog } from "@/composables/useBankCatalog";
+import { useSnackbar } from "@/composables/useSnackbar";
+import { friendlyError } from "@/utils/errorMessages";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import SidePanel from "@/components/SidePanel.vue";
+
+const CUSTOM_BANKS = [
+  { label: "DEPÓSITO DIRETO NO CARTÃO", ispb: "CARD-DEP" },
+  { label: "BANCO OLE BONSUCESSO CONSIGNADO S.A.", ispb: "CARD-OLE" },
+] as const;
 
 const route = useRoute();
 const router = useRouter();
 const contas = useContasStore();
 const clientes = useClientesStore();
+const { bankItems, bankLoading, loadBankCatalog, extractCompeFromLabel, findBankMetaByLabel } = useBankCatalog(CUSTOM_BANKS);
+const { showSuccess, showError } = useSnackbar();
 
 const clienteId = computed(() => Number(route.params.id));
 const cliente = ref<Cliente | null>(null);
@@ -19,42 +32,19 @@ const cliente = ref<Cliente | null>(null);
 const loading = computed(() => contas.loading);
 const error = computed(() => contas.error);
 
-// === Bancos (autocomplete com fallback offline) ===
-const bankItems = ref<{ label: string; code?: string; ispb?: string }[]>([]);
 const bankSearch = ref("");
-const bankLoading = ref(false);
 
 // === Identificador do banco escolhido (ISPB preferido; ou COMPE/slug) ===
 const bankIspb = ref<string>(""); // chave para backend (banco_id)
-const CUSTOM_BANKS = [
-  { label: "DEPÓSITO DIRETO NO CARTÃO", ispb: "CARD-DEP" },
-  // 👇 Adicione seus extras aqui (use um ID curto, <=32, estável)
-  { label: "BANCO OLE BONSUCESSO CONSIGNADO S.A.", ispb: "CARD-OLE" },
-  // { label: 'AGIPLAN S.A.', ispb: 'CARD-AGI' },
-] as const;
 
 // === Variações de descrição por banco (no servidor) ===
 const bankNotes = ref<BankDescricao[]>([]);
 const selectedNoteId = ref<number | null>(null);
 
-// lista mínima para funcionar offline
-const FALLBACK_BANKS = [
-  "Banco do Brasil (001)",
-  "Bradesco (237)",
-  "Itaú Unibanco (341)",
-  "Caixa Econômica Federal (104)",
-  "Santander (033)",
-  "Nubank (260)",
-  "Inter (077)",
-  "C6 Bank (336)",
-  "BTG Pactual (208)",
-  "Sicoob (756)",
-  "Sicredi (748)",
-  "Banrisul (041)",
-  "BRB (070)",
-  "Banco Original (212)",
-  "PagBank (290)",
-].map((label) => ({ label }));
+// Confirm dialog
+const confirmVisible = ref(false);
+const confirmMessage = ref("");
+const confirmAction = ref<(() => void) | null>(null);
 
 // tabela (client-side)
 const search = ref("");
@@ -74,10 +64,6 @@ const form = ref<Partial<ContaBancaria>>({
   is_principal: false,
 });
 
-// helpers
-function onlyDigits(v: string) {
-  return (v || "").replace(/\D/g, "");
-}
 function bankLabel(): string {
   return typeof form.value.banco_nome === "string"
     ? (form.value.banco_nome || "").trim()
@@ -110,26 +96,6 @@ async function openEdit(c: ContaBancaria) {
   dialog.value = true;
   await loadBankCatalog();
   await onBankChange(String(form.value.banco_nome || ""));
-}
-
-function findBankMetaByLabel(label: string) {
-  return bankItems.value.find((i) => i.label === label) || null;
-}
-
-function extractCompeFromLabel(label: string): string {
-  const m = /\((\d{3})\)\s*$/.exec(label);
-  return m ? m[1] : "";
-}
-
-function ensureCustomBanks(
-  list: { label: string; code?: string; ispb?: string }[],
-) {
-  // unshift na ordem inversa para manter a ordem definida acima no topo
-  for (const cb of [...CUSTOM_BANKS].reverse()) {
-    if (!list.some((i) => i.label === cb.label)) {
-      list.unshift({ label: cb.label, ispb: cb.ispb });
-    }
-  }
 }
 
 function normalizeBankId(input: string): string {
@@ -179,38 +145,6 @@ async function onBankChange(val: any) {
     await refreshNotes();
   } catch {
     // erro já vai para store.error; não bloqueia o formulário
-  }
-}
-
-async function loadBankCatalog() {
-  if (bankItems.value.length > 0) return;
-  bankLoading.value = true;
-  try {
-    // cache local para evitar hits repetidos (e ajudar quando oscila a rede)
-    const cached = localStorage.getItem("br_banks_v1");
-    if (cached) {
-      bankItems.value = JSON.parse(cached);
-      ensureCustomBanks(bankItems.value);
-      return;
-    }
-    const resp = await fetch("https://brasilapi.com.br/api/banks/v1");
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const data = await resp.json();
-    const mapped = (data as any[]).map((b) => ({
-      label: `${b.fullName || b.name}${b.code ? ` (${b.code})` : ""}`,
-      code: b.code ? String(b.code) : undefined,
-      ispb: b.ispb ? String(b.ispb) : undefined,
-    }));
-    mapped.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-    ensureCustomBanks(mapped); // garante opção especial mesmo online
-    bankItems.value = mapped;
-    localStorage.setItem("br_banks_v1", JSON.stringify(mapped));
-  } catch {
-    // offline / erro de rede → fallback local
-    bankItems.value = FALLBACK_BANKS;
-    ensureCustomBanks(bankItems.value);
-  } finally {
-    bankLoading.value = false;
   }
 }
 
@@ -299,35 +233,30 @@ async function save() {
     selectedNoteId.value = null;
     bankIspb.value = "";
   } catch (error_: any) {
-    contas.error =
-      error_?.response?.data?.detail || error_?.message || "Erro ao salvar.";
+    contas.error = friendlyError(error_, 'contas', editing.value ? 'update' : 'create');
   }
 }
 
 async function remove(acc: ContaBancaria) {
-  if (
-    !confirm(
-      `Excluir a conta ${acc.banco_nome} (${acc.agencia}/${acc.conta}${
-        acc.digito ? "-" + acc.digito : ""
-      })?`,
-    )
-  )
-    return;
-  try {
-    await contas.remove(acc.id);
-  } catch (error_: any) {
-    contas.error =
-      error_?.response?.data?.detail || "Não foi possível excluir.";
-  }
+  confirmMessage.value = `Excluir a conta ${acc.banco_nome} (${acc.agencia}/${acc.conta}${
+    acc.digito ? "-" + acc.digito : ""
+  })?`;
+  confirmAction.value = async () => {
+    try {
+      await contas.remove(acc.id);
+      showSuccess("Conta excluída com sucesso!");
+    } catch (error_: any) {
+      contas.error = friendlyError(error_, 'contas', 'remove');
+    }
+  };
+  confirmVisible.value = true;
 }
 
 async function makePrincipal(acc: ContaBancaria) {
   try {
     await contas.setPrincipal(acc.id);
   } catch (error_: any) {
-    contas.error =
-      error_?.response?.data?.detail ||
-      "Não foi possível definir como principal.";
+    contas.error = friendlyError(error_, 'contas', 'update');
   }
 }
 
@@ -370,56 +299,46 @@ watch(() => route.params.id, load);
 
 <template>
   <v-container fluid>
-    <v-card class="rounded mb-4" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <div>
-          <div class="text-subtitle-1">Contas bancárias</div>
-          <div class="text-body-2 text-medium-emphasis">
-            Cliente:
-            <strong>{{ cliente?.nome_completo || "#" + clienteId }}</strong>
-            <span v-if="cliente?.cidade">
-              — {{ cliente.cidade }}/{{ cliente?.uf }}</span
-            >
-          </div>
+    <!-- Page header -->
+    <div class="d-flex align-center flex-wrap ga-4 mb-6">
+      <div class="flex-grow-1">
+        <div class="d-flex align-center ga-2 mb-1">
+          <v-btn icon size="small" variant="text" @click="goBack">
+            <v-icon icon="mdi-arrow-left" />
+          </v-btn>
+          <h1 class="text-h5 font-weight-bold text-primary">Contas bancárias</h1>
         </div>
-        <v-spacer />
-        <v-btn prepend-icon="mdi-arrow-left" variant="text" @click="goBack"
-          >Voltar</v-btn
-        >
-        <v-btn
-          class="ml-2"
-          color="primary"
-          prepend-icon="mdi-bank-plus"
-          @click="openCreate"
-        >
-          Nova conta
-        </v-btn>
-      </v-card-title>
-    </v-card>
+        <p class="text-body-2 text-medium-emphasis ml-10">
+          Cliente: <strong>{{ cliente?.nome_completo || "#" + clienteId }}</strong>
+          <span v-if="cliente?.cidade"> &mdash; {{ cliente.cidade }}/{{ cliente?.uf }}</span>
+        </p>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-bank-plus" @click="openCreate">
+        Nova conta
+      </v-btn>
+    </div>
 
-    <v-card class="rounded" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <v-responsive max-width="300px">
+    <!-- Table card -->
+    <v-card>
+      <v-card-text>
+        <div class="d-flex align-center mb-4">
           <v-text-field
             v-model="search"
             clearable
             density="compact"
-            variant="outlined"
             hide-details
-            label="Buscar"
+            label="Buscar contas..."
             prepend-inner-icon="mdi-magnify"
+            style="max-width: 320px"
           />
-        </v-responsive>
-      </v-card-title>
+        </div>
 
-      <v-card-text>
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
+        <v-alert v-if="error" class="mb-4" type="error">
           {{ error }}
         </v-alert>
 
         <v-data-table
           v-model:sort-by="sortBy"
-          class="rounded-lg"
           :headers="headers"
           item-key="id"
           :items="contasDoCliente"
@@ -436,7 +355,7 @@ watch(() => route.params.id, load);
           </template>
 
           <template #item.tipo="{ item }">
-            <v-chip size="small" variant="tonal">
+            <v-chip variant="tonal">
               {{ item.tipo === "poupanca" ? "Poupança" : "Corrente" }}
             </v-chip>
           </template>
@@ -445,10 +364,10 @@ watch(() => route.params.id, load);
             <v-chip
               v-if="item.is_principal"
               color="secondary"
-              size="small"
               variant="elevated"
-              >Principal</v-chip
             >
+              Principal
+            </v-chip>
             <v-btn
               v-else
               color="secondary"
@@ -461,247 +380,251 @@ watch(() => route.params.id, load);
           </template>
 
           <template #item.actions="{ item }">
-            <v-btn icon size="small" variant="text" @click="openEdit(item)">
-              <v-icon icon="mdi-pencil" />
-            </v-btn>
-            <v-btn
-              color="error"
-              icon
-              size="small"
-              variant="text"
-              @click="remove(item)"
-            >
-              <v-icon icon="mdi-delete" />
-            </v-btn>
+            <div class="d-flex ga-1 justify-end">
+              <v-btn color="primary" icon size="small" variant="text" @click="openEdit(item)">
+                <v-icon icon="mdi-pencil-outline" size="18" />
+                <v-tooltip activator="parent" location="top">Editar</v-tooltip>
+              </v-btn>
+              <v-btn color="error" icon size="small" variant="text" @click="remove(item)">
+                <v-icon icon="mdi-delete-outline" size="18" />
+                <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
+              </v-btn>
+            </div>
           </template>
 
           <template #no-data>
-            <v-sheet class="pa-6 text-center text-medium-emphasis">
-              Nenhuma conta cadastrada para este cliente.
-            </v-sheet>
+            <div class="pa-8 text-center">
+              <v-icon class="mb-2" color="grey-lighten-1" icon="mdi-bank-off-outline" size="40" />
+              <div class="text-body-2 text-medium-emphasis">Nenhuma conta cadastrada para este cliente</div>
+            </div>
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
 
     <!-- Dialog criar/editar -->
-    <v-dialog v-model="dialog" max-width="840">
-      <v-card>
-        <v-card-title>{{
-          editing ? "Editar conta" : "Nova conta"
-        }}</v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="save">
-            <v-row dense>
-              <v-col cols="12" md="6">
-                <v-combobox
-                  v-model="form.banco_nome"
-                  v-model:search="bankSearch"
-                  clearable
-                  item-title="label"
-                  item-value="label"
-                  :items="bankItems"
-                  label="Banco"
-                  :loading="bankLoading"
-                  required
-                  :return-object="false"
-                  :rules="[
-                    (v) =>
-                      (typeof v === 'string' && v.trim().length > 0) ||
-                      (v &&
-                        typeof v === 'object' &&
-                        v.label &&
-                        String(v.label).trim().length > 0) ||
-                      'Obrigatório',
-                  ]"
-                  @focus="loadBankCatalog"
-                  @update:model-value="onBankChange"
-                />
-              </v-col>
+    <SidePanel v-model="dialog" :width="640">
+      <template #header>
+        <v-icon class="mr-2" :icon="editing ? 'mdi-pencil-outline' : 'mdi-bank-plus'" color="primary" />
+        {{ editing ? "Editar conta" : "Nova conta" }}
+      </template>
 
-              <v-col cols="6" md="3">
-                <v-text-field
-                  v-model="form.agencia"
-                  label="Agência"
-                  required
-                  :rules="[
-                    (v) =>
-                      (!!v && String(v).trim().length > 0) || 'Obrigatório',
-                  ]"
-                  @blur="form.agencia = onlyDigits(String(form.agencia || ''))"
-                />
-              </v-col>
+      <v-form @submit.prevent="save">
+        <v-row dense>
+          <v-col cols="12" md="6">
+            <v-combobox
+              v-model="form.banco_nome"
+              v-model:search="bankSearch"
+              clearable
+              item-title="label"
+              item-value="label"
+              :items="bankItems"
+              label="Banco"
+              :loading="bankLoading"
+              required
+              :return-object="false"
+              :rules="[
+                (v) =>
+                  (typeof v === 'string' && v.trim().length > 0) ||
+                  (v &&
+                    typeof v === 'object' &&
+                    v.label &&
+                    String(v.label).trim().length > 0) ||
+                  'Obrigatório',
+              ]"
+              @focus="loadBankCatalog"
+              @update:model-value="onBankChange"
+            />
+          </v-col>
 
-              <v-col cols="6" md="3">
-                <v-text-field
-                  v-model="form.conta"
-                  label="Conta"
-                  required
-                  :rules="[
-                    (v) =>
-                      (!!v && String(v).trim().length > 0) || 'Obrigatório',
-                  ]"
-                  @blur="form.conta = onlyDigits(String(form.conta || ''))"
-                />
-              </v-col>
+          <v-col cols="6" md="3">
+            <v-text-field
+              v-model="form.agencia"
+              label="Agência"
+              required
+              :rules="[
+                (v) =>
+                  (!!v && String(v).trim().length > 0) || 'Obrigatório',
+              ]"
+              @blur="form.agencia = onlyDigits(String(form.agencia || ''))"
+            />
+          </v-col>
 
-              <v-col cols="6" md="3">
-                <v-text-field
-                  v-model="form.digito"
-                  label="Dígito"
-                  @blur="form.digito = onlyDigits(String(form.digito || ''))"
-                />
-              </v-col>
+          <v-col cols="6" md="3">
+            <v-text-field
+              v-model="form.conta"
+              label="Conta"
+              required
+              :rules="[
+                (v) =>
+                  (!!v && String(v).trim().length > 0) || 'Obrigatório',
+              ]"
+              @blur="form.conta = onlyDigits(String(form.conta || ''))"
+            />
+          </v-col>
 
-              <v-col cols="6" md="3">
-                <v-select
-                  v-model="form.tipo"
-                  :items="[
-                    { title: 'Corrente', value: 'corrente' },
-                    { title: 'Poupança', value: 'poupanca' },
-                  ]"
-                  label="Tipo"
-                />
-              </v-col>
+          <v-col cols="6" md="3">
+            <v-text-field
+              v-model="form.digito"
+              label="Dígito"
+              @blur="form.digito = onlyDigits(String(form.digito || ''))"
+            />
+          </v-col>
 
-              <v-col cols="12" md="6">
-                <v-switch
-                  v-model="form.is_principal"
-                  color="secondary"
-                  hide-details
-                  label="Definir como principal"
-                />
-                <div class="text-caption text-medium-emphasis mt-1">
-                  Apenas uma conta principal por cliente.
-                </div>
-              </v-col>
+          <v-col cols="6" md="3">
+            <v-select
+              v-model="form.tipo"
+              :items="[
+                { title: 'Corrente', value: 'corrente' },
+                { title: 'Poupança', value: 'poupanca' },
+              ]"
+              label="Tipo"
+            />
+          </v-col>
 
-              <!-- ===== Variações de descrição por banco ===== -->
-              <v-col cols="12">
-                <div class="d-flex align-center mb-2">
-                  <div class="text-subtitle-2">Descrições do banco</div>
-                  <v-spacer />
-                  <v-btn
-                    :disabled="!bankIspb || !bankLabel()"
-                    prepend-icon="mdi-plus"
-                    size="small"
-                    variant="text"
-                    @click="addNote"
-                  >
-                    Adicionar
-                  </v-btn>
-                </div>
+          <v-col cols="12" md="6">
+            <v-switch
+              v-model="form.is_principal"
+              color="secondary"
+              hide-details
+              label="Definir como principal"
+            />
+            <div class="text-caption text-medium-emphasis mt-1">
+              Apenas uma conta principal por cliente.
+            </div>
+          </v-col>
 
-                <div v-if="!bankIspb" class="text-body-2 text-medium-emphasis">
-                  Selecione um banco para ver/criar descrições.
-                </div>
+          <!-- ===== Variações de descrição por banco ===== -->
+          <v-col cols="12">
+            <div class="d-flex align-center mb-2">
+              <div class="text-subtitle-2">Descrições do banco</div>
+              <v-spacer />
+              <v-btn
+                :disabled="!bankIspb || !bankLabel()"
+                prepend-icon="mdi-plus"
+                size="small"
+                variant="text"
+                @click="addNote"
+              >
+                Adicionar
+              </v-btn>
+            </div>
 
-                <div v-else>
-                  <div
-                    v-if="bankNotes.length === 0"
-                    class="text-body-2 text-medium-emphasis"
-                  >
-                    Nenhuma descrição cadastrada para este banco. Clique em
-                    <strong>Adicionar</strong> para criar uma.
-                  </div>
+            <div v-if="!bankIspb" class="text-body-2 text-medium-emphasis">
+              Selecione um banco para ver/criar descrições.
+            </div>
 
-                  <v-radio-group
-                    v-model="selectedNoteId"
-                    class="mt-1"
-                    hide-details
-                    inline
-                    @update:model-value="(v: any) => setActiveNote(Number(v))"
-                  >
-                    <v-row dense>
-                      <v-col v-for="note in bankNotes" :key="note.id" cols="12">
-                        <div class="d-flex align-start ga-2">
-                          <v-radio
-                            aria-label="Selecionar descrição"
-                            class="mt-3"
-                            density="comfortable"
-                            :ripple="false"
-                            :value="note.id"
-                          />
+            <div v-else>
+              <div
+                v-if="bankNotes.length === 0"
+                class="text-body-2 text-medium-emphasis"
+              >
+                Nenhuma descrição cadastrada para este banco. Clique em
+                <strong>Adicionar</strong> para criar uma.
+              </div>
 
-                          <v-card
-                            class="pa-3 mb-2"
-                            color="secondary"
-                            :variant="note.is_ativa ? 'tonal' : 'outlined'"
-                            width="100%"
-                          >
-                            <v-row dense>
-                              <v-col cols="12" lg="4" md="6">
-                                <v-text-field
-                                  v-model="note.nome_banco"
-                                  :disabled="note.id !== selectedNoteId"
-                                  label="Nome do banco"
-                                  @blur="updateNoteText(note)"
-                                />
-                              </v-col>
+              <v-radio-group
+                v-model="selectedNoteId"
+                class="mt-1"
+                hide-details
+                inline
+                @update:model-value="(v: any) => setActiveNote(Number(v))"
+              >
+                <v-row dense>
+                  <v-col v-for="note in bankNotes" :key="note.id" cols="12">
+                    <div class="d-flex align-start ga-2">
+                      <v-radio
+                        aria-label="Selecionar descrição"
+                        class="mt-3"
+                        density="comfortable"
+                        :ripple="false"
+                        :value="note.id"
+                      />
 
-                              <v-col cols="12" lg="4" md="6">
-                                <v-text-field
-                                  v-model="note.cnpj"
-                                  :disabled="note.id !== selectedNoteId"
-                                  label="CNPJ"
-                                  @blur="updateNoteText(note)"
-                                />
-                              </v-col>
+                      <v-card
+                        class="pa-3 mb-2"
+                        color="secondary"
+                        :variant="note.is_ativa ? 'tonal' : 'outlined'"
+                        width="100%"
+                      >
+                        <v-row dense>
+                          <v-col cols="12" lg="4" md="6">
+                            <v-text-field
+                              v-model="note.nome_banco"
+                              :disabled="note.id !== selectedNoteId"
+                              label="Nome do banco"
+                              @blur="updateNoteText(note)"
+                            />
+                          </v-col>
 
-                              <v-col cols="12" lg="4">
-                                <v-text-field
-                                  v-model="note.endereco"
-                                  :disabled="note.id !== selectedNoteId"
-                                  label="Endereço"
-                                  @blur="updateNoteText(note)"
-                                />
-                              </v-col>
-                            </v-row>
+                          <v-col cols="12" lg="4" md="6">
+                            <v-text-field
+                              v-model="note.cnpj"
+                              :disabled="note.id !== selectedNoteId"
+                              label="CNPJ"
+                              @blur="updateNoteText(note)"
+                            />
+                          </v-col>
 
-                            <div class="text-caption text-medium-emphasis mt-1">
-                              {{
-                                note.is_ativa
-                                  ? "Esta variação está ativa e será usada por padrão."
-                                  : "Para usar esta variação agora, selecione o rádio ao lado."
-                              }}
-                            </div>
-                          </v-card>
-                          <v-btn
-                            v-if="!note.is_ativa"
-                            color="error"
-                            prepend-icon="mdi-delete"
-                            size="small"
-                            variant="text"
-                            @click="
-                              async () => {
-                                try {
-                                  await contas.removeDescricaoBanco(
-                                    note.id,
-                                    note.banco_id,
-                                  );
-                                  await refreshNotes(); // 🔹 força atualização imediata do estado local
-                                } catch (e) {
-                                  // opcional: log/alert
-                                }
-                              }
-                            "
-                          />
+                          <v-col cols="12" lg="4">
+                            <v-text-field
+                              v-model="note.endereco"
+                              :disabled="note.id !== selectedNoteId"
+                              label="Endereço"
+                              @blur="updateNoteText(note)"
+                            />
+                          </v-col>
+                        </v-row>
+
+                        <div class="text-caption text-medium-emphasis mt-1">
+                          {{
+                            note.is_ativa
+                              ? "Esta variação está ativa e será usada por padrão."
+                              : "Para usar esta variação agora, selecione o rádio ao lado."
+                          }}
                         </div>
-                      </v-col>
-                    </v-row>
-                  </v-radio-group>
-                </div>
-              </v-col>
-            </v-row>
-          </v-form>
-        </v-card-text>
+                      </v-card>
+                      <v-btn
+                        v-if="!note.is_ativa"
+                        color="error"
+                        prepend-icon="mdi-delete"
+                        size="small"
+                        variant="text"
+                        @click="
+                          async () => {
+                            try {
+                              await contas.removeDescricaoBanco(
+                                note.id,
+                                note.banco_id,
+                              );
+                              await refreshNotes();
+                            } catch (e) {
+                              // opcional: log/alert
+                            }
+                          }
+                        "
+                      />
+                    </div>
+                  </v-col>
+                </v-row>
+              </v-radio-group>
+            </div>
+          </v-col>
+        </v-row>
+      </v-form>
 
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialog = false">Cancelar</v-btn>
-          <v-btn color="primary" @click="save">Salvar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      <template #actions>
+        <v-btn variant="text" @click="dialog = false">Cancelar</v-btn>
+        <v-btn color="primary" variant="elevated" @click="save">Salvar</v-btn>
+      </template>
+    </SidePanel>
+
+    <ConfirmDialog
+      v-model="confirmVisible"
+      title="Confirmar exclusão"
+      :message="confirmMessage"
+      confirm-text="Excluir"
+      @confirm="confirmAction?.()"
+    />
   </v-container>
 </template>

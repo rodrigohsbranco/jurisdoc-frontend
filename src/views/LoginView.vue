@@ -1,7 +1,6 @@
 <script setup lang="ts">
   import { computed, onMounted, ref } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
-  import bg from '@/assets/bg-login.jpg' // <= coloque sua imagem em src/assets/bg-login.jpg
   import { useAuthStore } from '@/stores/auth'
 
   const username = ref('')
@@ -13,12 +12,6 @@
   const route = useRoute()
   const auth = useAuthStore()
 
-  // background inline (garante resolução correta do path pelo bundler)
-  const bgCss = computed(() => ({
-    backgroundImage: `url(${bg})`,
-  }))
-
-  // Regras Vuetify (retornam true ou string com a mensagem)
   const rules = {
     required: (v: string) => (!!v && v.trim().length > 0) || 'Campo obrigatório',
     minUser: (v: string) => v?.trim().length >= 3 || 'Mínimo de 3 caracteres',
@@ -28,10 +21,6 @@
   const canSubmit = computed(
     () => !!username.value.trim() && password.value.length >= 6 && !loading.value,
   )
-
-  function normalizeUser (u: string) {
-    return u.trim()
-  }
 
   function mapError (e: any): string {
     const status = e?.response?.status
@@ -49,28 +38,23 @@
     error.value = ''
     loading.value = true
     try {
-      await auth.login(normalizeUser(username.value), password.value)
-      
-      // Verifica se o login foi realmente bem-sucedido
+      await auth.login(username.value.trim(), password.value)
+
       if (!auth.isAuthenticated) {
         throw new Error('Login falhou: autenticação não foi estabelecida')
       }
-      
-      // Verifica se os tokens foram salvos no localStorage
+
       try {
         const stored = localStorage.getItem('auth')
-        if (!stored) {
-          throw new Error('Tokens não foram salvos no localStorage')
-        }
+        if (!stored) throw new Error('Tokens não foram salvos')
         const parsed = JSON.parse(stored)
         if (!parsed.accessToken || !parsed.refreshToken) {
-          throw new Error('Tokens incompletos no localStorage')
+          throw new Error('Tokens incompletos')
         }
       } catch (e: any) {
-        console.error('Erro ao verificar localStorage após login:', e)
         throw new Error('Falha ao salvar sessão. Tente novamente.')
       }
-      
+
       const redirect = (route.query.redirect as string) || '/'
       router.replace(redirect)
     } catch (error_: any) {
@@ -91,22 +75,39 @@
 
 <template>
   <v-app>
-    <v-main class="login-main d-flex align-center justify-center">
-      <!-- background + scrim -->
-      <div class="login-bg" :style="bgCss" />
-      <div class="login-scrim" />
+    <v-main class="login-main">
+      <!-- Painel esquerdo: branding -->
+      <div class="login-brand">
+        <div class="brand-content">
+          <img
+            alt="ALR"
+            class="brand-logo mb-6"
+            src="@/assets/logo-alr.jpg"
+          >
 
-      <!-- card -->
-      <v-card class="login-card rounded-xl" elevation="8" width="420">
-        <v-toolbar color="transparent" flat>
-          <v-toolbar-title>Azevedo Lima & Rebonatto</v-toolbar-title>
-        </v-toolbar>
+          <h1 class="brand-title">Azevedo Lima<br>& Rebonatto</h1>
+          <div class="brand-divider" />
+          <p class="brand-subtitle">Advocacia & Consultoria Jurídica</p>
 
-        <v-card-text>
+          <div class="brand-footer">
+            <div class="brand-system">JurisDoc</div>
+            <div class="brand-system-desc">Sistema de Gestão Documental</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Painel direito: formulário -->
+      <div class="login-form-panel">
+        <div class="login-form-wrapper">
+          <div class="mb-8">
+            <h2 class="form-title">Acesso ao sistema</h2>
+            <p class="form-subtitle">Informe suas credenciais para continuar</p>
+          </div>
+
           <v-alert
             v-if="error"
-            class="mb-4"
-            density="comfortable"
+            class="mb-6"
+            density="compact"
             type="error"
             variant="tonal"
           >
@@ -114,76 +115,228 @@
           </v-alert>
 
           <v-form @submit.prevent="onSubmit">
-            <v-text-field
-              v-model.trim="username"
-              autocomplete="username"
-              density="comfortable"
-              label="Usuário"
-              required
-              :rules="[rules.required, rules.minUser]"
-            />
-            <v-text-field
-              v-model="password"
-              :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
-              autocomplete="current-password"
-              density="comfortable"
-              label="Senha"
-              required
-              :rules="[rules.required, rules.minPass]"
-              :type="showPassword ? 'text' : 'password'"
-              @click:append-inner="showPassword = !showPassword"
-            />
+            <div class="mb-5">
+              <label class="field-label">Usuário</label>
+              <v-text-field
+                v-model.trim="username"
+                autocomplete="username"
+                density="comfortable"
+                placeholder="Digite seu usuário"
+                prepend-inner-icon="mdi-account-outline"
+                :rules="[rules.required, rules.minUser]"
+                variant="outlined"
+              />
+            </div>
+
+            <div class="mb-6">
+              <label class="field-label">Senha</label>
+              <v-text-field
+                v-model="password"
+                :append-inner-icon="showPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                autocomplete="current-password"
+                density="comfortable"
+                placeholder="Digite sua senha"
+                prepend-inner-icon="mdi-lock-outline"
+                :rules="[rules.required, rules.minPass]"
+                :type="showPassword ? 'text' : 'password'"
+                variant="outlined"
+                @click:append-inner="showPassword = !showPassword"
+              />
+            </div>
+
             <v-btn
               block
-              class="mt-2"
               color="primary"
               :disabled="!canSubmit"
               :loading="loading"
+              size="large"
               type="submit"
             >
-              Acessar
+              Entrar
             </v-btn>
           </v-form>
-        </v-card-text>
-      </v-card>
+
+          <div class="login-footer-text">
+            &copy; {{ new Date().getFullYear() }} Azevedo Lima & Rebonatto
+          </div>
+        </div>
+      </div>
     </v-main>
   </v-app>
 </template>
 
 <style scoped>
 .login-main {
-  position: relative;
+  display: flex;
   min-height: 100vh;
+}
+
+/* ─── Painel esquerdo ─── */
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 45%;
+  min-height: 100vh;
+  background: linear-gradient(160deg, #0F2B46 0%, #0a1f33 60%, #071622 100%);
+  position: relative;
   overflow: hidden;
 }
 
-/* imagem de fundo */
-.login-bg {
+/* Pattern decorativo sutil */
+.login-brand::before {
+  content: '';
   position: absolute;
   inset: 0;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  transform: scale(1.02); /* leve zoom para evitar bordas em telas grandes */
-  will-change: transform;
+  background-image:
+    radial-gradient(circle at 20% 80%, rgba(205, 166, 96, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(205, 166, 96, 0.04) 0%, transparent 50%);
 }
 
-/* véu suave para legibilidade do card */
-.login-scrim {
+/* Linha dourada lateral */
+.login-brand::after {
+  content: '';
   position: absolute;
-  inset: 0;
-  /* background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.92),
-    rgba(255, 255, 255, 0.75)
-  ); */
+  right: 0;
+  top: 10%;
+  bottom: 10%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(205, 166, 96, 0.3), transparent);
 }
 
-/* card translúcido com leve blur – chique porém discreto */
-.login-card {
+.brand-content {
   position: relative;
   z-index: 1;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: saturate(1.1) blur(2px);
+  text-align: center;
+  padding: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.brand-logo {
+  max-width: 200px;
+  max-height: 80px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 2px;
+  box-shadow: 0 0 16px 8px rgba(255, 255, 255, 0.2), 0 0 48px 16px rgba(255, 255, 255, 0.08);
+}
+
+.brand-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.brand-divider {
+  width: 48px;
+  height: 2px;
+  background: #CDA660;
+  margin: 20px auto;
+  border-radius: 1px;
+}
+
+.brand-subtitle {
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.brand-footer {
+  position: absolute;
+  bottom: -120px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.brand-system {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #CDA660;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.brand-system-desc {
+  font-size: 0.6875rem;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 4px;
+}
+
+/* ─── Painel direito ─── */
+.login-form-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #FAFBFC;
+  padding: 48px;
+}
+
+.login-form-wrapper {
+  width: 100%;
+  max-width: 380px;
+}
+
+.form-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0F2B46;
+  letter-spacing: -0.01em;
+}
+
+.form-subtitle {
+  font-size: 0.8125rem;
+  color: rgba(15, 43, 70, 0.5);
+  margin-top: 6px;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(15, 43, 70, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.login-footer-text {
+  text-align: center;
+  font-size: 0.6875rem;
+  color: rgba(15, 43, 70, 0.3);
+  margin-top: 48px;
+}
+
+/* ─── Responsivo ─── */
+@media (max-width: 960px) {
+  .login-main {
+    flex-direction: column;
+  }
+
+  .login-brand {
+    width: 100%;
+    min-height: auto;
+    padding: 48px 24px;
+  }
+
+  .login-brand::after {
+    display: none;
+  }
+
+  .brand-footer {
+    display: none;
+  }
+
+  .login-form-panel {
+    padding: 32px 24px;
+  }
 }
 </style>

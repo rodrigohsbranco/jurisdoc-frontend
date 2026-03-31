@@ -1,6 +1,6 @@
-import type { AxiosError } from 'axios'
 import { defineStore } from 'pinia'
-import api from '@/services/api' // axios instance com interceptors de auth
+import api, { fetchAllPages } from '@/services/api' // axios instance com interceptors de auth
+import { friendlyError } from '@/utils/errorMessages'
 
 // Tipos básicos
 export interface TemplateItem {
@@ -87,24 +87,6 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
   return q
 }
 
-function toMessage (e: any): string {
-  if (!e?.response) {
-    return 'Falha de rede. Verifique se a API está no ar.'
-  }
-  const d = e.response.data
-  if (d?.detail) {
-    return d.detail
-  }
-  if (d && typeof d === 'object') {
-    const k = Object.keys(d)[0]
-    const msg = Array.isArray(d[k]) ? d[k][0] : d[k]
-    if (msg) {
-      return String(msg)
-    }
-  }
-  return e.message || 'Ocorreu um erro inesperado.'
-}
-
 export const useTemplatesStore = defineStore('templates', {
   state: () => ({
     items: [] as TemplateItem[],
@@ -124,16 +106,16 @@ export const useTemplatesStore = defineStore('templates', {
       this.loadingList = true
       this.lastError = null
       try {
-        const res = await api.get<TemplateItem[]>('/api/templates/', {
+        this.items = await fetchAllPages<TemplateItem>("/api/templates/", {
           params: buildQuery({
             search: params.search,
             ordering: params.ordering,
             active: params.active,
+            page_size: 100,
           }),
         })
-        this.items = Array.isArray(res.data) ? res.data : []
       } catch (error) {
-        this.lastError = toMessage(error)
+        this.lastError = friendlyError(error, 'templates', 'list')
         throw error
       } finally {
         this.loadingList = false
@@ -152,12 +134,7 @@ export const useTemplatesStore = defineStore('templates', {
         this.items = [res.data, ...this.items]
         return res.data
       } catch (error) {
-        this.lastError
-          = (error as AxiosError<any>).response?.data?.file?.[0]
-            || (error as AxiosError<any>).response?.data?.name?.[0]
-            || (error as AxiosError<any>).response?.data?.detail
-            || (error as AxiosError<any>).message
-            || 'Falha ao criar template'
+        this.lastError = friendlyError(error, 'templates', 'create')
         throw error
       } finally {
         this.loadingMutation = false
@@ -188,7 +165,7 @@ export const useTemplatesStore = defineStore('templates', {
         }
         return res.data
       } catch (error) {
-        this.lastError = toMessage(error)
+        this.lastError = friendlyError(error, 'templates', 'update')
         throw error
       } finally {
         this.loadingMutation = false
@@ -208,7 +185,7 @@ export const useTemplatesStore = defineStore('templates', {
         await api.delete(`/api/templates/${id}/`)
         this.items = this.items.filter(t => t.id !== id)
       } catch (error) {
-        this.lastError = toMessage(error)
+        this.lastError = friendlyError(error, 'templates', 'remove')
         throw error
       } finally {
         this.loadingMutation = false
@@ -225,7 +202,7 @@ export const useTemplatesStore = defineStore('templates', {
         this.fieldsCache.set(id, res.data)
         return res.data
       } catch (error) {
-        this.lastError = toMessage(error)
+        this.lastError = friendlyError(error, 'templates', 'fields')
         throw error
       }
     },
@@ -258,21 +235,20 @@ export const useTemplatesStore = defineStore('templates', {
         const cd = res.headers['content-disposition'] as string | undefined
         const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'documento'}.docx`
         return { blob: res.data as Blob, filename: fname }
-      } catch (error) {
-        const e = error as AxiosError<any>
-        if (e.response?.data instanceof Blob) {
+      } catch (error: any) {
+        if (error.response?.data instanceof Blob) {
           try {
-            if (e.response.data.type === 'application/json') {
-              const json = JSON.parse(await e.response.data.text())
+            if (error.response.data.type === 'application/json') {
+              const json = JSON.parse(await error.response.data.text())
               this.lastError = json.detail || JSON.stringify(json)
             } else {
-              this.lastError = await e.response.data.text()
+              this.lastError = await error.response.data.text()
             }
           } catch {
-            this.lastError = e.message
+            this.lastError = friendlyError(error, 'templates', 'render')
           }
         } else {
-          this.lastError = toMessage(error)
+          this.lastError = friendlyError(error, 'templates', 'render')
         }
         throw error
       }

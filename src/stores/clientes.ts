@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import api from '@/services/api'
+import api, { fetchAllPages, listFromResponse } from '@/services/api'
+import { friendlyError } from '@/utils/errorMessages'
 
 // =======================
 // Tipos
@@ -29,6 +30,9 @@ export type Cliente = {
   cidade?: string | null
   cep?: string | null
   uf?: string | null
+
+  // Benefícios
+  beneficios?: Array<{ numero: string; tipo: string }>
 
   // Status
   is_active?: boolean
@@ -75,34 +79,6 @@ export type Representante = {
 type ListParams = {
   search?: string
   ordering?: string // ex.: 'nome_completo' ou '-criado_em'
-}
-
-// =======================
-// Helpers
-// =======================
-function toMessage (e: any): string {
-  // mapeia erros do Axios/DRF para string amigável
-  if (!e?.response) {
-    return 'Falha de rede. Verifique se a API está no ar.'
-  }
-  const d = e.response.data
-  if (typeof d === 'string') {
-    return d
-  }
-  return (
-    d?.detail
-    || d?.non_field_errors?.[0]
-    // tenta primeira key de erro de campo
-    || (d && typeof d === 'object'
-      ? String(
-          (() => {
-            const k = Object.keys(d)[0]
-            const v = Array.isArray((d as any)[k]) ? (d as any)[k][0] : (d as any)[k]
-            return v ?? 'Ocorreu um erro. Tente novamente.'
-          })(),
-        )
-      : 'Ocorreu um erro. Tente novamente.')
-  )
 }
 
 const BASE = '/api/cadastro/clientes/'
@@ -154,15 +130,15 @@ export const useClientesStore = defineStore('clientes', {
       this.error = ''
       try {
         const params = { ...this.params, ...overrides }
-        const { data } = await api.get<Cliente[]>(BASE, { params })
-        this.items = Array.isArray(data) ? data : []
+        const data = await fetchAllPages<Cliente>(BASE, { params: { ...params, page_size: 100 } })
+        this.items = data
         // se vier override, sincroniza no estado
         this.params = {
           search: params.search ?? '',
           ordering: params.ordering ?? 'nome_completo',
         }
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'clientes', 'list')
       } finally {
         this.loading = false
       }
@@ -181,7 +157,7 @@ export const useClientesStore = defineStore('clientes', {
         }
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'clientes', 'list')
         throw error
       }
     },
@@ -193,7 +169,7 @@ export const useClientesStore = defineStore('clientes', {
         this.items.unshift(data)
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'clientes', 'create')
         throw error
       }
     },
@@ -208,7 +184,7 @@ export const useClientesStore = defineStore('clientes', {
         }
         return data
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'clientes', 'update')
         throw error
       }
     },
@@ -223,7 +199,7 @@ export const useClientesStore = defineStore('clientes', {
         delete this.repsLoadingByCliente[id]
         delete this.repsErrorByCliente[id]
       } catch (error: any) {
-        this.error = toMessage(error)
+        this.error = friendlyError(error, 'clientes', 'remove')
         throw error
       }
     },
@@ -245,13 +221,13 @@ export const useClientesStore = defineStore('clientes', {
       this.repsLoadingByCliente[clienteId] = true
       this.repsErrorByCliente[clienteId] = ''
       try {
-        const { data } = await api.get<Representante[]>(REPS_BASE, {
-          params: { cliente: clienteId },
+        const { data } = await api.get<Representante[] | any>(REPS_BASE, {
+          params: { cliente: clienteId, page_size: 100 },
         })
-        this.representantesByCliente[clienteId] = Array.isArray(data) ? data : []
+        this.representantesByCliente[clienteId] = listFromResponse<Representante>(data)
         return this.representantesByCliente[clienteId]
       } catch (error: any) {
-        this.repsErrorByCliente[clienteId] = toMessage(error)
+        this.repsErrorByCliente[clienteId] = friendlyError(error, 'clientes', 'list')
         throw error
       } finally {
         this.repsLoadingByCliente[clienteId] = false
@@ -269,7 +245,7 @@ export const useClientesStore = defineStore('clientes', {
         this.representantesByCliente[clienteId] = [data, ...list]
         return data
       } catch (error: any) {
-        this.repsErrorByCliente[clienteId] = toMessage(error)
+        this.repsErrorByCliente[clienteId] = friendlyError(error, 'clientes', 'create')
         throw error
       }
     },
@@ -306,7 +282,7 @@ export const useClientesStore = defineStore('clientes', {
         return data
       } catch (error: any) {
         if (clienteId) {
-          this.repsErrorByCliente[clienteId] = toMessage(error)
+          this.repsErrorByCliente[clienteId] = friendlyError(error, 'clientes', 'update')
         }
         throw error
       }
@@ -332,7 +308,7 @@ export const useClientesStore = defineStore('clientes', {
         }
       } catch (error: any) {
         if (clienteId) {
-          this.repsErrorByCliente[clienteId] = toMessage(error)
+          this.repsErrorByCliente[clienteId] = friendlyError(error, 'clientes', 'remove')
         }
         throw error
       }

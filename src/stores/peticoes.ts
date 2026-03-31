@@ -1,6 +1,6 @@
-import type { AxiosError } from 'axios'
 import { defineStore } from 'pinia'
-import api from '@/services/api'
+import api, { fetchAllPages } from '@/services/api'
+import { friendlyError } from '@/utils/errorMessages'
 
 // ===== Tipos =====
 export interface Petition {
@@ -112,21 +112,21 @@ export const usePeticoesStore = defineStore('peticoes', {
       this.loading = true
       this.error = null
       try {
-        const res = await api.get<Petition[]>('/api/petitions/', {
+        const data = await fetchAllPages<Petition>("/api/petitions/", {
           params: buildQuery({
             search: params.search,
             ordering: params.ordering,
             cliente: params.cliente,
             template: params.template,
+            page_size: 100,
           }),
         })
-        this.items = (Array.isArray(res.data) ? res.data : []).map(p => normalize(p))
+        this.items = data.map(p => normalize(p))
         for (const it of this.items) {
           this.byIdCache.set(it.id, it)
         }
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = e.response?.data?.detail || e.message || 'Falha ao listar petições'
+        this.error = friendlyError(error, 'peticoes', 'list')
         throw error
       } finally {
         this.loading = false
@@ -147,8 +147,7 @@ export const usePeticoesStore = defineStore('peticoes', {
         }
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = e.response?.data?.detail || e.message || 'Falha ao carregar petição'
+        this.error = friendlyError(error, 'peticoes', 'list')
         throw error
       } finally {
         this.loading = false
@@ -166,8 +165,7 @@ export const usePeticoesStore = defineStore('peticoes', {
         this.byIdCache.set(data.id, data)
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = e.response?.data?.detail || e.message || 'Falha ao criar petição'
+        this.error = friendlyError(error, 'peticoes', 'create')
         throw error
       } finally {
         this.loadingMutation = false
@@ -188,8 +186,7 @@ export const usePeticoesStore = defineStore('peticoes', {
         this.byIdCache.set(id, data)
         return data
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = e.response?.data?.detail || e.message || 'Falha ao atualizar petição'
+        this.error = friendlyError(error, 'peticoes', 'update')
         throw error
       } finally {
         this.loadingMutation = false
@@ -205,8 +202,7 @@ export const usePeticoesStore = defineStore('peticoes', {
         this.items = this.items.filter(i => i.id !== id)
         this.byIdCache.delete(id)
       } catch (error) {
-        const e = error as AxiosError<any>
-        this.error = e.response?.data?.detail || e.message || 'Falha ao remover petição'
+        this.error = friendlyError(error, 'peticoes', 'remove')
         throw error
       } finally {
         this.loadingMutation = false
@@ -230,10 +226,9 @@ export const usePeticoesStore = defineStore('peticoes', {
         const cd = res.headers['content-disposition'] as string | undefined
         const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'peticao'}.docx`
         return { blob: res.data as Blob, filename: fname }
-      } catch (error) {
-        const e = error as AxiosError<any>
-        if (e.response && e.response.data instanceof Blob) {
-          const txt = await e.response.data.text()
+      } catch (error: any) {
+        if (error.response && error.response.data instanceof Blob) {
+          const txt = await error.response.data.text()
           try {
             const parsed: RenderError = JSON.parse(txt)
             this.error = parsed.detail
@@ -244,7 +239,7 @@ export const usePeticoesStore = defineStore('peticoes', {
             this.error = txt
           }
         } else {
-          this.error = (e.response as any)?.data?.detail || e.message || 'Falha ao renderizar petição'
+          this.error = friendlyError(error, 'peticoes', 'render')
         }
         throw error
       }

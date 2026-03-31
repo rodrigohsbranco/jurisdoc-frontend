@@ -2,12 +2,21 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import {
   type FieldsResponse,
-  type TemplateField,
   type TemplateItem,
   useTemplatesStore,
 } from "@/stores/templates";
+import { useSnackbar } from "@/composables/useSnackbar";
+import { friendlyError } from "@/utils/errorMessages";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import SidePanel from "@/components/SidePanel.vue";
 
 const templates = useTemplatesStore();
+const { showSuccess } = useSnackbar();
+
+// Confirm dialog
+const confirmVisible = ref(false);
+const confirmMessage = ref("");
+const confirmAction = ref<(() => void) | null>(null);
 
 // =============================
 // Tabela
@@ -16,13 +25,42 @@ const search = ref("");
 const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
   { key: "name", order: "asc" },
 ]);
+const expanded = ref<readonly any[]>([]);
 
 const headers = [
-  { title: "Nome", key: "name" },
-  { title: "Arquivo", key: "file" },
-  { title: "Ativo", key: "active" },
-  { title: "Ações", key: "actions", sortable: false, align: "end" as const },
+  { title: "", key: "data-table-expand", width: "40px" },
+  { title: "Template", key: "name" },
+  { title: "Status", key: "active" },
+  { title: "", key: "actions", sortable: false, width: "48px" },
 ];
+
+// =============================
+// Expanded row: campos
+// =============================
+const fieldsCache = ref<Record<number, FieldsResponse | null>>({});
+const fieldsLoadingFor = ref<number | null>(null);
+
+async function loadFieldsForExpand(itemId: number) {
+  if (fieldsCache.value[itemId]) return;
+  fieldsLoadingFor.value = itemId;
+  try {
+    const resp = await templates.fetchFields(itemId, { force: true });
+    fieldsCache.value[itemId] = resp;
+  } catch {
+    fieldsCache.value[itemId] = null;
+  } finally {
+    fieldsLoadingFor.value = null;
+  }
+}
+
+function onExpandRow(expandedRows: readonly any[]) {
+  expanded.value = expandedRows;
+  for (const id of expandedRows) {
+    if (!fieldsCache.value[id]) {
+      loadFieldsForExpand(id);
+    }
+  }
+}
 
 // =============================
 // Criar/editar
@@ -69,9 +107,9 @@ async function saveUpsert() {
           active: form.active,
         }));
     dialogUpsert.value = false;
-  } catch (error_) {
-    // store já preenche lastError
-    console.error(error_);
+    showSuccess(editing.value ? "Template atualizado!" : "Template criado!");
+  } catch (error_: any) {
+    templates.lastError = friendlyError(error_, 'templates', editing.value ? 'update' : 'create');
   }
 }
 
@@ -84,79 +122,27 @@ function onPickFile(e: Event) {
 // Remover
 // =============================
 async function removeTemplate(item: TemplateItem) {
-  if (!confirm(`Excluir o template "${item.name}"?`)) return;
-  try {
-    await templates.remove(item.id);
-  } catch (error_) {
-    console.error(error_);
-  }
+  confirmMessage.value = `Excluir o template "${item.name}"?`;
+  confirmAction.value = async () => {
+    try {
+      await templates.remove(item.id);
+      showSuccess("Template excluído com sucesso!");
+    } catch (error_: any) {
+      templates.lastError = friendlyError(error_, 'templates', 'remove');
+    }
+  };
+  confirmVisible.value = true;
 }
 
 // =============================
-// Campos
+// Toggle ativo
 // =============================
-const dialogFields = ref(false);
-const fieldsLoading = ref(false);
-const fieldsOf = ref<FieldsResponse | null>(null);
-const fieldsOfItem = ref<TemplateItem | null>(null);
-
-async function openFields(item: TemplateItem) {
-  fieldsLoading.value = true;
-  fieldsOfItem.value = item;
-  fieldsOf.value = null;
-  dialogFields.value = true;
+async function toggleActive(item: TemplateItem) {
   try {
-    fieldsOf.value = await templates.fetchFields(item.id, { force: true });
-  } catch (error_) {
-    console.error(error_);
-  } finally {
-    fieldsLoading.value = false;
-  }
-}
-
-// =============================
-// Render
-// =============================
-const dialogRender = ref(false);
-const renderItem = ref<TemplateItem | null>(null);
-const renderFields = ref<TemplateField[]>([]);
-const renderContext = ref<Record<string, any>>({});
-const renderFilename = ref("");
-const rendering = ref(false);
-
-// Caso queira ativar no futuro
-// async function openRender (item: TemplateItem) {
-//   try {
-//     const f = await templates.fetchFields(item.id)
-//     if (f.syntax && f.syntax.toLowerCase().includes('angle')) {
-//       templates.lastError =
-//         'Este template ainda usa << >>. Atualize para {{ }} antes de gerar.'
-//       return
-//     }
-//     renderItem.value = item
-//     renderFields.value = f.fields
-//     renderContext.value = {}
-//     renderFilename.value = `${item.name}.docx`
-//     dialogRender.value = true
-//   } catch (e) {
-//     console.error(e)
-//   }
-// }
-
-async function doRender() {
-  if (!renderItem.value) return;
-  rendering.value = true;
-  try {
-    const result = await templates.render(renderItem.value.id, {
-      context: renderContext.value,
-      filename: renderFilename.value.trim() || undefined,
-    });
-    templates.downloadRendered(result);
-    dialogRender.value = false;
-  } catch (error_) {
-    console.error(error_);
-  } finally {
-    rendering.value = false;
+    await templates.setActive(item.id, !item.active);
+    showSuccess(item.active ? "Template desativado!" : "Template ativado!");
+  } catch {
+    // store já preenche lastError
   }
 }
 
@@ -166,6 +152,7 @@ async function doRender() {
 const loadingList = computed(() => templates.loadingList);
 const error = computed(() => templates.lastError);
 const items = computed(() => templates.items);
+const totalTemplates = computed(() => templates.items.length);
 
 async function load() {
   await templates.fetch({});
@@ -176,254 +163,249 @@ onMounted(load);
 
 <template>
   <v-container fluid>
-    <!-- Cabeçalho -->
-    <v-card class="rounded mb-4" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <div>
-          <div class="text-subtitle-1">Templates (.docx)</div>
-          <div class="text-body-2 text-medium-emphasis">
-            Upload, campos e geração de documentos
-          </div>
+    <!-- Page header -->
+    <div class="d-flex align-center flex-wrap ga-4 mb-6">
+      <div class="flex-grow-1">
+        <div class="d-flex align-center ga-3">
+          <h1 class="text-h5 font-weight-bold text-primary">Templates</h1>
+          <v-chip v-if="totalTemplates" color="primary" size="small" variant="tonal">
+            {{ totalTemplates }} {{ totalTemplates === 1 ? 'template' : 'templates' }}
+          </v-chip>
         </div>
-        <v-spacer />
-        <v-btn color="primary" prepend-icon="mdi-file-word" @click="openCreate">
-          Novo template
-        </v-btn>
-      </v-card-title>
-    </v-card>
+        <p class="text-body-2 text-medium-emphasis mt-1">Upload e gerenciamento de modelos .docx</p>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-file-word" @click="openCreate">
+        Novo template
+      </v-btn>
+    </div>
 
-    <!-- Lista -->
-    <v-card class="rounded" elevation="2">
-      <v-card-title class="d-flex align-center">
-        <v-responsive max-width="300px" class="mt-2" >
+    <!-- Table card -->
+    <v-card>
+      <v-card-text>
+        <div class="d-flex align-center mb-4">
           <v-text-field
             v-model="search"
             clearable
             density="compact"
-            variant="outlined"
             hide-details
-            label="Buscar"
+            placeholder="Buscar por nome..."
             prepend-inner-icon="mdi-magnify"
+            style="max-width: 360px"
           />
-        </v-responsive>
-      </v-card-title>
+        </div>
 
-      <v-card-text>
-        <v-alert v-if="error" class="mb-4" type="error" variant="tonal">
+        <v-alert v-if="error" class="mb-4" closable type="error" @click:close="templates.lastError = null">
           {{ error }}
         </v-alert>
 
         <v-data-table
+          v-model:expanded="expanded"
           v-model:sort-by="sortBy"
-          class="rounded-lg"
           :headers="headers"
           item-key="id"
+          item-value="id"
           :items="items"
           :loading="loadingList"
           loading-text="Carregando..."
           :search="search"
+          show-expand
+          @update:expanded="onExpandRow"
         >
-          <template #item.file="{ item }">
-            <v-btn
-              :href="item.file"
-              prepend-icon="mdi-download"
-              rel="noopener"
-              size="small"
-              target="_blank"
-              variant="text"
-            >
-              Download
-            </v-btn>
+          <!-- Nome com avatar -->
+          <template #item.name="{ item }">
+            <div class="d-flex align-center py-2">
+              <v-avatar class="mr-3" color="primary" size="34" variant="tonal">
+                <v-icon icon="mdi-file-word-outline" size="18" />
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">{{ item.name }}</div>
+                <div class="text-caption text-medium-emphasis">
+                  <a
+                    :href="item.file"
+                    class="text-decoration-none text-medium-emphasis"
+                    rel="noopener"
+                    target="_blank"
+                    @click.stop
+                  >
+                    <v-icon icon="mdi-download" size="12" class="mr-1" />Download .docx
+                  </a>
+                </div>
+              </div>
+            </div>
           </template>
 
+          <!-- Status -->
           <template #item.active="{ item }">
             <v-chip
-              :color="item.active ? 'secondary' : undefined"
+              :color="item.active ? 'success' : 'default'"
               size="small"
-              variant="elevated"
+              variant="tonal"
             >
               {{ item.active ? "Ativo" : "Inativo" }}
             </v-chip>
           </template>
 
+          <!-- Ações (menu) -->
           <template #item.actions="{ item }">
-            <v-btn icon size="small" variant="text" @click="openFields(item)">
-              <v-icon icon="mdi-code-braces" />
-            </v-btn>
-            <!-- Para ativar depois:
-            <v-btn icon size="small" variant="text" @click="openRender(item)">
-              <v-icon icon="mdi-download" />
-            </v-btn> -->
-            <v-btn icon size="small" variant="text" @click="openEdit(item)">
-              <v-icon icon="mdi-pencil" />
-            </v-btn>
-            <v-btn
-              color="error"
-              icon
-              size="small"
-              variant="text"
-              @click="removeTemplate(item)"
-            >
-              <v-icon icon="mdi-delete" />
-            </v-btn>
+            <v-menu location="bottom end">
+              <template #activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  icon="mdi-dots-vertical"
+                  size="small"
+                  variant="text"
+                />
+              </template>
+              <v-list density="compact" min-width="180">
+                <v-list-item
+                  prepend-icon="mdi-pencil-outline"
+                  title="Editar"
+                  @click="openEdit(item)"
+                />
+                <v-list-item
+                  :prepend-icon="item.active ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                  :title="item.active ? 'Desativar' : 'Ativar'"
+                  @click="toggleActive(item)"
+                />
+                <v-divider class="my-1" />
+                <v-list-item
+                  class="text-error"
+                  prepend-icon="mdi-delete-outline"
+                  title="Excluir"
+                  @click="removeTemplate(item)"
+                />
+              </v-list>
+            </v-menu>
+          </template>
+
+          <!-- Expanded row: campos do template -->
+          <template #expanded-row="{ columns, item }">
+            <tr>
+              <td :colspan="columns.length">
+                <div class="expanded-detail pa-4">
+                  <div class="detail-label mb-3">Campos detectados</div>
+
+                  <div v-if="fieldsLoadingFor === item.id" class="d-flex align-center ga-2 py-2">
+                    <v-progress-circular color="primary" indeterminate size="18" width="2" />
+                    <span class="text-body-2 text-medium-emphasis">Analisando template...</span>
+                  </div>
+
+                  <template v-else-if="fieldsCache[item.id]">
+                    <v-alert
+                      v-if="fieldsCache[item.id]!.syntax?.toLowerCase().includes('angle')"
+                      class="mb-3"
+                      density="compact"
+                      type="warning"
+                      variant="tonal"
+                    >
+                      Template usa sintaxe antiga <code>&lt;&lt; &gt;&gt;</code>. Atualize para Jinja <code>{{ "{" }}{{ "}" }}</code>.
+                    </v-alert>
+
+                    <div v-if="fieldsCache[item.id]!.fields.length === 0" class="text-body-2 text-medium-emphasis">
+                      Nenhum campo detectado neste template.
+                    </div>
+
+                    <div v-else class="d-flex flex-wrap ga-2">
+                      <v-chip
+                        v-for="f in fieldsCache[item.id]!.fields"
+                        :key="f.name"
+                        color="primary"
+                        size="small"
+                        variant="tonal"
+                      >
+                        <span class="font-weight-medium">{{ f.name }}</span>
+                        <span class="text-medium-emphasis ml-1">({{ f.type }})</span>
+                      </v-chip>
+                    </div>
+
+                    <div class="text-caption text-medium-emphasis mt-2">
+                      {{ fieldsCache[item.id]!.fields.length }} campo{{ fieldsCache[item.id]!.fields.length !== 1 ? 's' : '' }}
+                      &middot; Sintaxe: {{ fieldsCache[item.id]!.syntax || '—' }}
+                    </div>
+                  </template>
+
+                  <div v-else class="text-body-2 text-medium-emphasis">
+                    Não foi possível carregar os campos.
+                  </div>
+                </div>
+              </td>
+            </tr>
           </template>
 
           <template #no-data>
-            <v-sheet class="pa-6 text-center text-medium-emphasis">
-              Nenhum template cadastrado.
-            </v-sheet>
+            <div class="pa-8 text-center">
+              <v-icon class="mb-2" color="grey-lighten-1" icon="mdi-file-word-outline" size="40" />
+              <div class="text-body-2 text-medium-emphasis">Nenhum template cadastrado</div>
+            </div>
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
 
-    <!-- Dialog criar/editar -->
-    <v-dialog v-model="dialogUpsert" max-width="720">
-      <v-card>
-        <v-card-title>{{
-          editing ? "Editar template" : "Novo template"
-        }}</v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="saveUpsert">
-            <v-row dense>
-              <v-col cols="12" md="8">
-                <v-text-field v-model="form.name" label="Nome" required />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-switch
-                  v-model="form.active"
-                  color="secondary"
-                  hide-details
-                  label="Ativo"
-                />
-              </v-col>
-              <v-col cols="12">
-                <v-file-input
-                  accept=".docx"
-                  :hint="
-                    editing
-                      ? 'Envie para substituir o arquivo atual (opcional).'
-                      : ''
-                  "
-                  label="Arquivo (.docx)"
-                  persistent-hint
-                  prepend-icon="mdi-file-word"
-                  @change="onPickFile"
-                />
-              </v-col>
-            </v-row>
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialogUpsert = false">Cancelar</v-btn>
-          <v-btn color="primary" @click="saveUpsert">Salvar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Dialog campos -->
-    <v-dialog v-model="dialogFields" max-width="760">
-      <v-card>
-        <v-card-title class="d-flex align-center">
+    <!-- SidePanel criar/editar -->
+    <SidePanel v-model="dialogUpsert" :width="520">
+      <template #header>
+        <div class="d-flex align-center">
+          <v-avatar class="mr-3" color="primary" size="36" variant="tonal">
+            <v-icon :icon="editing ? 'mdi-pencil-outline' : 'mdi-file-word'" size="18" />
+          </v-avatar>
           <div>
-            <div class="text-subtitle-1">Campos do template</div>
-            <div class="text-body-2 text-medium-emphasis">
-              {{ fieldsOfItem?.name }} — Sintaxe: {{ fieldsOf?.syntax || "—" }}
-            </div>
+            <div class="text-body-1 font-weight-bold">{{ editing ? "Editar template" : "Novo template" }}</div>
+            <div v-if="editing" class="text-caption text-medium-emphasis">{{ editing.name }}</div>
           </div>
-        </v-card-title>
-        <v-card-text>
-          <v-alert
-            v-if="
-              fieldsOf?.syntax &&
-              fieldsOf.syntax.toLowerCase().includes('angle')
-            "
-            class="mb-4"
-            type="warning"
-            variant="tonal"
-          >
-            Este arquivo ainda possui marcadores no formato
-            <code>&lt;&lt; &gt;&gt;</code>. Atualize para Jinja
-            <code>{{ "{" }}{{ "}" }}</code
-            >.
-          </v-alert>
+        </div>
+      </template>
 
-          <v-skeleton-loader v-if="fieldsLoading" type="table" />
-          <template v-else>
-            <v-alert
-              v-if="!fieldsOf || fieldsOf.fields.length === 0"
-              type="info"
-              variant="tonal"
-            >
-              Nenhum campo detectado.
-            </v-alert>
-            <v-table v-else density="comfortable">
-              <thead>
-                <tr>
-                  <th>Campo original</th>
-                  <th>name (normalizado)</th>
-                  <th>tipo</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="f in fieldsOf!.fields" :key="f.name">
-                  <td>{{ f.raw }}</td>
-                  <td>
-                    <code>{{ f.name }}</code>
-                  </td>
-                  <td>{{ f.type }}</td>
-                </tr>
-              </tbody>
-            </v-table>
-          </template>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialogFields = false">Fechar</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      <v-form @submit.prevent="saveUpsert">
+        <v-text-field v-model="form.name" label="Nome do template" required />
 
-    <!-- Dialog render -->
-    <v-dialog v-model="dialogRender" max-width="840">
-      <v-card>
-        <v-card-title>Gerar documento</v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="doRender">
-            <v-text-field
-              v-model="renderFilename"
-              class="mb-4"
-              label="Nome do arquivo (.docx)"
-            />
-            <div class="text-subtitle-2 mb-2">Preencha os campos</div>
-            <v-row dense>
-              <template v-for="f in renderFields" :key="f.name">
-                <v-col cols="12" md="6">
-                  <component
-                    :is="f.type === 'bool' ? 'v-switch' : 'v-text-field'"
-                    v-model="renderContext[f.name]"
-                    :hide-details="f.type === 'bool'"
-                    :label="f.raw || f.name"
-                    :type="f.type === 'int' ? 'number' : 'text'"
-                  />
-                </v-col>
-              </template>
-            </v-row>
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialogRender = false">Cancelar</v-btn>
-          <v-btn color="primary" :loading="rendering" @click="doRender"
-            >Gerar & baixar</v-btn
-          >
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+        <v-file-input
+          accept=".docx"
+          class="mt-1"
+          :hint="editing ? 'Envie para substituir o arquivo atual (opcional).' : ''"
+          label="Arquivo (.docx)"
+          persistent-hint
+          prepend-inner-icon="mdi-file-word"
+          @change="onPickFile"
+        />
+
+        <v-switch
+          v-model="form.active"
+          class="mt-4"
+          color="success"
+          density="compact"
+          hide-details
+          label="Template ativo"
+        />
+      </v-form>
+
+      <template #actions>
+        <v-btn variant="text" @click="dialogUpsert = false">Cancelar</v-btn>
+        <v-btn color="primary" variant="elevated" @click="saveUpsert">Salvar</v-btn>
+      </template>
+    </SidePanel>
+
+    <ConfirmDialog
+      v-model="confirmVisible"
+      title="Confirmar exclusão"
+      :message="confirmMessage"
+      confirm-text="Excluir"
+      @confirm="confirmAction?.()"
+    />
   </v-container>
 </template>
 
 <style scoped>
-/* ajustes visuais suaves */
+.expanded-detail {
+  background: rgba(15, 43, 70, 0.02);
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.detail-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #CDA660;
+}
 </style>

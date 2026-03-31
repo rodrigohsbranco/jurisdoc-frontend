@@ -6,13 +6,69 @@ import type {
 import axios, { AxiosHeaders } from "axios";
 import { useAuthStore } from "@/stores/auth";
 
-const BASE_URL =
-  (import.meta as any).env?.VITE_API_BASE_URL || "http://192.168.0.250:8000";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 const api = axios.create({
   baseURL: BASE_URL,
   withCredentials: false,
 });
+
+export type PaginatedResponse<T> = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+};
+
+export function isPaginatedResponse<T>(data: any): data is PaginatedResponse<T> {
+  return (
+    !!data
+    && typeof data === "object"
+    && Array.isArray(data.results)
+    && typeof data.count === "number"
+    && (typeof data.next === "string" || data.next === null)
+    && (typeof data.previous === "string" || data.previous === null)
+  );
+}
+
+export function listFromResponse<T>(data: T[] | PaginatedResponse<T> | unknown): T[] {
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (isPaginatedResponse<T>(data)) {
+    return data.results;
+  }
+  return [];
+}
+
+export async function fetchAllPages<T>(
+  url: string,
+  config?: AxiosRequestConfig,
+  maxPages = 100,
+): Promise<T[]> {
+  const first = await api.get<T[] | PaginatedResponse<T>>(url, config);
+  if (!isPaginatedResponse<T>(first.data)) {
+    return listFromResponse<T>(first.data);
+  }
+
+  const items: T[] = [...first.data.results];
+  let next = first.data.next;
+  let pageCount = 1;
+
+  while (next && pageCount < maxPages) {
+    const nextResp = await api.get<T[] | PaginatedResponse<T>>(next);
+    if (!isPaginatedResponse<T>(nextResp.data)) {
+      items.push(...listFromResponse<T>(nextResp.data));
+      break;
+    }
+
+    items.push(...nextResp.data.results);
+    next = nextResp.data.next;
+    pageCount += 1;
+  }
+
+  return items;
+}
 
 // injeta Authorization e tenta refresh se necessário
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
@@ -25,7 +81,6 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   }
 
   if (auth?.accessToken) {
-    // Garante que headers é uma instância de AxiosHeaders
     const headers =
       config.headers instanceof AxiosHeaders
         ? config.headers
@@ -52,15 +107,14 @@ api.interceptors.response.use(
     }
 
     if (
-      error.response.status === 401 &&
-      auth.refreshToken &&
-      !original._retry
+      error.response.status === 401
+      && auth.refreshToken
+      && !original._retry
     ) {
       original._retry = true;
       try {
         await auth.refresh();
 
-        // Normaliza headers como AxiosHeaders e reatribui Authorization
         const headers =
           original.headers instanceof AxiosHeaders
             ? (original.headers as AxiosHeaders)

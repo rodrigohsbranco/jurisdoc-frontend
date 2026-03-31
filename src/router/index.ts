@@ -60,6 +60,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/ContratosView.vue'),
         meta: { title: 'Contratos' },
       },
+      {
+        path: 'producao-kits',
+        name: 'producao-kits',
+        component: () => import('../views/ProducaoKitsView.vue'),
+        meta: { title: 'Produção de Kits' },
+      },
+      {
+        path: 'producao-kits/novo',
+        name: 'producao-kits-novo',
+        component: () => import('../views/NovoKitView.vue'),
+        meta: { title: 'Novo Kit' },
+      },
       { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios' } },
     ],
   },
