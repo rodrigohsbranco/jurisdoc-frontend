@@ -1,125 +1,916 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useKitsStore, clienteToCadastro } from '@/stores/kits'
+import { useClientesStore, type Cliente } from '@/stores/clientes'
+import { useTemplatesStore } from '@/stores/templates'
+import { useAdvogadosStore } from '@/stores/advogados'
+import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
+import api from '@/services/api'
+import { useSnackbar } from '@/composables/useSnackbar'
+import { useCpf } from '@/composables/useCpf'
+import { useCepLookup } from '@/composables/useCepLookup'
+import { onlyDigits, formatCPF } from '@/utils/formatters'
+import { friendlyError, extractFieldErrors } from '@/utils/errorMessages'
+import SidePanel from '@/components/SidePanel.vue'
+import {
+  BANCOS,
+  TARIFAS,
+  TIPOS_ACAO,
+  TIPOS_COM_CONTRATO,
+  UF_LIST,
+  emptyAcao,
+  emptyCadastro,
+  type CondicaoCliente,
+  type KitAcao,
+  type KitCadastro,
+  type KitEtapa,
+  type TipoAcao,
+} from '@/types/kits'
 
-type Etapa = 'cadastro' | 'acoes' | 'kit-final'
-type Binario = 'Sim' | 'Não' | ''
-
-const etapas: Etapa[] = ['cadastro', 'acoes', 'kit-final']
-const etapaAtual = ref<Etapa>('cadastro')
+const etapas: KitEtapa[] = ['cliente', 'acoes', 'kit-final']
+const etapaAtual = ref<KitEtapa>('cliente')
 const etapaIndex = computed(() => etapas.indexOf(etapaAtual.value))
+const route = useRoute()
+const router = useRouter()
+const kitsStore = useKitsStore()
+const kitId = computed(() => Number(route.params.id || 0))
+const isEditMode = computed(() => !!kitId.value)
+const saving = ref(false)
+const clienteId = ref<number | null>(null)
+const acoesExistentes = ref<AcaoAPI[]>([])
+const clientesStore = useClientesStore()
+const { showSuccess, showError } = useSnackbar()
 
-// Cadastro
-const nomeCompleto = ref('')
-const cpf = ref('')
-const genero = ref('')
-const nacionalidade = ref('')
-const estadoCivil = ref('')
-const profissao = ref('')
-const condicaoCliente = ref('Alfabetizado')
-const rua = ref('')
-const numero = ref('')
-const complemento = ref('')
-const bairro = ref('')
-const cidade = ref('')
-const uf = ref('')
-const cep = ref('')
-const comprovanteResidencia = ref<File | null>(null)
-const comprovanteNoNome = ref('')
-const possuiImoveis = ref<Binario>('')
-const possuiMoveis = ref<Binario>('')
-const isentoIrpf = ref<Binario>('')
-const telefoneCliente = ref('')
-const titularContato = ref('')
+// ── Busca de cliente por CPF ──
+const cpfBusca = ref('')
+const buscandoCliente = ref(false)
+const clienteEncontrado = ref(false)
+const clienteNaoEncontrado = ref(false)
+const clienteNome = ref('')
 
-// Ações
-const tipoAcao = ref('')
-const bancoAcao = ref('')
-const numeroContrato = ref('')
+async function buscarClientePorCpf () {
+  const digits = onlyDigits(cpfBusca.value)
+  if (digits.length !== 11) return
 
-const opcoesGenero = ['Masculino', 'Feminino', 'Outro']
-const opcoesNacionalidade = ['Brasileira', 'Estrangeira']
-const opcoesEstadoCivil = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)']
-const opcoesProfissao = ['Aposentado(a)', 'Servidor(a) público(a)', 'Autônomo(a)', 'Outros']
-const opcoesUf = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
-const opcoesSimNao = ['Sim', 'Não']
-const opcoesTitularContato = ['Cliente', 'Representante', 'Terceiro']
-const opcoesTipoAcao = ['RMC', 'Portabilidade', 'Refinanciamento']
-const opcoesBancoAcao = ['Banco PAN', 'Banco BMG', 'Banco Daycoval']
+  buscandoCliente.value = true
+  clienteEncontrado.value = false
+  clienteNaoEncontrado.value = false
 
-const isCadastroValido = computed(() => {
-  return (
-    !!nomeCompleto.value.trim() &&
-    !!cpf.value.trim() &&
-    !!genero.value &&
-    !!nacionalidade.value &&
-    !!estadoCivil.value &&
-    !!profissao.value &&
-    !!condicaoCliente.value &&
-    !!rua.value.trim() &&
-    !!numero.value.trim() &&
-    !!bairro.value.trim() &&
-    !!cidade.value.trim() &&
-    !!uf.value &&
-    !!cep.value.trim() &&
-    !!comprovanteNoNome.value &&
-    !!possuiImoveis.value &&
-    !!possuiMoveis.value &&
-    !!isentoIrpf.value &&
-    !!telefoneCliente.value.trim() &&
-    !!titularContato.value
-  )
+  try {
+    const { data } = await api.get('/api/cadastro/clientes/', { params: { search: digits } })
+    const results = Array.isArray(data) ? data : data.results || []
+    const found = results.find((c: any) => c.cpf === digits)
+
+    if (found) {
+      clienteId.value = found.id
+      cad.value = clienteToCadastro(found)
+      clienteEncontrado.value = true
+      clienteNome.value = found.nome_completo
+    } else {
+      clienteNaoEncontrado.value = true
+    }
+  } catch (e: any) {
+    showError('Erro ao buscar cliente.')
+  } finally {
+    buscandoCliente.value = false
+  }
+}
+
+// ── Drawer cadastro de cliente ──
+const drawerCadastro = ref(false)
+const drawerForm = ref<Partial<Cliente>>({})
+const drawerFieldErrors = ref<Record<string, string[]>>({})
+const drawerTab = ref('pessoal')
+
+function abrirDrawerCadastro () {
+  drawerForm.value = {
+    nome_completo: '',
+    cpf: cpfBusca.value,
+    rg: '',
+    orgao_expedidor: '',
+    nacionalidade: '',
+    estado_civil: '',
+    profissao: '',
+    se_idoso: false,
+    se_incapaz: false,
+    se_crianca_adolescente: false,
+    logradouro: '',
+    numero: '',
+    bairro: '',
+    cidade: '',
+    cep: '',
+    uf: '',
+    beneficios: [],
+  }
+  drawerFieldErrors.value = {}
+  drawerTab.value = 'pessoal'
+  drawerCadastro.value = true
+}
+
+async function salvarClienteDrawer () {
+  drawerFieldErrors.value = {}
+  try {
+    if (!drawerForm.value.nome_completo?.trim()) {
+      throw new Error('Informe o nome completo.')
+    }
+    const payload = { ...drawerForm.value } as any
+    if (payload.cpf) payload.cpf = onlyDigits(payload.cpf)
+    if (payload.cep) payload.cep = onlyDigits(payload.cep)
+    if (payload.uf) payload.uf = String(payload.uf).toUpperCase()
+
+    const created = await clientesStore.create(payload)
+    clienteId.value = created.id
+    cad.value = clienteToCadastro(created as any)
+    clienteEncontrado.value = true
+    clienteNaoEncontrado.value = false
+    clienteNome.value = created.nome_completo
+    drawerCadastro.value = false
+    showSuccess('Cliente cadastrado com sucesso!')
+  } catch (e: any) {
+    const fields = extractFieldErrors(e)
+    if (fields) {
+      drawerFieldErrors.value = fields
+      return
+    }
+    showError(friendlyError(e))
+  }
+}
+
+// ── Drawer CEP lookup ──
+const { cepLoading: drawerCepLoading, cepStatus: drawerCepStatus, lookupCEP: drawerCepLookup } = useCepLookup()
+
+async function drawerLookupCEP () {
+  const raw = drawerForm.value.cep || ''
+  await drawerCepLookup(raw, (data) => {
+    drawerForm.value.logradouro = data.logradouro || drawerForm.value.logradouro || ''
+    drawerForm.value.bairro = data.bairro || drawerForm.value.bairro || ''
+    drawerForm.value.cidade = data.cidade || drawerForm.value.cidade || ''
+    drawerForm.value.uf = data.uf || drawerForm.value.uf || ''
+  })
+}
+
+// ── Cadastro state ──
+const cad = ref<KitCadastro>(emptyCadastro())
+
+// ── Ações state ──
+const acoes = ref<KitAcao[]>([])
+
+// ── Composables ──
+const { isValidCPF } = useCpf()
+const { cepLoading: buscandoCep, lookupCEP } = useCepLookup()
+
+// ── CEP lookup ──
+watch(() => cad.value.cep, (val) => {
+  const digits = val.replace(/\D/g, '')
+  if (digits.length === 8) {
+    lookupCEP(digits, (data) => {
+      cad.value.rua = data.logradouro || cad.value.rua
+      cad.value.bairro = data.bairro || cad.value.bairro
+      cad.value.cidade = data.cidade || cad.value.cidade
+      cad.value.estado = data.uf || cad.value.estado
+    })
+  }
 })
 
-const isAcoesValido = computed(() => {
-  return !!tipoAcao.value && !!bancoAcao.value && !!numeroContrato.value.trim()
-})
+// ── Masks ──
+function maskCPF (v: string) {
+  const d = v.replace(/\D/g, '').slice(0, 11)
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+}
+
+function maskCEP (v: string) {
+  const d = v.replace(/\D/g, '').slice(0, 8)
+  if (d.length <= 5) return d
+  return `${d.slice(0, 5)}-${d.slice(5)}`
+}
+
+function maskPhone (v: string) {
+  const d = v.replace(/\D/g, '').slice(0, 11)
+  if (d.length <= 2) return d.length ? `(${d}` : ''
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
+}
+
+// ── Opções ──
+const opcoesGenero = [
+  { title: 'Masculino', value: 'masculino' },
+  { title: 'Feminino', value: 'feminino' },
+]
+
+const opcoesNacionalidade = [
+  { title: 'Brasileiro(a)', value: 'brasileiro' },
+  { title: 'Outra', value: 'outro' },
+]
+
+const opcoesEstadoCivil = [
+  { title: 'Solteiro(a)', value: 'solteiro' },
+  { title: 'Casado(a)', value: 'casado' },
+  { title: 'Divorciado(a)', value: 'divorciado' },
+  { title: 'Viúvo(a)', value: 'viuvo' },
+  { title: 'União Estável', value: 'uniao_estavel' },
+  { title: 'Outro', value: 'outro' },
+]
+
+const opcoesProfissao = [
+  { title: 'Aposentado(a)', value: 'aposentado' },
+  { title: 'Pensionista', value: 'pensionista' },
+  { title: 'Outra', value: 'outro' },
+]
+
+const opcoesCondicao: { label: string; value: CondicaoCliente; icon: string }[] = [
+  { label: 'Alfabetizado', value: 'alfabetizado', icon: 'mdi-check-circle-outline' },
+  { label: 'Analfabeto(a)', value: 'analfabeto', icon: 'mdi-pencil-off-outline' },
+  { label: 'Incapaz', value: 'incapaz', icon: 'mdi-account-alert-outline' },
+  { label: 'Criança/Adolescente', value: 'crianca_adolescente', icon: 'mdi-account-child-outline' },
+]
+
+const opcoesTitularContato = [
+  { title: 'Sim, o cliente é o titular', value: 'sim' },
+  { title: 'Não, é outra pessoa', value: 'nao' },
+]
+
+const opcoesRelacaoTitular = [
+  { title: 'Pai/Mãe', value: 'pai_mae' },
+  { title: 'Filho(a)', value: 'filho_a' },
+  { title: 'Irmão/Irmã', value: 'irmao_a' },
+  { title: 'Cônjuge', value: 'conjuge' },
+  { title: 'Outro', value: 'outro' },
+]
+
+// ── Computed helpers ──
+const isAnalfabeto = computed(() => cad.value.condicaoCliente === 'analfabeto')
+const needsResponsavel = computed(() =>
+  cad.value.condicaoCliente === 'incapaz' || cad.value.condicaoCliente === 'crianca_adolescente',
+)
+const comprovanteNaoCliente = computed(() => cad.value.comprovanteNomeCliente === 'nao')
+const titularNaoCliente = computed(() => cad.value.titularContato === 'nao')
+
+// ── Upload doc pessoal ──
+const docPessoalFile = ref<File | null>(null)
+
+function onSelectDocPessoal (e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (file) docPessoalFile.value = file
+}
+
+function onDropDocPessoal (e: DragEvent) {
+  const file = e.dataTransfer?.files?.[0]
+  if (file) docPessoalFile.value = file
+}
+
+// ── Ações helpers ──
+function addAcao () {
+  acoes.value.push(emptyAcao())
+}
+
+function removeAcao (index: number) {
+  acoes.value.splice(index, 1)
+}
+
+function updateAcao (index: number, field: keyof KitAcao, value: string) {
+  const acao = acoes.value[index]
+  if (field === 'tipoAcao') {
+    acao.numeroContrato = ''
+    acao.tarifaQuestionada = ''
+    acao.tipoSeguro = ''
+    acao.tipoContribuicao = ''
+    acao.historicoEmprestimoUrl = ''
+    acao.historicoCreditoUrl = ''
+    acao.extratoBancarioUrl = ''
+  }
+  if (field === 'nomeBanco' && value !== 'Outro') {
+    acao.bancoOutro = ''
+  }
+  ;(acao[field] as string) = value
+}
+
+function acaoNeedsContrato (tipo: string) {
+  return TIPOS_COM_CONTRATO.includes(tipo as TipoAcao)
+}
+
+// ── Validação ──
+const errors = ref<Record<string, string>>({})
+const acoesErrors = ref<Record<number, Record<string, string>>>({})
+
+function validateCadastro (): boolean {
+  const e: Record<string, string> = {}
+  if (!cad.value.nome?.trim()) e.nome = 'Campo obrigatório'
+  if (!cad.value.cpf?.trim()) e.cpf = 'Campo obrigatório'
+  else if (!isValidCPF(cad.value.cpf)) e.cpf = 'CPF inválido'
+  if (!cad.value.genero) e.genero = 'Campo obrigatório'
+  if (!cad.value.nacionalidadeTipo) e.nacionalidadeTipo = 'Campo obrigatório'
+  if (cad.value.nacionalidadeTipo === 'outro' && !cad.value.nacionalidade?.trim()) e.nacionalidade = 'Campo obrigatório'
+  if (!cad.value.estadoCivilTipo) e.estadoCivilTipo = 'Campo obrigatório'
+  if (cad.value.estadoCivilTipo === 'outro' && !cad.value.estadoCivil?.trim()) e.estadoCivil = 'Campo obrigatório'
+  if (!cad.value.profissaoTipo) e.profissaoTipo = 'Campo obrigatório'
+  if (cad.value.profissaoTipo === 'outro' && !cad.value.profissao?.trim()) e.profissao = 'Campo obrigatório'
+
+  // Condição: analfabeto
+  if (isAnalfabeto.value) {
+    if (!cad.value.rogadoNome?.trim()) e.rogadoNome = 'Campo obrigatório'
+    if (!cad.value.rogadoCpf?.trim()) e.rogadoCpf = 'Campo obrigatório'
+    if (!cad.value.testemunha1Nome?.trim()) e.testemunha1Nome = 'Campo obrigatório'
+    if (!cad.value.testemunha1Cpf?.trim()) e.testemunha1Cpf = 'Campo obrigatório'
+    if (!cad.value.testemunha2Nome?.trim()) e.testemunha2Nome = 'Campo obrigatório'
+    if (!cad.value.testemunha2Cpf?.trim()) e.testemunha2Cpf = 'Campo obrigatório'
+  }
+
+  // Condição: incapaz / criança
+  if (needsResponsavel.value) {
+    if (!cad.value.responsavelLegalNome?.trim()) e.responsavelLegalNome = 'Campo obrigatório'
+    if (!cad.value.responsavelLegalCpf?.trim()) e.responsavelLegalCpf = 'Campo obrigatório'
+  }
+
+  // Endereço
+  if (!cad.value.rua?.trim()) e.rua = 'Campo obrigatório'
+  if (!cad.value.numero?.trim()) e.numero = 'Campo obrigatório'
+  if (!cad.value.bairro?.trim()) e.bairro = 'Campo obrigatório'
+  if (!cad.value.cidade?.trim()) e.cidade = 'Campo obrigatório'
+  if (!cad.value.estado) e.estado = 'Campo obrigatório'
+  if (!cad.value.cep?.trim()) e.cep = 'Campo obrigatório'
+
+  // Comprovante
+  if (!cad.value.comprovanteNomeCliente) e.comprovanteNomeCliente = 'Campo obrigatório'
+  if (comprovanteNaoCliente.value) {
+    if (!cad.value.responsavelImovelNome?.trim()) e.responsavelImovelNome = 'Campo obrigatório'
+    if (!cad.value.responsavelImovelCpf?.trim()) e.responsavelImovelCpf = 'Campo obrigatório'
+  }
+
+  // Hipossuficiência
+  if (cad.value.possuiImoveis === null) e.possuiImoveis = 'Campo obrigatório'
+  if (cad.value.possuiMoveis === null) e.possuiMoveis = 'Campo obrigatório'
+  if (cad.value.isentoIrpf === null) e.isentoIrpf = 'Campo obrigatório'
+
+  // Contato
+  if (!cad.value.telefone?.trim()) e.telefone = 'Campo obrigatório'
+  if (!cad.value.titularContato) e.titularContato = 'Campo obrigatório'
+  if (titularNaoCliente.value) {
+    if (!cad.value.nomeTitularNumero?.trim()) e.nomeTitularNumero = 'Campo obrigatório'
+    if (!cad.value.relacaoTitularTipo) e.relacaoTitularTipo = 'Campo obrigatório'
+    if (cad.value.relacaoTitularTipo === 'outro' && !cad.value.relacaoTitular?.trim()) e.relacaoTitular = 'Campo obrigatório'
+  }
+
+  errors.value = e
+  return Object.keys(e).length === 0
+}
+
+function validateAcoes (): boolean {
+  if (acoes.value.length === 0) return false
+  const errs: Record<number, Record<string, string>> = {}
+  acoes.value.forEach((acao, i) => {
+    const e: Record<string, string> = {}
+    if (!acao.tipoAcao) e.tipoAcao = 'Campo obrigatório'
+    if (!acao.nomeBanco) e.nomeBanco = 'Campo obrigatório'
+    if (acao.nomeBanco === 'Outro' && !acao.bancoOutro?.trim()) e.bancoOutro = 'Campo obrigatório'
+    if (acaoNeedsContrato(acao.tipoAcao) && !acao.numeroContrato?.trim()) e.numeroContrato = 'Campo obrigatório'
+    if (acao.tipoAcao === 'tarifa_bancaria' && !acao.tarifaQuestionada) e.tarifaQuestionada = 'Campo obrigatório'
+    if (acao.tipoAcao === 'seguro_nao_autorizado' && !acao.tipoSeguro?.trim()) e.tipoSeguro = 'Campo obrigatório'
+    if (acao.tipoAcao === 'contribuicao_sindical_nao_autorizada' && !acao.tipoContribuicao?.trim()) e.tipoContribuicao = 'Campo obrigatório'
+    if (Object.keys(e).length > 0) errs[i] = e
+  })
+  acoesErrors.value = errs
+  return Object.keys(errs).length === 0
+}
 
 const podeAvancar = computed(() => {
-  if (etapaAtual.value === 'cadastro') return isCadastroValido.value
-  if (etapaAtual.value === 'acoes') return isAcoesValido.value
+  if (etapaAtual.value === 'cliente') {
+    if (!clienteEncontrado.value && !isEditMode.value) return false
+    return validateCadastroSilent()
+  }
+  if (etapaAtual.value === 'acoes') return acoes.value.length > 0
   return false
 })
 
-function proximaEtapa () {
-  if (!podeAvancar.value) return
-  const next = etapaIndex.value + 1
-  if (next < etapas.length) etapaAtual.value = etapas[next]
+function validateCadastroSilent (): boolean {
+  // Validação leve sem setar erros — para habilitar/desabilitar botão
+  return !!(
+    cad.value.nome?.trim() &&
+    cad.value.cpf?.trim() &&
+    cad.value.genero &&
+    cad.value.nacionalidadeTipo &&
+    (cad.value.nacionalidadeTipo !== 'outro' || cad.value.nacionalidade?.trim()) &&
+    cad.value.estadoCivilTipo &&
+    (cad.value.estadoCivilTipo !== 'outro' || cad.value.estadoCivil?.trim()) &&
+    cad.value.profissaoTipo &&
+    (cad.value.profissaoTipo !== 'outro' || cad.value.profissao?.trim()) &&
+    (!isAnalfabeto.value || (cad.value.rogadoNome?.trim() && cad.value.rogadoCpf?.trim() && cad.value.testemunha1Nome?.trim() && cad.value.testemunha1Cpf?.trim() && cad.value.testemunha2Nome?.trim() && cad.value.testemunha2Cpf?.trim())) &&
+    (!needsResponsavel.value || (cad.value.responsavelLegalNome?.trim() && cad.value.responsavelLegalCpf?.trim())) &&
+    cad.value.rua?.trim() &&
+    cad.value.numero?.trim() &&
+    cad.value.bairro?.trim() &&
+    cad.value.cidade?.trim() &&
+    cad.value.estado &&
+    cad.value.cep?.trim() &&
+    cad.value.comprovanteNomeCliente &&
+    (!comprovanteNaoCliente.value || (cad.value.responsavelImovelNome?.trim() && cad.value.responsavelImovelCpf?.trim())) &&
+    cad.value.possuiImoveis !== null &&
+    cad.value.possuiMoveis !== null &&
+    cad.value.isentoIrpf !== null &&
+    cad.value.telefone?.trim() &&
+    cad.value.titularContato &&
+    (!titularNaoCliente.value || (cad.value.nomeTitularNumero?.trim() && cad.value.relacaoTitularTipo))
+  )
+}
+
+// ── Kit Final: Preview de documentos via docx-preview ──
+const templatesStore = useTemplatesStore()
+
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+
+// Templates do kit
+const KIT_TEMPLATES = [
+  { id: 6, key: 'contrato', label: 'Contrato' },
+  { id: 10, key: 'procuracao', label: 'Procuração' },
+  { id: 9, key: 'hipossuficiencia', label: 'Decl. Hipossuficiência' },
+  { id: 7, key: 'ciencia', label: 'Decl. Ciência' },
+  { id: 8, key: 'domicilio', label: 'Decl. Domicílio' },
+]
+
+const PROCURACAO_TEMPLATE_ID = 10
+
+// Computed: templates fixos visíveis (domicílio só se comprovante não no nome)
+const kitTemplatesVisiveis = computed(() => {
+  return KIT_TEMPLATES.filter(t => {
+    if (t.key === 'domicilio' && cad.value.comprovanteNomeCliente !== 'nao') return false
+    return true
+  })
+})
+
+const docTab = ref('contrato')
+const docBlobs = ref<Record<string, Blob>>({})
+const docLoading = ref<Record<string, boolean>>({})
+const docErrors = ref<Record<string, string>>({})
+const docxContainers = ref<Record<string, HTMLElement | null>>({})
+
+
+const advogadosStore = useAdvogadosStore()
+
+// Formatadores para documentos
+function fmtCPF (v: string): string {
+  const d = (v || '').replace(/\D/g, '').slice(0, 11)
+  if (d.length !== 11) return v || ''
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+}
+
+function fmtCEP (v: string): string {
+  const d = (v || '').replace(/\D/g, '').slice(0, 8)
+  if (d.length !== 8) return v || ''
+  return `${d.slice(0, 5)}-${d.slice(5)}`
+}
+
+async function montarContexto (): Promise<Record<string, any>> {
+  const c = cad.value
+  const isMasc = c.genero === 'masculino'
+
+  // Flexão de gênero
+  const inscrito = isMasc ? 'inscrito' : 'inscrita'
+  const domiciliado = isMasc ? 'domiciliado' : 'domiciliada'
+  const contratado = isMasc ? 'contratado' : 'contratada'
+
+  const nacionalidade = c.nacionalidadeTipo === 'brasileiro'
+    ? (isMasc ? 'brasileiro' : 'brasileira')
+    : c.nacionalidade || ''
+
+  const estadoCivilMap: Record<string, string> = {
+    solteiro: isMasc ? 'solteiro' : 'solteira',
+    casado: isMasc ? 'casado' : 'casada',
+    divorciado: isMasc ? 'divorciado' : 'divorciada',
+    viuvo: isMasc ? 'viúvo' : 'viúva',
+    uniao_estavel: 'em união estável',
+  }
+  const estado_civil = c.estadoCivilTipo === 'outro'
+    ? c.estadoCivil
+    : (estadoCivilMap[c.estadoCivilTipo] || c.estadoCivilTipo)
+
+  const profissaoMap: Record<string, string> = {
+    aposentado: isMasc ? 'aposentado' : 'aposentada',
+    pensionista: 'pensionista',
+  }
+  const profissao = c.profissaoTipo === 'outro'
+    ? c.profissao
+    : (profissaoMap[c.profissaoTipo] || c.profissaoTipo)
+
+  const enderecoParts = [c.rua, c.numero, c.complemento, c.bairro].filter(Boolean).join(', ')
+  const endereco = `${enderecoParts}, ${c.cidade}/${c.estado}, CEP ${fmtCEP(c.cep)}`
+
+  const d = new Date()
+  const local_data = `${c.cidade}/${c.estado}, ${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`
+
+  // Bancos
+  const bancoNomes = acoes.value.map(a => (a.nomeBanco === 'Outro' ? a.bancoOutro : a.nomeBanco).toUpperCase())
+  const bancos = bancoNomes.length <= 1
+    ? (bancoNomes[0] || '(BANCOS DA AÇÃO)')
+    : bancoNomes.slice(0, -1).join(', ') + ' e ' + bancoNomes[bancoNomes.length - 1]
+
+  // Tipos de ação
+  const tipoLabels = acoes.value.map(a => TIPOS_ACAO.find(t => t.value === a.tipoAcao)?.label || a.tipoAcao)
+  const tipos_acao = tipoLabels.length <= 1
+    ? (tipoLabels[0] || '')
+    : tipoLabels.slice(0, -1).join(', ') + ' e ' + tipoLabels[tipoLabels.length - 1]
+
+  // ── Advogados por UF ──
+  let oab_estado = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
+  let advogados_estado = ''
+  let unidade_apoio = ''
+
+  const uf = c.estado?.toUpperCase()
+  if (uf) {
+    try {
+      const advs = await advogadosStore.fetchPorUf(uf)
+
+      // OABs dos sócios
+      const socios = advs.filter(a => a.is_socio)
+      if (socios.length > 0) {
+        oab_estado = socios.map(s => s.numero_oab).join(' e ')
+      }
+
+      // Advogados adicionais (não-sócios)
+      const adicionais = advs.filter(a => !a.is_socio)
+      if (adicionais.length > 0) {
+        advogados_estado = adicionais.map(a => {
+          let texto = `${a.nome_completo}, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${inscrito} na ${a.numero_oab}`
+          if (a.escritorio_nome) {
+            texto += `, neste ato representando o escritório ${a.escritorio_nome}, pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ${a.escritorio_cnpj}`
+          }
+          return texto
+        }).join('; e ')
+      }
+
+      // Unidade de apoio (pega a primeira que tiver)
+      const comUnidade = advs.find(a => a.unidade_apoio_nome && a.unidade_apoio_endereco)
+      if (comUnidade) {
+        unidade_apoio = `, unidade de apoio administrativo na ${comUnidade.unidade_apoio_endereco}`
+      }
+    } catch (err) {
+      console.warn('Falha ao buscar advogados para UF', uf, err)
+    }
+  }
+
+  // Bloco assinatura
+  let bloco_assinatura = '_________________________________________________\nASSINANTE'
+  if (c.condicaoCliente === 'analfabeto') {
+    bloco_assinatura = `QUANDO ANALFABETO:\n\n_________________________________________________\nDeclarante/Rogado\n\n_________________________________________________\nTestemunha 1 Nome/CPF: ${c.testemunha1Nome} / ${c.testemunha1Cpf}\n\n_________________________________________________\nTestemunha 2 Nome/CPF: ${c.testemunha2Nome} / ${c.testemunha2Cpf}`
+  } else if (c.condicaoCliente === 'incapaz' || c.condicaoCliente === 'crianca_adolescente') {
+    const label = c.condicaoCliente === 'crianca_adolescente' ? 'Responsável Legal (Criança/Adolescente)' : 'Responsável Legal (Incapaz)'
+    bloco_assinatura = `_________________________________________________\n${label} - ${c.responsavelLegalNome} - CPF: ${c.responsavelLegalCpf}`
+  }
+
+  // Hipossuficiência
+  const imoveis_sim_nao = c.possuiImoveis ? '( X ) SIM    (   ) NÃO' : '(   ) SIM    ( X ) NÃO'
+  const moveis_sim_nao = c.possuiMoveis ? '( X ) SIM    (   ) NÃO' : '(   ) SIM    ( X ) NÃO'
+  const irpf_sim_nao = c.isentoIrpf ? '( X ) SIM    (   ) NÃO' : '(   ) SIM    ( X ) NÃO'
+
+  // Domicílio assinatura
+  let bloco_assinatura_domicilio = bloco_assinatura
+  if (c.condicaoCliente === 'analfabeto') {
+    bloco_assinatura_domicilio = `QUANDO ANALFABETO:\n\n__________________________________________________\nDeclarante/titular do comprovante de endereço\n\n__________________________________________________\nAssinatura do rogado\n\nTESTEMUNHA: ${c.testemunha1Nome} CPF: ${c.testemunha1Cpf}\nTESTEMUNHA: ${c.testemunha2Nome} CPF: ${c.testemunha2Cpf}`
+  }
+
+  return {
+    nome_cliente: c.nome.toUpperCase(),
+    nacionalidade,
+    estado_civil,
+    profissao,
+    cpf_cliente: fmtCPF(c.cpf),
+    endereco,
+    telefone: c.telefone,
+    inscrito,
+    domiciliado,
+    contratado,
+    o_contratante: isMasc ? 'O' : 'A',
+    pelo: isMasc ? 'pelo' : 'pela',
+    ao: isMasc ? 'ao' : 'à',
+    do: isMasc ? 'do' : 'da',
+    no: isMasc ? 'no' : 'na',
+    informado: isMasc ? 'informado' : 'informada',
+    impossibilitado: isMasc ? 'impossibilitado' : 'impossibilitada',
+    oab_estado,
+    unidade_apoio,
+    advogados_estado,
+    bancos,
+    tipos_acao,
+    instituicao_re: bancos,
+    imoveis_sim_nao,
+    moveis_sim_nao,
+    irpf_sim_nao,
+    local_data,
+    bloco_assinatura,
+    responsavel_imovel_nome: c.responsavelImovelNome,
+    responsavel_imovel_cpf: fmtCPF(c.responsavelImovelCpf),
+    bloco_assinatura_domicilio,
+    // Dados para condicional de analfabeto nos templates
+    condicao_cliente: c.condicaoCliente,
+    rogado_nome: c.rogadoNome,
+    rogado_cpf: fmtCPF(c.rogadoCpf),
+    testemunha1_nome: c.testemunha1Nome,
+    testemunha1_cpf: fmtCPF(c.testemunha1Cpf),
+    testemunha2_nome: c.testemunha2Nome,
+    testemunha2_cpf: fmtCPF(c.testemunha2Cpf),
+    responsavel_legal_nome: c.responsavelLegalNome,
+    responsavel_legal_cpf: fmtCPF(c.responsavelLegalCpf),
+  }
+}
+
+// ── Docs fixos ──
+
+async function fetchDocBlob (templateId: number, key: string) {
+  // Procuração tem lógica especial: uma página por ação
+  if (key === 'procuracao') {
+    await fetchProcuracaoMultipla()
+    return
+  }
+
+  docLoading.value[key] = true
+  docErrors.value[key] = ''
+  try {
+    const context = await montarContexto()
+    const result = await templatesStore.render(templateId, {
+      context,
+      filename: `kit_${key}_${kitId.value}`,
+    })
+    docBlobs.value[key] = result.blob
+  } catch (e: any) {
+    console.error(`Erro ao gerar doc ${key}:`, e)
+    const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
+    docErrors.value[key] = `Não foi possível gerar o documento: ${msg}`
+  } finally {
+    docLoading.value[key] = false
+  }
+}
+
+async function renderBlobToEl (blob: Blob, container: HTMLElement) {
+  const { renderAsync } = await import('docx-preview')
+  container.innerHTML = ''
+  await renderAsync(blob, container, undefined, {
+    className: 'docx-preview',
+    inWrapper: true,
+    ignoreWidth: false,
+    ignoreHeight: false,
+    ignoreFonts: false,
+    breakPages: true,
+  })
+}
+
+async function renderBlobToContainer (key: string) {
+  const blob = docBlobs.value[key]
+  if (!blob) return
+  await nextTick()
+  const container = docxContainers.value[key]
+  if (!container) return
+  try {
+    await renderBlobToEl(blob, container)
+  } catch {
+    docErrors.value[key] = 'Não foi possível renderizar a pré-visualização.'
+  }
+}
+
+async function renderDocTemplate (templateId: number, key: string) {
+  await fetchDocBlob(templateId, key)
+  await nextTick()
+  await nextTick()
+  await renderBlobToContainer(key)
+}
+
+function downloadDoc (key: string) {
+  const blob = docBlobs.value[key]
+  if (!blob) return
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `kit_${key}_${kitId.value}.docx`
+  document.body.append(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+// ── Procuração especial: uma página por ação, tudo num único doc ──
+
+async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, any>> {
+  const base = await montarContexto()
+  const bancoNome = (acao.nomeBanco === 'Outro' ? acao.bancoOutro : acao.nomeBanco).toUpperCase()
+  const tipoLabel = TIPOS_ACAO.find(t => t.value === acao.tipoAcao)?.label || acao.tipoAcao
+  return {
+    ...base,
+    bancos: bancoNome,
+    tipos_acao: tipoLabel,
+    instituicao_re: bancoNome,
+  }
+}
+
+async function fetchProcuracaoMultipla () {
+  const key = 'procuracao'
+  docLoading.value[key] = true
+  docErrors.value[key] = ''
+
+  try {
+    // Renderiza uma procuração por ação e coleta os blobs
+    const blobs: Blob[] = []
+    for (const acao of acoes.value) {
+      const context = await montarContextoProcuracao(acao)
+      const result = await templatesStore.render(PROCURACAO_TEMPLATE_ID, {
+        context,
+        filename: `kit_procuracao_${kitId.value}`,
+      })
+      blobs.push(result.blob)
+    }
+
+    // Se só tem uma ação, usa o blob direto
+    if (blobs.length === 1) {
+      docBlobs.value[key] = blobs[0]
+    } else if (blobs.length > 1) {
+      // Combina todos os blobs: manda para o backend compor
+      const formData = new FormData()
+      blobs.forEach((blob, i) => formData.append('files', blob, `proc_${i}.docx`))
+      const { data } = await api.post('/api/templates/compose/', formData, {
+        responseType: 'blob',
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      docBlobs.value[key] = data as Blob
+    }
+  } catch (e: any) {
+    console.error('Erro ao gerar procurações:', e)
+    const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
+    docErrors.value[key] = `Não foi possível gerar as procurações: ${msg}`
+  } finally {
+    docLoading.value[key] = false
+  }
+}
+
+// ── Watchers ──
+
+// Busca todos os blobs quando entra no Kit Final
+watch(etapaAtual, async (val) => {
+  if (val === 'kit-final' && cad.value.nome) {
+    const promises = kitTemplatesVisiveis.value.map(t => fetchDocBlob(t.id, t.key))
+    await Promise.all(promises)
+    await nextTick()
+    await nextTick()
+    await renderBlobToContainer(docTab.value)
+  }
+})
+
+// Renderiza o blob quando muda de aba (docs fixos)
+watch(docTab, async (key) => {
+  if (docBlobs.value[key] && etapaAtual.value === 'kit-final') {
+    await nextTick()
+    await nextTick()
+    await renderBlobToContainer(key)
+  }
+})
+
+/* ── Código legado removido — geração de texto puro ──
+function gerarContrato () {
+  ...era texto puro, agora usa docx-preview
+}
+*/
+
+// placeholder
+const _removed = null // eslint-disable-line
+// ── Persistência ──
+const savingMessage = ref('')
+
+async function avancarComPersistencia () {
+  if (etapaAtual.value === 'cliente') {
+    if (!validateCadastro()) return
+    if (!clienteId.value) return
+    saving.value = true
+
+    try {
+      savingMessage.value = 'Salvando dados do cliente...'
+      await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
+
+      if (!isEditMode.value) {
+        savingMessage.value = 'Salvando rascunho do kit...'
+        const created = await kitsStore.createDraft(clienteId.value)
+        // Redireciona para editar já na aba de ações
+        await router.replace({
+          name: 'producao-kits-editar',
+          params: { id: created.id },
+          query: { etapa: 'acoes' },
+        })
+      } else {
+        etapaAtual.value = 'acoes'
+      }
+    } finally {
+      saving.value = false
+      savingMessage.value = ''
+    }
+    return
+  }
+
+  if (etapaAtual.value === 'acoes') {
+    if (!validateAcoes()) return
+    saving.value = true
+    try {
+      savingMessage.value = 'Salvando ações...'
+      if (clienteId.value) {
+        await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
+      }
+      await kitsStore.saveAcoes(kitId.value, acoes.value, acoesExistentes.value)
+      acoesExistentes.value = []
+      etapaAtual.value = 'kit-final'
+    } finally {
+      saving.value = false
+      savingMessage.value = ''
+    }
+  }
 }
 
 function etapaAnterior () {
   const prev = etapaIndex.value - 1
   if (prev >= 0) etapaAtual.value = etapas[prev]
 }
+
+async function finalizarKit () {
+  if (!kitId.value) return
+  saving.value = true
+  try {
+    await kitsStore.finalizar(kitId.value)
+    await router.push({ name: 'producao-kits' })
+  } finally {
+    saving.value = false
+  }
+}
+
+async function marcarAssinado () {
+  if (!kitId.value) return
+  saving.value = true
+  try {
+    await kitsStore.assinar(kitId.value)
+    cad.value.status = 'assinado'
+  } finally {
+    saving.value = false
+  }
+}
+
+// ── Load existing kit ──
+onMounted(async () => {
+  await kitsStore.fetchList()
+  if (!isEditMode.value) return
+  const kit = await kitsStore.getDetail(kitId.value)
+  if (!kit) return
+
+  // Preencher dados do cliente
+  clienteId.value = kit.cliente
+  clienteEncontrado.value = true
+  if (kit.cliente_detail) {
+    cad.value = clienteToCadastro(kit.cliente_detail)
+    clienteNome.value = kit.cliente_detail.nome_completo || ''
+  }
+  cad.value.status = kit.status
+
+  // Preencher ações
+  acoesExistentes.value = kit.acoes || []
+  acoes.value = kit.acoes.map(a => acaoFromAPI(a))
+
+  // Ir para a etapa correta: query param tem prioridade, senão usa o status
+  const etapaQuery = route.query.etapa as string | undefined
+  if (etapaQuery === 'acoes' || etapaQuery === 'kit-final') {
+    etapaAtual.value = etapaQuery
+  } else if (kit.status === 'acoes') {
+    etapaAtual.value = 'acoes'
+  } else if (kit.status === 'finalizado' || kit.status === 'assinado') {
+    etapaAtual.value = 'kit-final'
+  }
+})
 </script>
 
 <template>
   <v-container class="novo-kit pa-0" fluid>
+    <!-- Top bar -->
     <div class="topbar px-6">
       <v-btn class="text-none" prepend-icon="mdi-arrow-left" slim variant="text" :to="{ name: 'producao-kits' }">
         Voltar
       </v-btn>
-      <div class="topbar-title">Novo Kit</div>
+      <div class="topbar-title">{{ isEditMode ? 'Editar Kit' : 'Novo Kit' }}</div>
       <div style="width: 70px" />
     </div>
 
     <v-divider />
 
     <div class="content-wrap px-6 py-6">
+      <!-- Steps indicator -->
       <div class="steps mb-5">
         <div class="step">
-          <v-avatar :class="['step-icon', etapaAtual === 'cadastro' ? 'step-icon--active' : '']" size="44">
-            <v-icon icon="mdi-account-outline" />
+          <v-avatar :class="['step-icon', etapaAtual === 'cliente' ? 'step-icon--active' : (etapaIndex > 0 ? 'step-icon--done' : '')]" size="44">
+            <v-icon :icon="etapaIndex > 0 ? 'mdi-check' : 'mdi-account-outline'" />
           </v-avatar>
-          <span class="step-label">Cadastro</span>
+          <span class="step-label">Cliente</span>
         </div>
-        <div class="step-line" />
+        <div :class="['step-line', etapaIndex > 0 ? 'step-line--done' : '']" />
         <div class="step">
-          <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : '']" size="44">
-            <v-icon icon="mdi-scale-balance" />
+          <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > 1 ? 'step-icon--done' : '')]" size="44">
+            <v-icon :icon="etapaIndex > 1 ? 'mdi-check' : 'mdi-scale-balance'" />
           </v-avatar>
           <span class="step-label">Ações</span>
         </div>
-        <div class="step-line" />
+        <div :class="['step-line', etapaIndex > 1 ? 'step-line--done' : '']" />
         <div class="step">
           <v-avatar :class="['step-icon', etapaAtual === 'kit-final' ? 'step-icon--active' : '']" size="44">
             <v-icon icon="mdi-eye-outline" />
@@ -128,189 +919,771 @@ function etapaAnterior () {
         </div>
       </div>
 
-      <v-card class="form-card" rounded="xl" variant="outlined">
+      <!-- Form card -->
+      <v-card class="form-card" rounded="sm" variant="outlined">
         <v-card-text class="pa-6 pa-md-7">
           <v-window v-model="etapaAtual">
-            <v-window-item value="cadastro">
+
+            <!-- ═══════════════ STEP 1: CLIENTE ═══════════════ -->
+            <v-window-item value="cliente">
+
+              <!-- Busca de cliente por CPF (só para novo kit) -->
+              <template v-if="!isEditMode && !clienteEncontrado">
+                <h2 class="section-title">Buscar Cliente</h2>
+                <v-divider class="mb-5" />
+                <p class="text-body-2 text-medium-emphasis mb-4">
+                  Informe o CPF do cliente para buscar no sistema.
+                </p>
+                <v-row align="center" dense>
+                  <v-col cols="12" md="6">
+                    <label class="field-label">CPF do cliente *</label>
+                    <v-text-field
+                      :model-value="cpfBusca"
+                      class="compact-input"
+                      density="compact"
+                      hide-details="auto"
+                      placeholder="000.000.000-00"
+                      variant="outlined"
+                      @keydown.enter="buscarClientePorCpf"
+                      @update:model-value="cpfBusca = maskCPF($event)"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-btn
+                      class="mt-5"
+                      color="primary"
+                      :disabled="onlyDigits(cpfBusca).length !== 11"
+                      :loading="buscandoCliente"
+                      prepend-icon="mdi-magnify"
+                      variant="tonal"
+                      @click="buscarClientePorCpf"
+                    >
+                      Buscar
+                    </v-btn>
+                  </v-col>
+                </v-row>
+
+                <!-- Cliente não encontrado -->
+                <v-alert v-if="clienteNaoEncontrado" class="mt-5" color="warning" icon="mdi-account-search-outline" variant="tonal">
+                  <div class="d-flex align-center justify-space-between flex-wrap ga-3">
+                    <span>Cliente não encontrado no sistema.</span>
+                    <v-btn color="primary" prepend-icon="mdi-account-plus-outline" size="small" variant="flat" @click="abrirDrawerCadastro">
+                      Cadastrar Cliente
+                    </v-btn>
+                  </div>
+                </v-alert>
+              </template>
+
+              <!-- Formulário completo (quando cliente foi encontrado/criado ou editando kit existente) -->
+              <template v-if="clienteEncontrado || isEditMode">
+
+              <!-- Info do cliente selecionado -->
+              <v-alert v-if="clienteNome && !isEditMode" class="mb-5" color="success" icon="mdi-account-check-outline" variant="tonal">
+                <div class="d-flex align-center justify-space-between">
+                  <span><strong>{{ clienteNome }}</strong> — CPF: {{ cad.cpf }}</span>
+                  <v-btn
+                    color="default"
+                    size="x-small"
+                    variant="text"
+                    @click="clienteEncontrado = false; clienteId = null; clienteNaoEncontrado = false; cpfBusca = ''"
+                  >
+                    Trocar cliente
+                  </v-btn>
+                </div>
+              </v-alert>
+
+              <!-- Dados Pessoais -->
               <h2 class="section-title">Dados Pessoais</h2>
               <v-divider class="mb-5" />
-
               <v-row dense>
                 <v-col cols="12">
-                  <label class="field-label">Nome do cliente *</label>
-                  <v-text-field v-model="nomeCompleto" class="compact-input" density="compact" hide-details placeholder="Nome completo" variant="outlined" />
+                  <label class="field-label">Nome completo *</label>
+                  <v-text-field v-model="cad.nome" class="compact-input" density="compact" :error-messages="errors.nome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">CPF *</label>
-                  <v-text-field v-model="cpf" class="compact-input" density="compact" hide-details placeholder="000.000.000-00" variant="outlined" />
+                  <v-text-field :model-value="cad.cpf" class="compact-input" density="compact" disabled :error-messages="errors.cpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.cpf = maskCPF($event)" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">Gênero *</label>
-                  <v-select v-model="genero" :items="opcoesGenero" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
+                  <v-select v-model="cad.genero" class="compact-input" density="compact" :error-messages="errors.genero" hide-details="auto" :items="opcoesGenero" placeholder="Selecione" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">Nacionalidade *</label>
-                  <v-select v-model="nacionalidade" :items="opcoesNacionalidade" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
+                  <v-select v-model="cad.nacionalidadeTipo" class="compact-input" density="compact" :error-messages="errors.nacionalidadeTipo" hide-details="auto" :items="opcoesNacionalidade" placeholder="Selecione" variant="outlined" />
+                </v-col>
+                <v-col v-if="cad.nacionalidadeTipo === 'outro'" cols="12" md="6">
+                  <label class="field-label">Qual nacionalidade? *</label>
+                  <v-text-field v-model="cad.nacionalidade" class="compact-input" density="compact" :error-messages="errors.nacionalidade" hide-details="auto" placeholder="Ex: Argentino(a)" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">Estado Civil *</label>
-                  <v-select v-model="estadoCivil" :items="opcoesEstadoCivil" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
+                  <v-select v-model="cad.estadoCivilTipo" class="compact-input" density="compact" :error-messages="errors.estadoCivilTipo" hide-details="auto" :items="opcoesEstadoCivil" placeholder="Selecione" variant="outlined" />
+                </v-col>
+                <v-col v-if="cad.estadoCivilTipo === 'outro'" cols="12" md="6">
+                  <label class="field-label">Qual estado civil? *</label>
+                  <v-text-field v-model="cad.estadoCivil" class="compact-input" density="compact" :error-messages="errors.estadoCivil" hide-details="auto" placeholder="Informe o estado civil" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">Profissão *</label>
-                  <v-select v-model="profissao" :items="opcoesProfissao" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
+                  <v-select v-model="cad.profissaoTipo" class="compact-input" density="compact" :error-messages="errors.profissaoTipo" hide-details="auto" :items="opcoesProfissao" placeholder="Selecione" variant="outlined" />
+                </v-col>
+                <v-col v-if="cad.profissaoTipo === 'outro'" cols="12" md="6">
+                  <label class="field-label">Qual profissão? *</label>
+                  <v-text-field v-model="cad.profissao" class="compact-input" density="compact" :error-messages="errors.profissao" hide-details="auto" placeholder="Informe a profissão" variant="outlined" />
                 </v-col>
               </v-row>
 
+              <!-- Condição do Cliente -->
               <h2 class="section-title mt-8">Condição do Cliente</h2>
               <v-divider class="mb-5" />
               <label class="field-label">Condição do cliente *</label>
               <div class="conditions-grid mb-2">
                 <v-btn
-                  v-for="op in ['Alfabetizado', 'Analfabeto', 'Incapaz', 'Criança/Adolescente']"
-                  :key="op"
+                  v-for="op in opcoesCondicao"
+                  :key="op.value"
                   class="text-none"
-                  :color="condicaoCliente === op ? 'primary' : undefined"
-                  :variant="condicaoCliente === op ? 'flat' : 'outlined'"
-                  @click="condicaoCliente = op"
+                  :color="cad.condicaoCliente === op.value ? 'primary' : undefined"
+                  :prepend-icon="op.icon"
+                  :variant="cad.condicaoCliente === op.value ? 'flat' : 'outlined'"
+                  @click="cad.condicaoCliente = op.value"
                 >
-                  {{ op }}
+                  {{ op.label }}
                 </v-btn>
               </div>
 
+              <!-- Analfabeto: alerta + rogado + testemunhas -->
+              <template v-if="isAnalfabeto">
+                <v-alert class="mt-6 mb-5" color="info" icon="mdi-information-outline" variant="tonal">
+                  Para clientes analfabetos, é necessário informar um rogado e duas testemunhas.
+                </v-alert>
+
+                <!-- Rogado -->
+                <v-card class="pessoa-card mb-4" rounded="sm" variant="outlined">
+                  <v-card-text class="pa-4">
+                    <div class="pessoa-card__header mb-3">
+                      <v-icon icon="mdi-account-outline" size="small" />
+                      <span class="pessoa-card__title">Rogado</span>
+                    </div>
+                    <v-row dense>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">Nome completo *</label>
+                        <v-text-field v-model="cad.rogadoNome" class="compact-input" density="compact" :error-messages="errors.rogadoNome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">CPF *</label>
+                        <v-text-field :model-value="cad.rogadoCpf" class="compact-input" density="compact" :error-messages="errors.rogadoCpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.rogadoCpf = maskCPF($event)" />
+                      </v-col>
+                      <v-col cols="12">
+                        <label class="field-label">Documento de identidade (opcional)</label>
+                        <div class="upload-inline" @click="($refs.rogadoDocInput as HTMLInputElement)?.click()">
+                          <input ref="rogadoDocInput" accept="image/*,.pdf" hidden type="file">
+                          <v-icon color="primary" icon="mdi-upload" size="small" />
+                          <span>Clique para enviar</span>
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-card-text>
+                </v-card>
+
+                <!-- Testemunha 1 -->
+                <v-card class="pessoa-card mb-4" rounded="sm" variant="outlined">
+                  <v-card-text class="pa-4">
+                    <div class="pessoa-card__header mb-3">
+                      <v-icon icon="mdi-account-outline" size="small" />
+                      <span class="pessoa-card__title">Testemunha 1</span>
+                    </div>
+                    <v-row dense>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">Nome completo *</label>
+                        <v-text-field v-model="cad.testemunha1Nome" class="compact-input" density="compact" :error-messages="errors.testemunha1Nome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">CPF *</label>
+                        <v-text-field :model-value="cad.testemunha1Cpf" class="compact-input" density="compact" :error-messages="errors.testemunha1Cpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.testemunha1Cpf = maskCPF($event)" />
+                      </v-col>
+                      <v-col cols="12">
+                        <label class="field-label">Documento de identidade (opcional)</label>
+                        <div class="upload-inline" @click="($refs.test1DocInput as HTMLInputElement)?.click()">
+                          <input ref="test1DocInput" accept="image/*,.pdf" hidden type="file">
+                          <v-icon color="primary" icon="mdi-upload" size="small" />
+                          <span>Clique para enviar</span>
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-card-text>
+                </v-card>
+
+                <!-- Testemunha 2 -->
+                <v-card class="pessoa-card mb-4" rounded="sm" variant="outlined">
+                  <v-card-text class="pa-4">
+                    <div class="pessoa-card__header mb-3">
+                      <v-icon icon="mdi-account-outline" size="small" />
+                      <span class="pessoa-card__title">Testemunha 2</span>
+                    </div>
+                    <v-row dense>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">Nome completo *</label>
+                        <v-text-field v-model="cad.testemunha2Nome" class="compact-input" density="compact" :error-messages="errors.testemunha2Nome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">CPF *</label>
+                        <v-text-field :model-value="cad.testemunha2Cpf" class="compact-input" density="compact" :error-messages="errors.testemunha2Cpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.testemunha2Cpf = maskCPF($event)" />
+                      </v-col>
+                      <v-col cols="12">
+                        <label class="field-label">Documento de identidade (opcional)</label>
+                        <div class="upload-inline" @click="($refs.test2DocInput as HTMLInputElement)?.click()">
+                          <input ref="test2DocInput" accept="image/*,.pdf" hidden type="file">
+                          <v-icon color="primary" icon="mdi-upload" size="small" />
+                          <span>Clique para enviar</span>
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-card-text>
+                </v-card>
+              </template>
+
+              <!-- Incapaz / Criança: alerta + responsável legal -->
+              <template v-if="needsResponsavel">
+                <v-alert class="mt-6 mb-5" color="info" icon="mdi-information-outline" variant="tonal">
+                  É necessário informar o responsável legal do cliente.
+                </v-alert>
+
+                <v-card class="pessoa-card mb-4" rounded="sm" variant="outlined">
+                  <v-card-text class="pa-4">
+                    <div class="pessoa-card__header mb-3">
+                      <v-icon icon="mdi-account-outline" size="small" />
+                      <span class="pessoa-card__title">Responsável Legal</span>
+                    </div>
+                    <v-row dense>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">Nome completo *</label>
+                        <v-text-field v-model="cad.responsavelLegalNome" class="compact-input" density="compact" :error-messages="errors.responsavelLegalNome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <label class="field-label">CPF *</label>
+                        <v-text-field :model-value="cad.responsavelLegalCpf" class="compact-input" density="compact" :error-messages="errors.responsavelLegalCpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelLegalCpf = maskCPF($event)" />
+                      </v-col>
+                      <v-col cols="12">
+                        <label class="field-label">Documento de identidade (opcional)</label>
+                        <div class="upload-inline" @click="($refs.respLegalDocInput as HTMLInputElement)?.click()">
+                          <input ref="respLegalDocInput" accept="image/*,.pdf" hidden type="file">
+                          <v-icon color="primary" icon="mdi-upload" size="small" />
+                          <span>Clique para enviar</span>
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-card-text>
+                </v-card>
+              </template>
+
+              <!-- Documentos pessoais do cliente (aparece em todas as condições) -->
+              <div class="mt-6">
+                <h2 class="section-title">Documentos pessoais do cliente</h2>
+                <div class="doc-chips mb-3">
+                  <span class="doc-chips__label">Sugestões:</span>
+                  <v-chip color="primary" label size="small" variant="tonal">RG</v-chip>
+                  <v-chip color="primary" label size="small" variant="tonal">CPF</v-chip>
+                  <v-chip color="primary" label size="small" variant="tonal">CNH</v-chip>
+                </div>
+                <div
+                  class="upload-zone"
+                  :class="{ 'upload-zone--has-file': docPessoalFile }"
+                  @click="($refs.docPessoalInput as HTMLInputElement)?.click()"
+                  @dragover.prevent
+                  @drop.prevent="onDropDocPessoal"
+                >
+                  <input
+                    ref="docPessoalInput"
+                    accept="image/*,.pdf"
+                    hidden
+                    type="file"
+                    @change="onSelectDocPessoal"
+                  >
+                  <template v-if="!docPessoalFile">
+                    <v-icon class="upload-zone__icon" icon="mdi-upload" />
+                    <span class="upload-zone__title">Clique para enviar</span>
+                    <span class="upload-zone__hint">PDF, JPG ou PNG</span>
+                  </template>
+                  <template v-else>
+                    <div class="upload-zone__file">
+                      <v-icon class="mr-2" color="success" icon="mdi-file-check-outline" />
+                      <span class="upload-zone__filename">{{ docPessoalFile.name }}</span>
+                      <v-btn
+                        class="ml-2"
+                        color="error"
+                        icon="mdi-close"
+                        size="x-small"
+                        variant="text"
+                        @click.stop="docPessoalFile = null"
+                      />
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Endereço -->
               <h2 class="section-title mt-8">Endereço do Cliente</h2>
               <v-divider class="mb-5" />
               <v-row dense>
+                <v-col cols="12" md="4">
+                  <label class="field-label">CEP *</label>
+                  <v-text-field :model-value="cad.cep" :append-inner-icon="buscandoCep ? 'mdi-loading mdi-spin' : undefined" class="compact-input" density="compact" :error-messages="errors.cep" hide-details="auto" placeholder="00000-000" variant="outlined" @update:model-value="cad.cep = maskCEP($event)" />
+                </v-col>
                 <v-col cols="12" md="8">
                   <label class="field-label">Nome da rua *</label>
-                  <v-text-field v-model="rua" class="compact-input" density="compact" hide-details placeholder="Ex: Rua das Flores" variant="outlined" />
+                  <v-text-field v-model="cad.rua" class="compact-input" density="compact" :error-messages="errors.rua" hide-details="auto" placeholder="Ex: Rua das Flores" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="4">
                   <label class="field-label">Número *</label>
-                  <v-text-field v-model="numero" class="compact-input" density="compact" hide-details placeholder="Ex: 123 ou S/N" variant="outlined" />
+                  <v-text-field v-model="cad.numero" class="compact-input" density="compact" :error-messages="errors.numero" hide-details="auto" placeholder="Ex: 123 ou S/N" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="4">
                   <label class="field-label">Complemento</label>
-                  <v-text-field v-model="complemento" class="compact-input" density="compact" hide-details placeholder="Apto, Bloco, etc." variant="outlined" />
+                  <v-text-field v-model="cad.complemento" class="compact-input" density="compact" hide-details placeholder="Apto, Bloco, etc." variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="4">
                   <label class="field-label">Bairro *</label>
-                  <v-text-field v-model="bairro" class="compact-input" density="compact" hide-details placeholder="Bairro" variant="outlined" />
+                  <v-text-field v-model="cad.bairro" class="compact-input" density="compact" :error-messages="errors.bairro" hide-details="auto" placeholder="Bairro" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="4">
                   <label class="field-label">Cidade *</label>
-                  <v-text-field v-model="cidade" class="compact-input" density="compact" hide-details placeholder="Cidade" variant="outlined" />
+                  <v-text-field v-model="cad.cidade" class="compact-input" density="compact" :error-messages="errors.cidade" hide-details="auto" placeholder="Cidade" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="4">
                   <label class="field-label">Estado *</label>
-                  <v-select v-model="uf" :items="opcoesUf" class="compact-input" density="compact" hide-details placeholder="UF" variant="outlined" />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <label class="field-label">CEP *</label>
-                  <v-text-field v-model="cep" class="compact-input" density="compact" hide-details placeholder="00000-000" variant="outlined" />
+                  <v-select v-model="cad.estado" class="compact-input" density="compact" :error-messages="errors.estado" hide-details="auto" :items="UF_LIST" placeholder="UF" variant="outlined" />
                 </v-col>
               </v-row>
 
+              <!-- Comprovante de Residência -->
               <h2 class="section-title mt-8">Comprovante de Residência</h2>
               <v-divider class="mb-5" />
-              <v-row dense>
-                <v-col cols="12">
-                  <label class="field-label">Comprovante de residência (opcional)</label>
-                  <v-file-input
-                    v-model="comprovanteResidencia"
-                    class="compact-input"
-                    density="compact"
-                    hide-details
-                    variant="outlined"
-                  />
-                </v-col>
-                <v-col cols="12">
-                  <label class="field-label">O comprovante de residência está em nome do cliente? *</label>
-                  <v-select v-model="comprovanteNoNome" :items="opcoesSimNao" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
-                </v-col>
-              </v-row>
 
-              <h2 class="section-title mt-8">Questionário Patrimonial e Fiscal</h2>
+              <label class="field-label">Comprovante de residência (opcional)</label>
+              <div class="native-file-wrap mb-4">
+                <input accept="image/*,.pdf" type="file">
+              </div>
+
+              <label class="field-label">O comprovante de residência está em nome do cliente? *</label>
+              <v-select v-model="cad.comprovanteNomeCliente" class="compact-input" density="compact" :error-messages="errors.comprovanteNomeCliente" hide-details="auto" :items="[{ title: 'Sim', value: 'sim' }, { title: 'Não', value: 'nao' }]" placeholder="Selecione" variant="outlined" />
+
+              <!-- Responsável do imóvel (quando comprovante não está no nome) -->
+              <div v-if="comprovanteNaoCliente" class="resp-imovel-box mt-4">
+                <v-row dense>
+                  <v-col cols="12" md="6">
+                    <label class="field-label">Nome do responsável pelo imóvel *</label>
+                    <v-text-field v-model="cad.responsavelImovelNome" class="compact-input" density="compact" :error-messages="errors.responsavelImovelNome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <label class="field-label">CPF do responsável pelo imóvel *</label>
+                    <v-text-field :model-value="cad.responsavelImovelCpf" class="compact-input" density="compact" :error-messages="errors.responsavelImovelCpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelImovelCpf = maskCPF($event)" />
+                  </v-col>
+                  <v-col cols="12">
+                    <label class="field-label">Documento do responsável (opcional)</label>
+                    <div class="native-file-wrap">
+                      <input accept="image/*,.pdf" type="file">
+                    </div>
+                  </v-col>
+                </v-row>
+              </div>
+
+              <!-- Questionário Patrimonial -->
+              <h2 class="section-title mt-8">Declaração de Hipossuficiência</h2>
               <v-divider class="mb-5" />
               <div class="mb-4">
                 <label class="field-label">Possuo bens imóveis? (Casa, apartamento, terreno) *</label>
-                <v-radio-group v-model="possuiImoveis" class="compact-radios" inline hide-details>
-                  <v-radio label="Sim" value="Sim" />
-                  <v-radio label="Não" value="Não" />
+                <v-radio-group v-model="cad.possuiImoveis" class="compact-radios" :error-messages="errors.possuiImoveis" hide-details="auto" inline>
+                  <v-radio :value="true" label="Sim" />
+                  <v-radio :value="false" label="Não" />
                 </v-radio-group>
               </div>
               <div class="mb-4">
                 <label class="field-label">Possuo bens móveis? (Carro, motocicleta, caminhão) *</label>
-                <v-radio-group v-model="possuiMoveis" class="compact-radios" inline hide-details>
-                  <v-radio label="Sim" value="Sim" />
-                  <v-radio label="Não" value="Não" />
+                <v-radio-group v-model="cad.possuiMoveis" class="compact-radios" :error-messages="errors.possuiMoveis" hide-details="auto" inline>
+                  <v-radio :value="true" label="Sim" />
+                  <v-radio :value="false" label="Não" />
                 </v-radio-group>
               </div>
               <div class="mb-4">
                 <label class="field-label">Isento do IRPF? (Imposto de Renda Pessoa Física) *</label>
-                <v-radio-group v-model="isentoIrpf" class="compact-radios" inline hide-details>
-                  <v-radio label="Sim" value="Sim" />
-                  <v-radio label="Não" value="Não" />
+                <v-radio-group v-model="cad.isentoIrpf" class="compact-radios" :error-messages="errors.isentoIrpf" hide-details="auto" inline>
+                  <v-radio :value="true" label="Sim" />
+                  <v-radio :value="false" label="Não" />
                 </v-radio-group>
               </div>
 
+              <!-- Contato -->
               <h2 class="section-title mt-8">Contato</h2>
               <v-divider class="mb-5" />
               <v-row dense>
                 <v-col cols="12" md="6">
                   <label class="field-label">Telefone do cliente *</label>
-                  <v-text-field v-model="telefoneCliente" class="compact-input" density="compact" hide-details placeholder="(49) 99999-9999" variant="outlined" />
+                  <v-text-field :model-value="cad.telefone" class="compact-input" density="compact" :error-messages="errors.telefone" hide-details="auto" placeholder="(49) 99999-9999" variant="outlined" @update:model-value="cad.telefone = maskPhone($event)" />
                 </v-col>
                 <v-col cols="12" md="6">
-                  <label class="field-label">Titular do contato? *</label>
-                  <v-select v-model="titularContato" :items="opcoesTitularContato" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
+                  <label class="field-label">O titular do número é o cliente? *</label>
+                  <v-select v-model="cad.titularContato" class="compact-input" density="compact" :error-messages="errors.titularContato" hide-details="auto" :items="opcoesTitularContato" placeholder="Selecione" variant="outlined" />
                 </v-col>
               </v-row>
+
+              <!-- Dados do titular do número (quando não é o cliente) -->
+              <template v-if="titularNaoCliente">
+                <v-row class="mt-1" dense>
+                  <v-col cols="12" md="4">
+                    <label class="field-label">Nome do titular do número *</label>
+                    <v-text-field v-model="cad.nomeTitularNumero" class="compact-input" density="compact" :error-messages="errors.nomeTitularNumero" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <label class="field-label">Relação com o cliente *</label>
+                    <v-select v-model="cad.relacaoTitularTipo" class="compact-input" density="compact" :error-messages="errors.relacaoTitularTipo" hide-details="auto" :items="opcoesRelacaoTitular" placeholder="Selecione" variant="outlined" />
+                  </v-col>
+                  <v-col v-if="cad.relacaoTitularTipo === 'outro'" cols="12" md="4">
+                    <label class="field-label">Qual relação? *</label>
+                    <v-text-field v-model="cad.relacaoTitular" class="compact-input" density="compact" :error-messages="errors.relacaoTitular" hide-details="auto" placeholder="Informe a relação" variant="outlined" />
+                  </v-col>
+                </v-row>
+              </template>
+
+              </template><!-- /clienteEncontrado || isEditMode -->
+
             </v-window-item>
 
+            <!-- ═══════════════ STEP 2: AÇÕES ═══════════════ -->
             <v-window-item value="acoes">
-              <h2 class="section-title">Ações</h2>
+              <div class="d-flex align-center justify-space-between mb-2">
+                <h2 class="section-title mb-0">Ações do Cliente</h2>
+                <span class="add-acao-link" @click="addAcao">+ Adicionar ação</span>
+              </div>
               <v-divider class="mb-5" />
-              <v-row dense>
-                <v-col cols="12" md="4">
-                  <label class="field-label">Tipo de ação *</label>
-                  <v-select v-model="tipoAcao" :items="opcoesTipoAcao" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <label class="field-label">Banco *</label>
-                  <v-select v-model="bancoAcao" :items="opcoesBancoAcao" class="compact-input" density="compact" hide-details placeholder="Selecione" variant="outlined" />
-                </v-col>
-                <v-col cols="12" md="4">
+
+              <v-alert v-if="acoes.length === 0" class="mb-4" color="info" icon="mdi-information-outline" variant="tonal">
+                Nenhuma ação cadastrada. Clique em "+ Adicionar ação" para começar.
+              </v-alert>
+
+              <div v-for="(acao, i) in acoes" :key="i" class="acao-card mb-4">
+                <div class="d-flex align-center justify-space-between mb-4">
+                  <span class="acao-card__title">Ação {{ i + 1 }}</span>
+                  <v-icon class="acao-card__delete" icon="mdi-trash-can-outline" size="18" @click="removeAcao(i)" />
+                </div>
+
+                <label class="field-label">Tipo de ação *</label>
+                <v-select
+                  :model-value="acao.tipoAcao"
+                  class="compact-input mb-4"
+                  density="compact"
+                  :error-messages="acoesErrors[i]?.tipoAcao"
+                  hide-details="auto"
+                  :items="TIPOS_ACAO"
+                  item-title="label"
+                  item-value="value"
+                  placeholder="Selecione"
+                  variant="outlined"
+                  @update:model-value="updateAcao(i, 'tipoAcao', $event)"
+                />
+
+                <label class="field-label">Banco *</label>
+                <v-select
+                  :model-value="acao.nomeBanco"
+                  class="compact-input mb-4"
+                  density="compact"
+                  :error-messages="acoesErrors[i]?.nomeBanco"
+                  hide-details="auto"
+                  :items="BANCOS"
+                  placeholder="Selecione"
+                  variant="outlined"
+                  @update:model-value="updateAcao(i, 'nomeBanco', $event)"
+                />
+
+                <!-- Banco outro -->
+                <template v-if="acao.nomeBanco === 'Outro'">
+                  <label class="field-label">Nome do banco *</label>
+                  <v-text-field
+                    :model-value="acao.bancoOutro"
+                    class="compact-input mb-4"
+                    density="compact"
+                    :error-messages="acoesErrors[i]?.bancoOutro"
+                    hide-details="auto"
+                    placeholder="Informe o nome do banco"
+                    variant="outlined"
+                    @update:model-value="updateAcao(i, 'bancoOutro', $event)"
+                  />
+                </template>
+
+                <!-- Número do contrato (tipos com contrato) -->
+                <template v-if="acaoNeedsContrato(acao.tipoAcao)">
                   <label class="field-label">Número do contrato *</label>
-                  <v-text-field v-model="numeroContrato" class="compact-input" density="compact" hide-details placeholder="Digite o contrato" variant="outlined" />
-                </v-col>
-              </v-row>
+                  <v-text-field
+                    :model-value="acao.numeroContrato"
+                    class="compact-input mb-4"
+                    density="compact"
+                    :error-messages="acoesErrors[i]?.numeroContrato"
+                    hide-details="auto"
+                    placeholder="Número do contrato"
+                    variant="outlined"
+                    @update:model-value="updateAcao(i, 'numeroContrato', $event)"
+                  />
+
+                  <v-row dense>
+                    <v-col cols="12" md="6">
+                      <label class="field-label">Histórico de empréstimo (opcional)</label>
+                      <div class="upload-inline">
+                        <input accept="image/*,.pdf" hidden type="file">
+                        <v-icon color="primary" icon="mdi-upload" size="small" />
+                        <span>Clique para enviar</span>
+                      </div>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                      <label class="field-label">Histórico de crédito (opcional)</label>
+                      <div class="upload-inline">
+                        <input accept="image/*,.pdf" hidden type="file">
+                        <v-icon color="primary" icon="mdi-upload" size="small" />
+                        <span>Clique para enviar</span>
+                      </div>
+                    </v-col>
+                  </v-row>
+                </template>
+
+                <!-- Tarifa bancária -->
+                <template v-if="acao.tipoAcao === 'tarifa_bancaria'">
+                  <label class="field-label">Tarifa questionada *</label>
+                  <v-select
+                    :model-value="acao.tarifaQuestionada"
+                    class="compact-input mb-4"
+                    density="compact"
+                    :error-messages="acoesErrors[i]?.tarifaQuestionada"
+                    hide-details="auto"
+                    :items="TARIFAS"
+                    placeholder="Selecione a tarifa"
+                    variant="outlined"
+                    @update:model-value="updateAcao(i, 'tarifaQuestionada', $event)"
+                  />
+
+                  <label class="field-label">Extrato bancário (opcional)</label>
+                  <div class="upload-inline">
+                    <input accept="image/*,.pdf" hidden type="file">
+                    <v-icon color="primary" icon="mdi-upload" size="small" />
+                    <span>Clique para enviar</span>
+                  </div>
+                </template>
+
+                <!-- Seguro não autorizado -->
+                <template v-if="acao.tipoAcao === 'seguro_nao_autorizado'">
+                  <label class="field-label">Tipo de seguro *</label>
+                  <v-textarea
+                    :model-value="acao.tipoSeguro"
+                    class="compact-input"
+                    density="compact"
+                    :error-messages="acoesErrors[i]?.tipoSeguro"
+                    hide-details="auto"
+                    placeholder="Descreva o tipo de seguro"
+                    rows="2"
+                    variant="outlined"
+                    @update:model-value="updateAcao(i, 'tipoSeguro', $event)"
+                  />
+                </template>
+
+                <!-- Contribuição sindical -->
+                <template v-if="acao.tipoAcao === 'contribuicao_sindical_nao_autorizada'">
+                  <label class="field-label">Tipo de contribuição *</label>
+                  <v-textarea
+                    :model-value="acao.tipoContribuicao"
+                    class="compact-input"
+                    density="compact"
+                    :error-messages="acoesErrors[i]?.tipoContribuicao"
+                    hide-details="auto"
+                    placeholder="Descreva o tipo de contribuição"
+                    rows="2"
+                    variant="outlined"
+                    @update:model-value="updateAcao(i, 'tipoContribuicao', $event)"
+                  />
+                </template>
+              </div>
             </v-window-item>
 
+            <!-- ═══════════════ STEP 3: KIT FINAL ═══════════════ -->
             <v-window-item value="kit-final">
-              <h2 class="section-title">Kit Final</h2>
+              <div class="d-flex align-center justify-space-between mb-2">
+                <h2 class="section-title mb-0">Pré-visualização dos Documentos</h2>
+                <v-chip v-if="cad.status === 'assinado'" color="success" prepend-icon="mdi-check-circle" variant="tonal">
+                  Assinado
+                </v-chip>
+              </div>
               <v-divider class="mb-5" />
-              <v-alert color="success" icon="mdi-check-circle-outline" variant="tonal">
-                Cadastro e ações preenchidos. Pronto para finalizar o kit.
+
+              <template v-if="kitTemplatesVisiveis.length > 0">
+                <v-tabs v-model="docTab" bg-color="transparent" color="primary" density="compact">
+                  <v-tab v-for="t in kitTemplatesVisiveis" :key="t.key" :value="t.key" class="text-none">
+                    {{ t.label }}
+                  </v-tab>
+                </v-tabs>
+
+                <v-window v-model="docTab" class="mt-4">
+                  <v-window-item v-for="t in kitTemplatesVisiveis" :key="t.key" :value="t.key">
+                    <!-- Loading -->
+                    <div v-if="docLoading[t.key]" class="d-flex flex-column align-center justify-center py-12">
+                      <v-progress-circular color="primary" indeterminate size="48" width="4" />
+                      <div class="text-body-2 text-medium-emphasis mt-4">Gerando {{ t.label }}...</div>
+                    </div>
+
+                    <!-- Error -->
+                    <v-alert v-else-if="docErrors[t.key]" class="mb-4" type="error" variant="tonal">
+                      {{ docErrors[t.key] }}
+                      <template #append>
+                        <v-btn size="small" variant="text" @click="renderDocTemplate(t.id, t.key)">Tentar novamente</v-btn>
+                      </template>
+                    </v-alert>
+
+                    <!-- Preview -->
+                    <template v-else>
+                      <div class="d-flex justify-end ga-2 mb-3">
+                        <v-btn
+                          color="primary"
+                          :disabled="!docBlobs[t.key]"
+                          prepend-icon="mdi-download"
+                          size="small"
+                          variant="tonal"
+                          @click="downloadDoc(t.key)"
+                        >
+                          Baixar .docx
+                        </v-btn>
+                        <v-btn
+                          prepend-icon="mdi-refresh"
+                          size="small"
+                          variant="text"
+                          @click="renderDocTemplate(t.id, t.key)"
+                        >
+                          Atualizar
+                        </v-btn>
+                      </div>
+                      <div :ref="(el: any) => { docxContainers[t.key] = el }" class="docx-container" />
+                    </template>
+                  </v-window-item>
+                </v-window>
+
+              </template>
+
+              <!-- Botão assinar -->
+              <div v-if="cad.status !== 'assinado'" class="d-flex justify-center mt-6">
+                <v-btn color="success" :disabled="saving" prepend-icon="mdi-pen" size="large" variant="tonal" @click="marcarAssinado">
+                  Marcar como Assinado
+                </v-btn>
+              </div>
+
+              <!-- Sem dados -->
+              <v-alert v-if="!kitTemplatesVisiveis.length && !acoes.length" color="info" icon="mdi-information-outline" variant="tonal">
+                Preencha o cadastro para gerar os documentos.
               </v-alert>
             </v-window-item>
+
           </v-window>
         </v-card-text>
       </v-card>
 
-      <div class="d-flex mt-4 mb-2 sticky-actions">
+      <!-- Action buttons -->
+      <div class="d-flex align-center mt-4 mb-2 sticky-actions">
         <v-btn :disabled="etapaIndex <= 0" prepend-icon="mdi-arrow-left" variant="outlined" @click="etapaAnterior">
           Anterior
         </v-btn>
         <v-spacer />
-        <v-btn v-if="etapaAtual !== 'kit-final'" :disabled="!podeAvancar" append-icon="mdi-arrow-right" color="primary" @click="proximaEtapa">
+        <span v-if="saving && savingMessage" class="text-caption text-medium-emphasis mr-3">
+          {{ savingMessage }}
+        </span>
+        <v-btn v-if="etapaAtual !== 'kit-final'" :disabled="!podeAvancar || saving" :loading="saving" append-icon="mdi-arrow-right" color="primary" @click="avancarComPersistencia">
           Próximo
         </v-btn>
-        <v-btn v-else color="success" prepend-icon="mdi-check">
+        <v-btn v-else color="success" :disabled="saving" :loading="saving" prepend-icon="mdi-check" @click="finalizarKit">
           Finalizar Kit
         </v-btn>
       </div>
     </div>
+    <!-- ━━━ SidePanel cadastrar cliente ━━━ -->
+    <SidePanel v-model="drawerCadastro" :width="720">
+      <template #header>
+        <v-avatar class="mr-3" color="primary" size="36" variant="tonal">
+          <v-icon icon="mdi-account-plus-outline" size="18" />
+        </v-avatar>
+        <div>
+          <div class="text-body-1 font-weight-bold">Novo cliente</div>
+          <div class="text-caption text-medium-emphasis">Cadastrar cliente para o kit</div>
+        </div>
+      </template>
+
+      <v-tabs v-model="drawerTab" color="primary">
+        <v-tab prepend-icon="mdi-account-outline" value="pessoal">Dados Pessoais</v-tab>
+        <v-tab prepend-icon="mdi-map-marker-outline" value="endereco">Endereço</v-tab>
+      </v-tabs>
+
+      <v-tabs-window v-model="drawerTab">
+        <!-- Tab: Dados Pessoais -->
+        <v-tabs-window-item value="pessoal">
+          <v-form @submit.prevent="salvarClienteDrawer">
+            <v-row dense>
+              <v-col cols="12" md="8">
+                <v-text-field v-model="drawerForm.nome_completo" :error-messages="drawerFieldErrors.nome_completo" label="Nome completo *" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="drawerForm.cpf" :error-messages="drawerFieldErrors.cpf" label="CPF *" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="drawerForm.rg" :error-messages="drawerFieldErrors.rg" label="RG" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="drawerForm.orgao_expedidor" :error-messages="drawerFieldErrors.orgao_expedidor" label="Órgão expedidor" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="drawerForm.nacionalidade" :error-messages="drawerFieldErrors.nacionalidade" label="Nacionalidade" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="drawerForm.estado_civil" :error-messages="drawerFieldErrors.estado_civil" label="Estado civil" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="drawerForm.profissao" :error-messages="drawerFieldErrors.profissao" label="Profissão" />
+              </v-col>
+            </v-row>
+          </v-form>
+        </v-tabs-window-item>
+
+        <!-- Tab: Endereço -->
+        <v-tabs-window-item value="endereco">
+          <v-form @submit.prevent="salvarClienteDrawer">
+            <v-row dense>
+              <v-col cols="12" md="3">
+                <v-text-field
+                  v-model="drawerForm.cep"
+                  append-inner-icon="mdi-magnify"
+                  label="CEP"
+                  :loading="drawerCepLoading"
+                  @blur="drawerLookupCEP"
+                  @click:append-inner="drawerLookupCEP"
+                />
+                <div v-if="drawerCepStatus" class="text-caption text-medium-emphasis mt-n2 mb-2">{{ drawerCepStatus }}</div>
+              </v-col>
+              <v-col cols="12" md="5">
+                <v-text-field v-model="drawerForm.logradouro" :error-messages="drawerFieldErrors.logradouro" label="Logradouro" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="drawerForm.numero" :error-messages="drawerFieldErrors.numero" label="Número" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="drawerForm.bairro" :error-messages="drawerFieldErrors.bairro" label="Bairro" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="drawerForm.cidade" :error-messages="drawerFieldErrors.cidade" label="Cidade" />
+              </v-col>
+              <v-col cols="12" md="2">
+                <v-text-field v-model="drawerForm.uf" :error-messages="drawerFieldErrors.uf" label="UF" maxlength="2" />
+              </v-col>
+            </v-row>
+          </v-form>
+        </v-tabs-window-item>
+      </v-tabs-window>
+
+      <template #actions>
+        <v-btn variant="text" @click="drawerCadastro = false">Cancelar</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-check" @click="salvarClienteDrawer">Salvar</v-btn>
+      </template>
+    </SidePanel>
   </v-container>
 </template>
 
@@ -360,17 +1733,28 @@ function etapaAnterior () {
   height: 2px;
   background: #e3e5ec;
   margin-top: -26px;
+  transition: background 0.3s;
+}
+
+.step-line--done {
+  background: #ffb322;
 }
 
 .step-icon {
   background: #eef0f5;
   color: #7b8191;
+  transition: all 0.3s;
 }
 
 .step-icon--active {
   background: #ffb322;
   color: #fff;
   box-shadow: 0 0 0 3px rgba(255, 179, 34, 0.18);
+}
+
+.step-icon--done {
+  background: #4caf50;
+  color: #fff;
 }
 
 .step-label {
@@ -410,8 +1794,192 @@ function etapaAnterior () {
   background: rgba(247, 248, 251, 0.92);
   backdrop-filter: blur(2px);
   border: 1px solid #e8e8ef;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 10px 12px;
+}
+
+.pessoa-card {
+  border-color: #e8e8ef !important;
+  background: #fcfcfd;
+}
+
+.pessoa-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pessoa-card__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2a2f3a;
+}
+
+.upload-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1.5px dashed #c8cdd8;
+  border-radius: 4px;
+  background: #f8f9fc;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  font-size: 0.88rem;
+  color: #5a6070;
+}
+
+.upload-inline:hover {
+  border-color: #3b6cb4;
+  background: #f0f4fb;
+  color: #3b6cb4;
+}
+
+.native-file-wrap {
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fafbfd;
+}
+
+.native-file-wrap input[type="file"] {
+  font-size: 0.88rem;
+  color: #5a6070;
+}
+
+.native-file-wrap input[type="file"]::file-selector-button {
+  padding: 4px 12px;
+  margin-right: 10px;
+  border: 1px solid #d0d4dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #4a5060;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.native-file-wrap input[type="file"]::file-selector-button:hover {
+  background: #f0f2f5;
+}
+
+.resp-imovel-box {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 16px;
+  background: #fff;
+}
+
+.add-acao-link {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #3b6cb4;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.add-acao-link:hover {
+  color: #1e4a8a;
+}
+
+.acao-card {
+  border: 1px solid #eaecf0;
+  border-radius: 4px;
+  padding: 24px;
+  background: #fff;
+}
+
+.acao-card__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2a2f3a;
+}
+
+.acao-card__delete {
+  color: #e57373;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.acao-card__delete:hover {
+  color: #d32f2f;
+}
+
+
+.doc-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-chips__label {
+  font-size: 0.85rem;
+  color: #8b91a0;
+}
+
+.upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px 16px;
+  border: 2px dashed #d0d4dd;
+  border-radius: 4px;
+  background: #fafbfd;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.upload-zone:hover {
+  border-color: #ffb322;
+  background: #fffbf2;
+}
+
+.upload-zone--has-file {
+  border-style: solid;
+  border-color: #4caf50;
+  background: #f4faf5;
+  padding: 16px;
+}
+
+.upload-zone__icon {
+  font-size: 36px;
+  color: #9ca3b0;
+}
+
+.upload-zone:hover .upload-zone__icon {
+  color: #ffb322;
+}
+
+.upload-zone__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #4a5060;
+}
+
+.upload-zone__hint {
+  font-size: 0.8rem;
+  color: #8b91a0;
+}
+
+.upload-zone__file {
+  display: flex;
+  align-items: center;
+}
+
+.upload-zone__filename {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #2e7d32;
+  word-break: break-all;
+}
+
+.docx-container {
+  background: #f5f5f5;
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 400px;
 }
 
 :deep(.compact-input .v-field) {
@@ -448,5 +2016,26 @@ function etapaAnterior () {
   .conditions-grid {
     grid-template-columns: 1fr 1fr;
   }
+}
+</style>
+
+<style>
+/* docx-preview renderiza com classes próprias */
+.docx-container .docx-wrapper {
+  background: #e8e8e8;
+  border-radius: 4px;
+  padding: 16px;
+}
+
+.docx-container .docx-wrapper > section.docx {
+  margin: 0 auto 24px auto;
+  padding: 40px 60px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+.docx-container .docx-wrapper > section.docx:last-child {
+  margin-bottom: 0;
 }
 </style>

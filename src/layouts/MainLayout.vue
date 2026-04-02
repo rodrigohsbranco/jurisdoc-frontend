@@ -30,6 +30,7 @@
     {
       title: 'Sistema',
       items: [
+        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' } },
         { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' } },
         { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' } },
       ],

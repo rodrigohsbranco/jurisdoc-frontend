@@ -357,31 +357,75 @@ onMounted(load);
       </template>
 
       <v-form @submit.prevent="saveUpsert">
-        <v-text-field v-model="form.name" label="Nome do template" required />
+        <!-- Nome -->
+        <div class="text-caption text-medium-emphasis text-uppercase mb-2" style="letter-spacing: 0.05em">
+          Informações do template
+        </div>
+        <v-row dense>
+          <v-col cols="12">
+            <v-text-field
+              v-model="form.name"
+              label="Nome do template *"
+              placeholder="Ex: Kit Contrato"
+              required
+            />
+          </v-col>
+        </v-row>
 
-        <v-file-input
-          accept=".docx"
-          class="mt-1"
-          :hint="editing ? 'Envie para substituir o arquivo atual (opcional).' : ''"
-          label="Arquivo (.docx)"
-          persistent-hint
-          prepend-inner-icon="mdi-file-word"
-          @change="onPickFile"
-        />
+        <!-- Upload -->
+        <div class="text-caption text-medium-emphasis text-uppercase mt-4 mb-2" style="letter-spacing: 0.05em">
+          Arquivo do template
+        </div>
 
+        <!-- Arquivo atual (quando editando e não selecionou novo) -->
+        <div v-if="editing && !form.file" class="current-file mb-3">
+          <v-icon class="mr-2" color="primary" icon="mdi-file-word" size="20" />
+          <div class="flex-grow-1">
+            <span class="text-body-2 font-weight-medium">{{ editing.file.split('/').pop() }}</span>
+            <div class="text-caption text-medium-emphasis">Arquivo atual</div>
+          </div>
+          <v-chip color="success" size="x-small" variant="tonal">Ativo</v-chip>
+        </div>
+
+        <div class="upload-area" @click="($refs.fileInput as HTMLInputElement)?.click()">
+          <input
+            ref="fileInput"
+            accept=".docx"
+            hidden
+            type="file"
+            @change="onPickFile"
+          >
+          <v-icon :color="form.file ? 'success' : 'primary'" :icon="form.file ? 'mdi-file-check-outline' : 'mdi-cloud-upload-outline'" size="32" />
+          <div v-if="form.file" class="mt-2 text-center">
+            <span class="text-body-2 font-weight-medium">{{ (form.file as File).name }}</span>
+            <div class="text-caption text-success">Novo arquivo selecionado — clique para trocar</div>
+          </div>
+          <div v-else class="mt-2 text-center">
+            <span class="text-body-2 font-weight-medium">
+              {{ editing ? 'Clique para substituir o arquivo' : 'Clique para selecionar' }}
+            </span>
+            <div class="text-caption text-medium-emphasis">
+              {{ editing ? 'Opcional — o arquivo atual será mantido se não enviar outro' : 'Arquivo .docx obrigatório' }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Status -->
+        <div class="text-caption text-medium-emphasis text-uppercase mt-5 mb-2" style="letter-spacing: 0.05em">
+          Status
+        </div>
         <v-switch
           v-model="form.active"
-          class="mt-4"
           color="success"
           density="compact"
           hide-details
-          label="Template ativo"
+          :label="form.active ? 'Template ativo' : 'Template inativo'"
         />
       </v-form>
 
       <template #actions>
         <v-btn variant="text" @click="dialogUpsert = false">Cancelar</v-btn>
-        <v-btn color="primary" variant="elevated" @click="saveUpsert">Salvar</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-check" @click="saveUpsert">Salvar</v-btn>
       </template>
     </SidePanel>
 
@@ -407,5 +451,32 @@ onMounted(load);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #CDA660;
+}
+
+.current-file {
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #f8fafe;
+}
+
+.upload-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  border: 2px dashed #d0d4dd;
+  border-radius: 8px;
+  background: #fafbfd;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.upload-area:hover {
+  border-color: #3b6cb4;
+  background: #f0f4fb;
 }
 </style>

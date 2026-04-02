@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useKitsStore } from '@/stores/kits'
 
-type StatusKit = 'em_andamento' | 'pend_assinatura' | 'assinado'
+type StatusKit = 'rascunho' | 'em_andamento' | 'pend_assinatura' | 'assinado'
 type KitItem = {
   id: number
   cliente: string
@@ -10,29 +11,40 @@ type KitItem = {
 }
 
 const busca = ref('')
-const kits = ref<KitItem[]>([
-  { id: 1, cliente: 'Gabriel Willian Dacaz', cpf: '110.646.299-89', status: 'em_andamento' },
-])
+const kitsStore = useKitsStore()
 
 const labelsStatus: Record<StatusKit, string> = {
+  rascunho: 'Rascunho',
   em_andamento: 'Em andamento',
   pend_assinatura: 'Pend. assinatura',
   assinado: 'Assinado',
 }
 
 const filteredKits = computed(() => {
+  const kits = kitsStore.items.map(k => ({
+    id: k.id,
+    cliente: k.cliente_nome || 'Cliente sem nome',
+    cpf: k.cliente_cpf || '---',
+    status: k.status === 'acoes'
+      ? 'em_andamento'
+      : k.status === 'finalizado'
+        ? 'pend_assinatura'
+        : k.status === 'assinado'
+          ? 'assinado'
+          : 'rascunho',
+  })) as KitItem[]
   const q = busca.value.trim().toLowerCase()
-  if (!q) return kits.value
-  return kits.value.filter(kit =>
+  if (!q) return kits
+  return kits.filter(kit =>
     kit.cliente.toLowerCase().includes(q) ||
     kit.cpf.toLowerCase().includes(q),
   )
 })
 
-const totalClientes = computed(() => kits.value.length)
-const totalEmAndamento = computed(() => kits.value.filter(k => k.status === 'em_andamento').length)
-const totalPendAssinatura = computed(() => kits.value.filter(k => k.status === 'pend_assinatura').length)
-const totalAssinados = computed(() => kits.value.filter(k => k.status === 'assinado').length)
+const totalClientes = computed(() => kitsStore.stats.total)
+const totalEmAndamento = computed(() => kitsStore.stats.emAndamento)
+const totalPendAssinatura = computed(() => kitsStore.stats.pendentes)
+const totalAssinados = computed(() => kitsStore.stats.assinados)
 
 const statCards = computed(() => [
   {
@@ -62,6 +74,7 @@ const statCards = computed(() => [
 ])
 
 function statusColor (status: StatusKit) {
+  if (status === 'rascunho') return 'default'
   if (status === 'em_andamento') return 'primary'
   if (status === 'pend_assinatura') return 'warning'
   return 'success'
@@ -75,6 +88,10 @@ function iniciais (nome: string) {
     .map(p => p[0]?.toUpperCase() || '')
     .join('')
 }
+
+onMounted(async () => {
+  await kitsStore.fetchList()
+})
 </script>
 
 <template>
@@ -85,16 +102,16 @@ function iniciais (nome: string) {
         <p class="text-body-2 text-medium-emphasis mb-0">Gestão de documentos jurídicos</p>
       </div>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" rounded="lg" :to="{ name: 'producao-kits-novo' }">
+      <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" :to="{ name: 'producao-kits-novo' }">
         Novo Kit
       </v-btn>
     </div>
 
     <v-row class="mb-1" dense>
       <v-col v-for="card in statCards" :key="card.label" cols="12" md="3" sm="6">
-        <v-card class="stat-card" rounded="lg" variant="outlined">
+        <v-card class="stat-card" rounded="sm" variant="outlined">
           <v-card-text class="d-flex align-center ga-3 py-4">
-            <v-avatar class="stat-icon" :class="`stat-icon--${card.tone}`" rounded="lg" size="34">
+            <v-avatar class="stat-icon" :class="`stat-icon--${card.tone}`" rounded="sm" size="34">
               <v-icon :icon="card.icon" size="18" />
             </v-avatar>
             <div>
@@ -113,15 +130,24 @@ function iniciais (nome: string) {
       hide-details
       placeholder="Buscar por nome ou CPF..."
       prepend-inner-icon="mdi-magnify"
-      rounded="lg"
+      rounded="sm"
       variant="outlined"
     />
+
+    <div v-if="kitsStore.loading" class="text-center py-8">
+      <v-progress-circular indeterminate />
+    </div>
+
+    <v-alert v-else-if="filteredKits.length === 0" class="mb-4" color="info" icon="mdi-information-outline" variant="tonal">
+      Nenhum kit cadastrado. Clique em "Novo Kit" para começar.
+    </v-alert>
 
     <v-card
       v-for="kit in filteredKits"
       :key="kit.id"
       class="kit-row mb-3"
-      rounded="lg"
+      rounded="sm"
+      :to="{ name: 'producao-kits-editar', params: { id: kit.id } }"
       variant="outlined"
     >
       <v-card-text class="d-flex align-center py-4">

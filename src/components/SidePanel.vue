@@ -44,6 +44,7 @@ defineEmits<{
 
 <style scoped>
 .side-panel {
+  position: fixed !important;
   height: 100vh !important;
   top: 0 !important;
   z-index: 2100 !important;
@@ -52,7 +53,8 @@ defineEmits<{
 .side-panel-layout {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .side-panel-header {
@@ -62,6 +64,8 @@ defineEmits<{
 .side-panel-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
 }
 
 .side-panel-footer {
