@@ -17,6 +17,7 @@ import {
 } from '@/services/kits'
 import api from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
+import { formatCPF, formatCEP } from '@/utils/formatters'
 import type { KitAcao, KitCadastro, KitStatus } from '@/types/kits'
 import { emptyCadastro, emptyAcao } from '@/types/kits'
 
@@ -196,7 +197,7 @@ function cadastroToAPI (c: Partial<KitCadastro>): Record<string, any> {
 export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   const cad = emptyCadastro()
   cad.nome = c.nome_completo || ''
-  cad.cpf = c.cpf || ''
+  cad.cpf = formatCPF(c.cpf || '')
   cad.genero = c.genero || ''
   cad.condicaoCliente = c.condicao_cliente || 'alfabetizado'
   cad.telefone = c.telefone || ''
@@ -233,19 +234,19 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   cad.bairro = c.bairro || ''
   cad.cidade = c.cidade || ''
   cad.estado = c.uf || ''
-  cad.cep = c.cep || ''
+  cad.cep = formatCEP(c.cep || '')
 
   // Rogado / testemunhas
   cad.rogadoNome = c.rogado_nome || ''
-  cad.rogadoCpf = c.rogado_cpf || ''
+  cad.rogadoCpf = formatCPF(c.rogado_cpf || '')
   cad.testemunha1Nome = c.testemunha1_nome || ''
-  cad.testemunha1Cpf = c.testemunha1_cpf || ''
+  cad.testemunha1Cpf = formatCPF(c.testemunha1_cpf || '')
   cad.testemunha2Nome = c.testemunha2_nome || ''
-  cad.testemunha2Cpf = c.testemunha2_cpf || ''
+  cad.testemunha2Cpf = formatCPF(c.testemunha2_cpf || '')
 
   // Responsável legal
   cad.responsavelLegalNome = c.responsavel_legal_nome || ''
-  cad.responsavelLegalCpf = c.responsavel_legal_cpf || ''
+  cad.responsavelLegalCpf = formatCPF(c.responsavel_legal_cpf || '')
 
   // Hipossuficiência
   cad.possuiImoveis = c.possui_imoveis ?? null
@@ -255,7 +256,7 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   // Comprovante
   cad.comprovanteNomeCliente = c.comprovante_nome_cliente || ''
   cad.responsavelImovelNome = c.responsavel_imovel_nome || ''
-  cad.responsavelImovelCpf = c.responsavel_imovel_cpf || ''
+  cad.responsavelImovelCpf = formatCPF(c.responsavel_imovel_cpf || '')
 
   // Contato
   cad.titularContato = c.titular_contato || ''

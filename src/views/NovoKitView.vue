@@ -67,6 +67,7 @@ async function buscarClientePorCpf () {
       cad.value = clienteToCadastro(found)
       clienteEncontrado.value = true
       clienteNome.value = found.nome_completo
+      docsPessoais.value = found.documentos_pessoais || []
     } else {
       clienteNaoEncontrado.value = true
     }
@@ -249,17 +250,61 @@ const needsResponsavel = computed(() =>
 const comprovanteNaoCliente = computed(() => cad.value.comprovanteNomeCliente === 'nao')
 const titularNaoCliente = computed(() => cad.value.titularContato === 'nao')
 
-// ── Upload doc pessoal ──
-const docPessoalFile = ref<File | null>(null)
+// ── Upload docs pessoais (múltiplos) ──
+interface DocPessoal {
+  path: string
+  url: string
+  name: string
+}
+const docsPessoais = ref<DocPessoal[]>([])
+const uploadingDocs = ref(false)
 
-function onSelectDocPessoal (e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (file) docPessoalFile.value = file
+async function onSelectDocPessoal (e: Event) {
+  const files = (e.target as HTMLInputElement).files
+  if (files?.length) await uploadDocsPessoais(Array.from(files))
+  // Reset input para permitir reselecionar o mesmo arquivo
+  ;(e.target as HTMLInputElement).value = ''
 }
 
-function onDropDocPessoal (e: DragEvent) {
-  const file = e.dataTransfer?.files?.[0]
-  if (file) docPessoalFile.value = file
+async function onDropDocPessoal (e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (files?.length) await uploadDocsPessoais(Array.from(files))
+}
+
+async function uploadDocsPessoais (files: File[]) {
+  if (!clienteId.value || !files.length) return
+  uploadingDocs.value = true
+  try {
+    const fd = new FormData()
+    files.forEach(f => fd.append('files', f))
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/documentos-pessoais/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    docsPessoais.value = data.documentos_pessoais
+  } catch (e: any) {
+    console.error('Erro no upload:', e)
+  } finally {
+    uploadingDocs.value = false
+  }
+}
+
+function isImage (name: string) {
+  return /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(name)
+}
+
+async function removeDocPessoal (doc: DocPessoal) {
+  if (!clienteId.value) return
+  try {
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/documentos-pessoais/remove/`,
+      { path: doc.path },
+    )
+    docsPessoais.value = data.documentos_pessoais
+  } catch (e: any) {
+    console.error('Erro ao remover doc:', e)
+  }
 }
 
 // ── Ações helpers ──
@@ -309,14 +354,10 @@ function validateCadastro (): boolean {
   if (!cad.value.profissaoTipo) e.profissaoTipo = 'Campo obrigatório'
   if (cad.value.profissaoTipo === 'outro' && !cad.value.profissao?.trim()) e.profissao = 'Campo obrigatório'
 
-  // Condição: analfabeto
+  // Condição: analfabeto (apenas rogado é obrigatório, testemunhas são opcionais)
   if (isAnalfabeto.value) {
     if (!cad.value.rogadoNome?.trim()) e.rogadoNome = 'Campo obrigatório'
     if (!cad.value.rogadoCpf?.trim()) e.rogadoCpf = 'Campo obrigatório'
-    if (!cad.value.testemunha1Nome?.trim()) e.testemunha1Nome = 'Campo obrigatório'
-    if (!cad.value.testemunha1Cpf?.trim()) e.testemunha1Cpf = 'Campo obrigatório'
-    if (!cad.value.testemunha2Nome?.trim()) e.testemunha2Nome = 'Campo obrigatório'
-    if (!cad.value.testemunha2Cpf?.trim()) e.testemunha2Cpf = 'Campo obrigatório'
   }
 
   // Condição: incapaz / criança
@@ -397,7 +438,7 @@ function validateCadastroSilent (): boolean {
     (cad.value.estadoCivilTipo !== 'outro' || cad.value.estadoCivil?.trim()) &&
     cad.value.profissaoTipo &&
     (cad.value.profissaoTipo !== 'outro' || cad.value.profissao?.trim()) &&
-    (!isAnalfabeto.value || (cad.value.rogadoNome?.trim() && cad.value.rogadoCpf?.trim() && cad.value.testemunha1Nome?.trim() && cad.value.testemunha1Cpf?.trim() && cad.value.testemunha2Nome?.trim() && cad.value.testemunha2Cpf?.trim())) &&
+    (!isAnalfabeto.value || (cad.value.rogadoNome?.trim() && cad.value.rogadoCpf?.trim())) &&
     (!needsResponsavel.value || (cad.value.responsavelLegalNome?.trim() && cad.value.responsavelLegalCpf?.trim())) &&
     cad.value.rua?.trim() &&
     cad.value.numero?.trim() &&
@@ -901,6 +942,7 @@ onMounted(async () => {
   if (kit.cliente_detail) {
     cad.value = clienteToCadastro(kit.cliente_detail)
     clienteNome.value = kit.cliente_detail.nome_completo || ''
+    docsPessoais.value = kit.cliente_detail.documentos_pessoais || []
   }
   cad.value.status = kit.status
 
@@ -984,6 +1026,7 @@ onMounted(async () => {
                       placeholder="000.000.000-00"
                       variant="outlined"
                       @keydown.enter="buscarClientePorCpf"
+                      maxlength="14"
                       @update:model-value="cpfBusca = maskCPF($event)"
                     />
                   </v-col>
@@ -1041,7 +1084,7 @@ onMounted(async () => {
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">CPF *</label>
-                  <v-text-field :model-value="cad.cpf" class="compact-input" density="compact" disabled :error-messages="errors.cpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.cpf = maskCPF($event)" />
+                  <v-text-field :model-value="cad.cpf" class="compact-input" density="compact" disabled :error-messages="errors.cpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.cpf = maskCPF($event)" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">Gênero *</label>
@@ -1111,7 +1154,7 @@ onMounted(async () => {
                       </v-col>
                       <v-col cols="12" md="6">
                         <label class="field-label">CPF *</label>
-                        <v-text-field :model-value="cad.rogadoCpf" class="compact-input" density="compact" :error-messages="errors.rogadoCpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.rogadoCpf = maskCPF($event)" />
+                        <v-text-field :model-value="cad.rogadoCpf" class="compact-input" density="compact" :error-messages="errors.rogadoCpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.rogadoCpf = maskCPF($event)" />
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
@@ -1131,15 +1174,16 @@ onMounted(async () => {
                     <div class="pessoa-card__header mb-3">
                       <v-icon icon="mdi-account-outline" size="small" />
                       <span class="pessoa-card__title">Testemunha 1</span>
+                      <v-chip class="ml-2" color="default" size="x-small" variant="tonal">Opcional</v-chip>
                     </div>
                     <v-row dense>
                       <v-col cols="12" md="6">
-                        <label class="field-label">Nome completo *</label>
+                        <label class="field-label">Nome completo</label>
                         <v-text-field v-model="cad.testemunha1Nome" class="compact-input" density="compact" :error-messages="errors.testemunha1Nome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
                       </v-col>
                       <v-col cols="12" md="6">
-                        <label class="field-label">CPF *</label>
-                        <v-text-field :model-value="cad.testemunha1Cpf" class="compact-input" density="compact" :error-messages="errors.testemunha1Cpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.testemunha1Cpf = maskCPF($event)" />
+                        <label class="field-label">CPF</label>
+                        <v-text-field :model-value="cad.testemunha1Cpf" class="compact-input" density="compact" :error-messages="errors.testemunha1Cpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.testemunha1Cpf = maskCPF($event)" />
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
@@ -1159,15 +1203,16 @@ onMounted(async () => {
                     <div class="pessoa-card__header mb-3">
                       <v-icon icon="mdi-account-outline" size="small" />
                       <span class="pessoa-card__title">Testemunha 2</span>
+                      <v-chip class="ml-2" color="default" size="x-small" variant="tonal">Opcional</v-chip>
                     </div>
                     <v-row dense>
                       <v-col cols="12" md="6">
-                        <label class="field-label">Nome completo *</label>
+                        <label class="field-label">Nome completo</label>
                         <v-text-field v-model="cad.testemunha2Nome" class="compact-input" density="compact" :error-messages="errors.testemunha2Nome" hide-details="auto" placeholder="Nome completo" variant="outlined" />
                       </v-col>
                       <v-col cols="12" md="6">
-                        <label class="field-label">CPF *</label>
-                        <v-text-field :model-value="cad.testemunha2Cpf" class="compact-input" density="compact" :error-messages="errors.testemunha2Cpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.testemunha2Cpf = maskCPF($event)" />
+                        <label class="field-label">CPF</label>
+                        <v-text-field :model-value="cad.testemunha2Cpf" class="compact-input" density="compact" :error-messages="errors.testemunha2Cpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.testemunha2Cpf = maskCPF($event)" />
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
@@ -1201,7 +1246,7 @@ onMounted(async () => {
                       </v-col>
                       <v-col cols="12" md="6">
                         <label class="field-label">CPF *</label>
-                        <v-text-field :model-value="cad.responsavelLegalCpf" class="compact-input" density="compact" :error-messages="errors.responsavelLegalCpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelLegalCpf = maskCPF($event)" />
+                        <v-text-field :model-value="cad.responsavelLegalCpf" class="compact-input" density="compact" :error-messages="errors.responsavelLegalCpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelLegalCpf = maskCPF($event)" />
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
@@ -1225,9 +1270,35 @@ onMounted(async () => {
                   <v-chip color="primary" label size="small" variant="tonal">CPF</v-chip>
                   <v-chip color="primary" label size="small" variant="tonal">CNH</v-chip>
                 </div>
+
+                <!-- Lista de documentos já enviados -->
+                <div v-if="docsPessoais.length" class="docs-list mb-3">
+                  <div v-for="doc in docsPessoais" :key="doc.path" class="docs-list__item">
+                    <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                      <img
+                        v-if="isImage(doc.name)"
+                        :src="doc.url"
+                        :alt="doc.name"
+                        class="docs-list__img"
+                      >
+                      <v-icon v-else color="error" icon="mdi-file-pdf-box" size="28" />
+                    </a>
+                    <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                    <v-spacer />
+                    <v-btn
+                      color="error"
+                      icon="mdi-close"
+                      size="x-small"
+                      variant="text"
+                      @click="removeDocPessoal(doc)"
+                    />
+                  </div>
+                </div>
+
+                <!-- Zona de upload (sempre visível para adicionar mais) -->
                 <div
                   class="upload-zone"
-                  :class="{ 'upload-zone--has-file': docPessoalFile }"
+                  :class="{ 'upload-zone--uploading': uploadingDocs }"
                   @click="($refs.docPessoalInput as HTMLInputElement)?.click()"
                   @dragover.prevent
                   @drop.prevent="onDropDocPessoal"
@@ -1236,27 +1307,18 @@ onMounted(async () => {
                     ref="docPessoalInput"
                     accept="image/*,.pdf"
                     hidden
+                    multiple
                     type="file"
                     @change="onSelectDocPessoal"
                   >
-                  <template v-if="!docPessoalFile">
-                    <v-icon class="upload-zone__icon" icon="mdi-upload" />
-                    <span class="upload-zone__title">Clique para enviar</span>
-                    <span class="upload-zone__hint">PDF, JPG ou PNG</span>
+                  <template v-if="uploadingDocs">
+                    <v-progress-circular color="primary" indeterminate size="24" width="2" />
+                    <span class="upload-zone__title mt-2">Enviando...</span>
                   </template>
                   <template v-else>
-                    <div class="upload-zone__file">
-                      <v-icon class="mr-2" color="success" icon="mdi-file-check-outline" />
-                      <span class="upload-zone__filename">{{ docPessoalFile.name }}</span>
-                      <v-btn
-                        class="ml-2"
-                        color="error"
-                        icon="mdi-close"
-                        size="x-small"
-                        variant="text"
-                        @click.stop="docPessoalFile = null"
-                      />
-                    </div>
+                    <v-icon class="upload-zone__icon" icon="mdi-upload" />
+                    <span class="upload-zone__title">Clique ou arraste para enviar</span>
+                    <span class="upload-zone__hint">PDF, JPG ou PNG — múltiplos arquivos</span>
                   </template>
                 </div>
               </div>
@@ -1316,7 +1378,7 @@ onMounted(async () => {
                   </v-col>
                   <v-col cols="12" md="6">
                     <label class="field-label">CPF do responsável pelo imóvel *</label>
-                    <v-text-field :model-value="cad.responsavelImovelCpf" class="compact-input" density="compact" :error-messages="errors.responsavelImovelCpf" hide-details="auto" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelImovelCpf = maskCPF($event)" />
+                    <v-text-field :model-value="cad.responsavelImovelCpf" class="compact-input" density="compact" :error-messages="errors.responsavelImovelCpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelImovelCpf = maskCPF($event)" />
                   </v-col>
                   <v-col cols="12">
                     <label class="field-label">Documento do responsável (opcional)</label>
@@ -1673,7 +1735,7 @@ onMounted(async () => {
                 <v-text-field v-model="drawerForm.nome_completo" :error-messages="drawerFieldErrors.nome_completo" label="Nome completo *" />
               </v-col>
               <v-col cols="12" md="4">
-                <v-text-field v-model="drawerForm.cpf" :error-messages="drawerFieldErrors.cpf" label="CPF *" />
+                <v-text-field :model-value="drawerForm.cpf" :error-messages="drawerFieldErrors.cpf" label="CPF *" maxlength="14" placeholder="000.000.000-00" @update:model-value="drawerForm.cpf = maskCPF($event)" />
               </v-col>
               <v-col cols="12" md="4">
                 <v-text-field v-model="drawerForm.rg" :error-messages="drawerFieldErrors.rg" label="RG" />
@@ -1965,6 +2027,46 @@ onMounted(async () => {
 .doc-chips__label {
   font-size: 0.85rem;
   color: #8b91a0;
+}
+
+.docs-list__item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #f8fafe;
+  margin-bottom: 6px;
+}
+
+.docs-list__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f0f2f5;
+  margin-right: 10px;
+}
+
+.docs-list__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.docs-list__name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #0F2B46;
+  text-decoration: none;
+}
+
+.docs-list__name:hover {
+  text-decoration: underline;
 }
 
 .upload-zone {
