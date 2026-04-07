@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import api, { fetchAllPages } from '@/services/api' // axios instance com interceptors de auth
+import api, { fetchAllPages } from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
 
 // Tipos básicos
@@ -36,6 +36,15 @@ export interface ListParams {
   search?: string
   ordering?: string
   active?: boolean
+  page?: number
+  page_size?: number
+}
+
+export interface PaginatedResponse<T> {
+  count: number
+  next: string | null
+  previous: string | null
+  results: T[]
 }
 
 export interface RenderOptions {
@@ -90,6 +99,9 @@ function buildQuery (params: Record<string, unknown>): Record<string, unknown> {
 export const useTemplatesStore = defineStore('templates', {
   state: () => ({
     items: [] as TemplateItem[],
+    totalItems: 0,
+    currentPage: 1,
+    pageSize: 10,
     loadingList: false,
     loadingMutation: false,
     fieldsCache: new Map<number, FieldsResponse>(),
@@ -98,18 +110,41 @@ export const useTemplatesStore = defineStore('templates', {
 
   getters: {
     byId: state => (id: number) => state.items.find(t => t.id === id) || null,
+    totalPages: state => Math.ceil(state.totalItems / state.pageSize),
   },
 
   actions: {
-    // LISTAR
+    // LISTAR (paginado)
     async fetch (params: ListParams = {}): Promise<void> {
       this.loadingList = true
       this.lastError = null
       try {
-        this.items = await fetchAllPages<TemplateItem>("/api/templates/", {
+        const res = await api.get<PaginatedResponse<TemplateItem>>('/api/templates/', {
           params: buildQuery({
             search: params.search,
             ordering: params.ordering,
+            active: params.active,
+            page: params.page ?? this.currentPage,
+            page_size: params.page_size ?? this.pageSize,
+          }),
+        })
+        this.items = res.data.results
+        this.totalItems = res.data.count
+        if (params.page) this.currentPage = params.page
+        if (params.page_size) this.pageSize = params.page_size
+      } catch (error) {
+        this.lastError = friendlyError(error, 'templates', 'list')
+        throw error
+      } finally {
+        this.loadingList = false
+      }
+    },
+
+    // LISTAR TODOS (para selects em outras views)
+    async fetchAll (params: { active?: boolean } = {}): Promise<TemplateItem[]> {
+      try {
+        return await fetchAllPages<TemplateItem>('/api/templates/', {
+          params: buildQuery({
             active: params.active,
             page_size: 100,
           }),
@@ -117,8 +152,6 @@ export const useTemplatesStore = defineStore('templates', {
       } catch (error) {
         this.lastError = friendlyError(error, 'templates', 'list')
         throw error
-      } finally {
-        this.loadingList = false
       }
     },
 

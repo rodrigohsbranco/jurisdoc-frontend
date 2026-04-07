@@ -1024,7 +1024,7 @@ async function generateAndDownload() {
 // ── Mount ─────────────────────────────────────────────────
 onMounted(async () => {
   if (!clientesStore.items.length) await clientesStore.fetchList({});
-  if (!templatesStore.items.length) await templatesStore.fetch({});
+  if (!templatesStore.items.length) templatesStore.items = await templatesStore.fetchAll();
   if (!contratosStore.items.length) await contratosStore.fetchList({});
 });
 </script>

@@ -56,6 +56,10 @@ export async function fetchAllPages<T>(
   let pageCount = 1;
 
   while (next && pageCount < maxPages) {
+    // Força HTTPS para evitar mixed content em produção
+    if (next.startsWith('http://') && window.location.protocol === 'https:') {
+      next = next.replace('http://', 'https://');
+    }
     const nextResp = await api.get<T[] | PaginatedResponse<T>>(next);
     if (!isPaginatedResponse<T>(nextResp.data)) {
       items.push(...listFromResponse<T>(nextResp.data));

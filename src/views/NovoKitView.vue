@@ -422,20 +422,41 @@ const templatesStore = useTemplatesStore()
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
 
-// Templates do kit
-const KIT_TEMPLATES = [
-  { id: 6, key: 'contrato', label: 'Contrato' },
-  { id: 10, key: 'procuracao', label: 'Procuração' },
-  { id: 9, key: 'hipossuficiencia', label: 'Decl. Hipossuficiência' },
-  { id: 7, key: 'ciencia', label: 'Decl. Ciência' },
-  { id: 8, key: 'domicilio', label: 'Decl. Domicílio' },
+// Templates do kit — keyword para match no nome do template no banco
+// Nomes no banco seguem padrão "Kit Contrato", "Kit Procuração", etc.
+const KIT_TEMPLATE_DEFS = [
+  { key: 'contrato', label: 'Contrato', keyword: 'kit contrato' },
+  { key: 'procuracao', label: 'Procuração', keyword: 'kit procuracao' },
+  { key: 'hipossuficiencia', label: 'Decl. Hipossuficiência', keyword: 'kit hipossuficiencia' },
+  { key: 'ciencia', label: 'Decl. Ciência', keyword: 'kit ciencia' },
+  { key: 'domicilio', label: 'Decl. Domicílio', keyword: 'kit domicilio' },
 ]
 
-const PROCURACAO_TEMPLATE_ID = 10
+// Mapeamento resolvido: key → template id (preenchido no mount)
+const resolvedTemplates = ref<{ id: number; key: string; label: string }[]>([])
+const procuracaoTemplateId = computed(() => resolvedTemplates.value.find(t => t.key === 'procuracao')?.id ?? 0)
+
+function normalize (s: string) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+}
+
+async function resolveKitTemplates () {
+  const allTemplates = await templatesStore.fetchAll({ active: true })
+  const resolved: typeof resolvedTemplates.value = []
+
+  for (const def of KIT_TEMPLATE_DEFS) {
+    const kw = normalize(def.keyword)
+    const match = allTemplates.find(t => normalize(t.name).includes(kw))
+    if (match) {
+      resolved.push({ id: match.id, key: def.key, label: def.label })
+    }
+  }
+  resolvedTemplates.value = resolved
+}
 
 // Computed: templates fixos visíveis (domicílio só se comprovante não no nome)
 const kitTemplatesVisiveis = computed(() => {
-  return KIT_TEMPLATES.filter(t => {
+  return resolvedTemplates.value.filter(t => {
     if (t.key === 'domicilio' && cad.value.comprovanteNomeCliente !== 'nao') return false
     return true
   })
@@ -619,6 +640,11 @@ async function montarContexto (): Promise<Record<string, any>> {
 // ── Docs fixos ──
 
 async function fetchDocBlob (templateId: number, key: string) {
+  if (!templateId) {
+    docErrors.value[key] = '__NOT_FOUND__'
+    return
+  }
+
   // Procuração tem lógica especial: uma página por ação
   if (key === 'procuracao') {
     await fetchProcuracaoMultipla()
@@ -636,8 +662,12 @@ async function fetchDocBlob (templateId: number, key: string) {
     docBlobs.value[key] = result.blob
   } catch (e: any) {
     console.error(`Erro ao gerar doc ${key}:`, e)
-    const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
-    docErrors.value[key] = `Não foi possível gerar o documento: ${msg}`
+    if (e?.response?.status === 404) {
+      docErrors.value[key] = '__NOT_FOUND__'
+    } else {
+      const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
+      docErrors.value[key] = `Não foi possível gerar o documento: ${msg}`
+    }
   } finally {
     docLoading.value[key] = false
   }
@@ -705,6 +735,10 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
 
 async function fetchProcuracaoMultipla () {
   const key = 'procuracao'
+  if (!procuracaoTemplateId.value) {
+    docErrors.value[key] = '__NOT_FOUND__'
+    return
+  }
   docLoading.value[key] = true
   docErrors.value[key] = ''
 
@@ -713,7 +747,7 @@ async function fetchProcuracaoMultipla () {
     const blobs: Blob[] = []
     for (const acao of acoes.value) {
       const context = await montarContextoProcuracao(acao)
-      const result = await templatesStore.render(PROCURACAO_TEMPLATE_ID, {
+      const result = await templatesStore.render(procuracaoTemplateId.value, {
         context,
         filename: `kit_procuracao_${kitId.value}`,
       })
@@ -735,8 +769,12 @@ async function fetchProcuracaoMultipla () {
     }
   } catch (e: any) {
     console.error('Erro ao gerar procurações:', e)
-    const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
-    docErrors.value[key] = `Não foi possível gerar as procurações: ${msg}`
+    if (e?.response?.status === 404) {
+      docErrors.value[key] = '__NOT_FOUND__'
+    } else {
+      const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
+      docErrors.value[key] = `Não foi possível gerar as procurações: ${msg}`
+    }
   } finally {
     docLoading.value[key] = false
   }
@@ -851,6 +889,7 @@ async function marcarAssinado () {
 
 // ── Load existing kit ──
 onMounted(async () => {
+  await resolveKitTemplates()
   await kitsStore.fetchList()
   if (!isEditMode.value) return
   const kit = await kitsStore.getDetail(kitId.value)
@@ -1353,7 +1392,7 @@ onMounted(async () => {
             <v-window-item value="acoes">
               <div class="d-flex align-center justify-space-between mb-2">
                 <h2 class="section-title mb-0">Ações do Cliente</h2>
-                <span class="add-acao-link" @click="addAcao">+ Adicionar ação</span>
+                <span v-if="acoes.length === 0" class="add-acao-link" @click="addAcao">+ Adicionar ação</span>
               </div>
               <v-divider class="mb-5" />
 
@@ -1499,6 +1538,8 @@ onMounted(async () => {
                   />
                 </template>
               </div>
+
+              <v-btn v-if="acoes.length > 0" class="add-acao-link" variant="tonal" prepend-icon="mdi-plus" @click="addAcao">Adicionar ação</v-btn>
             </v-window-item>
 
             <!-- ═══════════════ STEP 3: KIT FINAL ═══════════════ -->
@@ -1526,7 +1567,16 @@ onMounted(async () => {
                       <div class="text-body-2 text-medium-emphasis mt-4">Gerando {{ t.label }}...</div>
                     </div>
 
-                    <!-- Error -->
+                    <!-- Error: template file missing -->
+                    <v-alert v-else-if="docErrors[t.key] === '__NOT_FOUND__'" class="mb-4" type="warning" variant="tonal">
+                      <div class="font-weight-bold mb-1">Arquivo do template não encontrado</div>
+                      <div class="text-body-2">
+                        O modelo "{{ t.label }}" precisa ser enviado novamente.
+                        Acesse a página de Templates e faça o upload do arquivo .docx.
+                      </div>
+                    </v-alert>
+
+                    <!-- Error: generic -->
                     <v-alert v-else-if="docErrors[t.key]" class="mb-4" type="error" variant="tonal">
                       {{ docErrors[t.key] }}
                       <template #append>

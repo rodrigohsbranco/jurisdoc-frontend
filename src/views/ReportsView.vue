@@ -46,7 +46,7 @@
         date_to: filters.date_to,
       }),
       rel.fetchDataQuality(),
-      templates.fetch({ active: true }),
+      templates.fetchAll({ active: true }).then(all => { templates.items = all }),
     ])
     initialLoading.value = false
   }

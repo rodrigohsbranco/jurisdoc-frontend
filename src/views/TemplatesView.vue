@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import {
   type FieldsResponse,
   type TemplateItem,
@@ -26,6 +26,18 @@ const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
   { key: "name", order: "asc" },
 ]);
 const expanded = ref<readonly any[]>([]);
+const page = ref(1);
+const itemsPerPage = ref(10);
+
+// Debounce search
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+watch(search, () => {
+  if (searchTimeout) clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    page.value = 1;
+    load();
+  }, 400);
+});
 
 const headers = [
   { title: "", key: "data-table-expand", width: "40px" },
@@ -108,6 +120,7 @@ async function saveUpsert() {
         }));
     dialogUpsert.value = false;
     showSuccess(editing.value ? "Template atualizado!" : "Template criado!");
+    await load();
   } catch (error_: any) {
     templates.lastError = friendlyError(error_, 'templates', editing.value ? 'update' : 'create');
   }
@@ -127,6 +140,7 @@ async function removeTemplate(item: TemplateItem) {
     try {
       await templates.remove(item.id);
       showSuccess("Template excluído com sucesso!");
+      await load();
     } catch (error_: any) {
       templates.lastError = friendlyError(error_, 'templates', 'remove');
     }
@@ -141,6 +155,7 @@ async function toggleActive(item: TemplateItem) {
   try {
     await templates.setActive(item.id, !item.active);
     showSuccess(item.active ? "Template desativado!" : "Template ativado!");
+    await load();
   } catch {
     // store já preenche lastError
   }
@@ -152,11 +167,22 @@ async function toggleActive(item: TemplateItem) {
 const loadingList = computed(() => templates.loadingList);
 const error = computed(() => templates.lastError);
 const items = computed(() => templates.items);
-const totalTemplates = computed(() => templates.items.length);
+const totalTemplates = computed(() => templates.totalItems);
 
 async function load() {
-  await templates.fetch({});
+  const sort = sortBy.value[0];
+  const ordering = sort ? `${sort.order === 'desc' ? '-' : ''}${sort.key}` : undefined;
+  await templates.fetch({
+    search: search.value || undefined,
+    ordering,
+    page: page.value,
+    page_size: itemsPerPage.value,
+  });
 }
+
+watch(page, load);
+watch(itemsPerPage, () => { page.value = 1; load(); });
+watch(sortBy, () => { page.value = 1; load(); }, { deep: true });
 
 onMounted(load);
 </script>
@@ -198,16 +224,18 @@ onMounted(load);
           {{ error }}
         </v-alert>
 
-        <v-data-table
+        <v-data-table-server
           v-model:expanded="expanded"
+          v-model:items-per-page="itemsPerPage"
+          v-model:page="page"
           v-model:sort-by="sortBy"
           :headers="headers"
           item-key="id"
           item-value="id"
           :items="items"
+          :items-length="totalTemplates"
           :loading="loadingList"
           loading-text="Carregando..."
-          :search="search"
           show-expand
           @update:expanded="onExpandRow"
         >
@@ -338,7 +366,7 @@ onMounted(load);
               <div class="text-body-2 text-medium-emphasis">Nenhum template cadastrado</div>
             </div>
           </template>
-        </v-data-table>
+        </v-data-table-server>
       </v-card-text>
     </v-card>
 

@@ -520,7 +520,10 @@ const items = computed(() => peticoes.items);
 
 async function loadAll() {
   await clientes.fetchList({});
-  await Promise.all([templates.fetch({ active: true }), peticoes.fetch({})]);
+  await Promise.all([
+    templates.fetchAll({ active: true }).then(all => { templates.items = all }),
+    peticoes.fetch({}),
+  ]);
 }
 
 onMounted(loadAll);

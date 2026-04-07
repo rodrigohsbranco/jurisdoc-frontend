@@ -50,7 +50,7 @@
     await Promise.allSettled([
       clientes.fetchList({ ordering: '-criado_em' }),
       peticoes.fetch({ ordering: '-created_at' }),
-      templates.fetch({}),
+      templates.fetchAll().then(all => { templates.items = all }),
       contratos.fetchList({ ordering: '-criado_em' }),
       relatorios.fetchDataQuality(),
       relatorios.fetchTemplatesUsage({ top: 5 }),
