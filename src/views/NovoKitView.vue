@@ -760,6 +760,35 @@ function downloadDoc (key: string) {
   URL.revokeObjectURL(url)
 }
 
+const pdfLoading = ref<Record<string, boolean>>({})
+
+async function downloadPdf (key: string) {
+  const blob = docBlobs.value[key]
+  if (!blob) return
+  pdfLoading.value[key] = true
+  try {
+    const fd = new FormData()
+    fd.append('file', blob, `kit_${key}.docx`)
+    fd.append('filename', `kit_${key}_${kitId.value}`)
+    const { data } = await api.post('/api/templates/convert-to-pdf/', fd, {
+      responseType: 'blob',
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    const url = URL.createObjectURL(data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `kit_${key}_${kitId.value}.pdf`
+    document.body.append(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    console.error('Erro ao converter para PDF:', e)
+  } finally {
+    pdfLoading.value[key] = false
+  }
+}
+
 // ── Procuração especial: uma página por ação, tudo num único doc ──
 
 async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, any>> {
@@ -1652,12 +1681,23 @@ onMounted(async () => {
                         <v-btn
                           color="primary"
                           :disabled="!docBlobs[t.key]"
-                          prepend-icon="mdi-download"
+                          prepend-icon="mdi-file-word-outline"
                           size="small"
                           variant="tonal"
                           @click="downloadDoc(t.key)"
                         >
-                          Baixar .docx
+                          .docx
+                        </v-btn>
+                        <v-btn
+                          color="error"
+                          :disabled="!docBlobs[t.key]"
+                          :loading="pdfLoading[t.key]"
+                          prepend-icon="mdi-file-pdf-box"
+                          size="small"
+                          variant="tonal"
+                          @click="downloadPdf(t.key)"
+                        >
+                          .pdf
                         </v-btn>
                         <v-btn
                           prepend-icon="mdi-refresh"
