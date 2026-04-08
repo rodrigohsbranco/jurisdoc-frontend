@@ -709,6 +709,33 @@ function qualificarAdvogado (a: { nome_completo: string, nacionalidade: string, 
   return texto
 }
 
+function includeAdvogadoAdicionalNoContrato (
+  uf: string,
+  nomeCompleto: string,
+  tiposAcaoSelecionados: Set<string>,
+) {
+  const nome = normalize(nomeCompleto)
+  const isGabriel = nome.includes('gabriel')
+  const isAlexandre = nome.includes('alexandre')
+  const isPatrick = nome.includes('patrick')
+
+  if (uf === 'ES') return isGabriel
+  if (uf === 'BA') return isGabriel
+  if (uf === 'SE') return isAlexandre
+  if (uf === 'MG') return isAlexandre
+  if (uf === 'SC') return isGabriel
+  if (uf === 'AL') return isAlexandre
+  if (uf === 'AM') {
+    if (isPatrick) return true
+    // Regra do PDF: Gabriel atua em tarifa no AM, mas não entra como contratado.
+    if (isGabriel && tiposAcaoSelecionados.has('tarifa_bancaria')) return false
+    return false
+  }
+  if (uf === 'PR') return isGabriel
+  if (uf === 'PE') return isAlexandre
+  return false
+}
+
 async function montarContexto (): Promise<Record<string, any>> {
   const c = cad.value
   const isMasc = c.genero === 'masculino'
@@ -765,6 +792,7 @@ async function montarContexto (): Promise<Record<string, any>> {
 
   // Tipos de ação
   const tipoLabels = acoes.value.map(a => TIPOS_ACAO.find(t => t.value === a.tipoAcao)?.label || a.tipoAcao)
+  const tiposAcaoSelecionados = new Set(acoes.value.map(a => a.tipoAcao).filter(Boolean))
   const tipos_acao = tipoLabels.length <= 1
     ? (tipoLabels[0] || '')
     : tipoLabels.slice(0, -1).join(', ') + ' e ' + tipoLabels[tipoLabels.length - 1]
@@ -801,7 +829,9 @@ async function montarContexto (): Promise<Record<string, any>> {
       }
 
       // Advogados adicionais (não-sócios)
-      const adicionais = advs.filter(a => !a.is_socio)
+      const adicionais = advs.filter(a =>
+        !a.is_socio && includeAdvogadoAdicionalNoContrato(uf, a.nome_completo, tiposAcaoSelecionados),
+      )
       if (adicionais.length > 0) {
         advogados_estado = adicionais.map(qualificarAdvogado).join('; e ')
       }
