@@ -13,6 +13,12 @@ export type TipoAcao =
 
 export type CondicaoCliente = 'alfabetizado' | 'analfabeto' | 'incapaz' | 'crianca_adolescente'
 
+export type UploadedDoc = {
+  path: string
+  url: string
+  name: string
+}
+
 export type KitCadastro = {
   // Dados Pessoais
   nome: string
@@ -78,9 +84,12 @@ export type KitAcao = {
   tarifaQuestionada: string        // quando tipo='tarifa_bancaria'
   tipoSeguro: string               // quando tipo='seguro_nao_autorizado'
   tipoContribuicao: string         // quando tipo='contribuicao_sindical_nao_autorizada'
-  historicoEmprestimoUrl: string   // upload
-  historicoCreditoUrl: string      // upload
-  extratoBancarioUrl: string       // upload
+  historicoEmprestimoArquivos: UploadedDoc[]
+  historicoEmprestimoFiles: File[]
+  historicoCreditoArquivos: UploadedDoc[]
+  historicoCreditoFiles: File[]
+  extratoBancarioArquivos: UploadedDoc[]
+  extratoBancarioFiles: File[]
 }
 
 export type Kit = {
@@ -211,7 +220,10 @@ export const emptyAcao = (): KitAcao => ({
   tarifaQuestionada: '',
   tipoSeguro: '',
   tipoContribuicao: '',
-  historicoEmprestimoUrl: '',
-  historicoCreditoUrl: '',
-  extratoBancarioUrl: '',
+  historicoEmprestimoArquivos: [],
+  historicoEmprestimoFiles: [],
+  historicoCreditoArquivos: [],
+  historicoCreditoFiles: [],
+  extratoBancarioArquivos: [],
+  extratoBancarioFiles: [],
 })

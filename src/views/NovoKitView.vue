@@ -68,7 +68,16 @@ async function buscarClientePorCpf () {
       clienteEncontrado.value = true
       clienteNome.value = found.nome_completo
       docsPessoais.value = found.documentos_pessoais || []
+      relatedDocs.value.rogado = found.rogado_documentos || []
+      relatedDocs.value.testemunha1 = found.testemunha1_documentos || []
+      relatedDocs.value.testemunha2 = found.testemunha2_documentos || []
+      relatedDocs.value.responsavel_legal = found.responsavel_legal_documentos || []
     } else {
+      docsPessoais.value = []
+      relatedDocs.value.rogado = []
+      relatedDocs.value.testemunha1 = []
+      relatedDocs.value.testemunha2 = []
+      relatedDocs.value.responsavel_legal = []
       clienteNaoEncontrado.value = true
     }
   } catch (e: any) {
@@ -126,6 +135,11 @@ async function salvarClienteDrawer () {
     clienteEncontrado.value = true
     clienteNaoEncontrado.value = false
     clienteNome.value = created.nome_completo
+    docsPessoais.value = []
+    relatedDocs.value.rogado = []
+    relatedDocs.value.testemunha1 = []
+    relatedDocs.value.testemunha2 = []
+    relatedDocs.value.responsavel_legal = []
     drawerCadastro.value = false
     showSuccess('Cliente cadastrado com sucesso!')
   } catch (e: any) {
@@ -256,8 +270,23 @@ interface DocPessoal {
   url: string
   name: string
 }
+
+type RelatedDocOwner = 'rogado' | 'testemunha1' | 'testemunha2' | 'responsavel_legal'
+
 const docsPessoais = ref<DocPessoal[]>([])
 const uploadingDocs = ref(false)
+const relatedDocs = ref<Record<RelatedDocOwner, DocPessoal[]>>({
+  rogado: [],
+  testemunha1: [],
+  testemunha2: [],
+  responsavel_legal: [],
+})
+const relatedDocsUploading = ref<Record<RelatedDocOwner, boolean>>({
+  rogado: false,
+  testemunha1: false,
+  testemunha2: false,
+  responsavel_legal: false,
+})
 
 async function onSelectDocPessoal (e: Event) {
   const files = (e.target as HTMLInputElement).files
@@ -290,8 +319,41 @@ async function uploadDocsPessoais (files: File[]) {
   }
 }
 
+async function onSelectRelatedDocs (owner: RelatedDocOwner, e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (files?.length) await uploadRelatedDocs(owner, Array.from(files))
+  input.value = ''
+}
+
+async function uploadRelatedDocs (owner: RelatedDocOwner, files: File[]) {
+  if (!clienteId.value || !files.length) return
+  relatedDocsUploading.value[owner] = true
+  try {
+    const fd = new FormData()
+    fd.append('owner', owner)
+    files.forEach(f => fd.append('files', f))
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/documentos-vinculados/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    relatedDocs.value[owner] = data.documentos || []
+  } catch (e: any) {
+    console.error(`Erro no upload de ${owner}:`, e)
+  } finally {
+    relatedDocsUploading.value[owner] = false
+  }
+}
+
 function isImage (name: string) {
   return /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(name)
+}
+
+function docIcon (name: string) {
+  if (/\.pdf$/i.test(name)) return 'mdi-file-pdf-box'
+  if (/\.docx?$/i.test(name)) return 'mdi-file-word-outline'
+  return 'mdi-file-outline'
 }
 
 async function removeDocPessoal (doc: DocPessoal) {
@@ -304,6 +366,19 @@ async function removeDocPessoal (doc: DocPessoal) {
     docsPessoais.value = data.documentos_pessoais
   } catch (e: any) {
     console.error('Erro ao remover doc:', e)
+  }
+}
+
+async function removeRelatedDoc (owner: RelatedDocOwner, doc: DocPessoal) {
+  if (!clienteId.value) return
+  try {
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/documentos-vinculados/remove/`,
+      { owner, path: doc.path },
+    )
+    relatedDocs.value[owner] = data.documentos || []
+  } catch (e: any) {
+    console.error(`Erro ao remover doc de ${owner}:`, e)
   }
 }
 
@@ -323,14 +398,111 @@ function updateAcao (index: number, field: keyof KitAcao, value: string) {
     acao.tarifaQuestionada = ''
     acao.tipoSeguro = ''
     acao.tipoContribuicao = ''
-    acao.historicoEmprestimoUrl = ''
-    acao.historicoCreditoUrl = ''
-    acao.extratoBancarioUrl = ''
+    acao.historicoEmprestimoArquivos = []
+    acao.historicoEmprestimoFiles = []
+    acao.historicoCreditoArquivos = []
+    acao.historicoCreditoFiles = []
+    acao.extratoBancarioArquivos = []
+    acao.extratoBancarioFiles = []
   }
   if (field === 'nomeBanco' && value !== 'Outro') {
     acao.bancoOutro = ''
   }
   ;(acao[field] as string) = value
+}
+
+type AcaoUploadField = 'historicoEmprestimo' | 'historicoCredito' | 'extratoBancario'
+
+function getAcaoOwner (field: AcaoUploadField) {
+  if (field === 'historicoEmprestimo') return 'historico_emprestimo'
+  if (field === 'historicoCredito') return 'historico_credito'
+  return 'extrato_bancario'
+}
+
+function setAcaoDocs (index: number, field: AcaoUploadField, docs: any[]) {
+  const acao = acoes.value[index]
+  if (!acao) return
+  if (field === 'historicoEmprestimo') {
+    acao.historicoEmprestimoArquivos = docs
+    return
+  }
+  if (field === 'historicoCredito') {
+    acao.historicoCreditoArquivos = docs
+    return
+  }
+  acao.extratoBancarioArquivos = docs
+}
+
+async function ensurePersistedAcoesForUpload () {
+  if (acoesExistentes.value.length === acoes.value.length && acoesExistentes.value.every(a => !!a.id)) return
+  if (!validateAcoes()) throw new Error('Preencha os campos obrigatórios da ação antes de enviar anexos.')
+  if (clienteId.value) {
+    await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
+  }
+  const savedAcoes = await kitsStore.saveAcoes(kitId.value, acoes.value, acoesExistentes.value)
+  acoesExistentes.value = savedAcoes
+  acoes.value = savedAcoes.map(a => acaoFromAPI(a))
+}
+
+async function uploadAcaoDocs (index: number, field: AcaoUploadField, files: File[]) {
+  if (!files.length || !kitId.value) return
+  await ensurePersistedAcoesForUpload()
+  const acaoId = acoesExistentes.value[index]?.id
+  if (!acaoId) throw new Error('Não foi possível identificar a ação para anexar os arquivos.')
+
+  const fd = new FormData()
+  fd.append('owner', getAcaoOwner(field))
+  files.forEach(file => fd.append('files', file))
+
+  const { data } = await api.post(
+    `/api/kits/${kitId.value}/acoes/${acaoId}/anexos/upload/`,
+    fd,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  setAcaoDocs(index, field, data.documentos || [])
+}
+
+async function onSelectAcaoUpload (index: number, field: AcaoUploadField, e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  if (!files.length) return
+  try {
+    await uploadAcaoDocs(index, field, files)
+  } catch (error: any) {
+    showError(error?.message || 'Não foi possível enviar os anexos da ação.')
+  }
+}
+
+async function removeAcaoUpload (index: number, field: AcaoUploadField, path: string) {
+  if (!kitId.value) return
+  const acaoId = acoesExistentes.value[index]?.id
+  if (!acaoId) return
+  try {
+    const { data } = await api.post(
+      `/api/kits/${kitId.value}/acoes/${acaoId}/anexos/remove/`,
+      { owner: getAcaoOwner(field), path },
+    )
+    setAcaoDocs(index, field, data.documentos || [])
+  } catch (error: any) {
+    showError(error?.message || 'Não foi possível remover o anexo da ação.')
+  }
+}
+
+function acaoDocs (acao: KitAcao, field: AcaoUploadField) {
+  if (field === 'historicoEmprestimo') {
+    return {
+      existing: acao.historicoEmprestimoArquivos,
+    }
+  }
+  if (field === 'historicoCredito') {
+    return {
+      existing: acao.historicoCreditoArquivos,
+    }
+  }
+  return {
+    existing: acao.extratoBancarioArquivos,
+  }
 }
 
 function acaoNeedsContrato (tipo: string) {
@@ -525,6 +697,18 @@ function fmtCEP (v: string): string {
   return `${d.slice(0, 5)}-${d.slice(5)}`
 }
 
+function advogadoInscrito (genero?: string) {
+  return genero === 'feminino' ? 'inscrita' : 'inscrito'
+}
+
+function qualificarAdvogado (a: { nome_completo: string, nacionalidade: string, estado_civil: string, genero?: string, numero_oab: string, escritorio_nome?: string, escritorio_cnpj?: string }) {
+  let texto = `${a.nome_completo}, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${advogadoInscrito(a.genero)} na ${a.numero_oab}`
+  if (a.escritorio_nome) {
+    texto += `, neste ato representando o escritório ${a.escritorio_nome}, pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ${a.escritorio_cnpj}`
+  }
+  return texto
+}
+
 async function montarContexto (): Promise<Record<string, any>> {
   const c = cad.value
   const isMasc = c.genero === 'masculino'
@@ -557,7 +741,17 @@ async function montarContexto (): Promise<Record<string, any>> {
     ? c.profissao
     : (profissaoMap[c.profissaoTipo] || c.profissaoTipo)
 
-  const enderecoParts = [c.rua, c.numero, c.complemento, c.bairro].filter(Boolean).join(', ')
+  const numeroEndereco = (c.numero || '').trim()
+  const numeroFormatado = numeroEndereco && /^s\s*\/?\s*n$/i.test(numeroEndereco)
+    ? numeroEndereco
+    : (numeroEndereco ? `nº ${numeroEndereco}` : '')
+
+  const enderecoParts = [
+    c.rua,
+    numeroFormatado,
+    c.complemento,
+    c.bairro,
+  ].filter(Boolean).join(', ')
   const endereco = `${enderecoParts}, ${c.cidade}/${c.estado}, CEP ${fmtCEP(c.cep)}`
 
   const d = new Date()
@@ -578,7 +772,12 @@ async function montarContexto (): Promise<Record<string, any>> {
   // ── Advogados por UF ──
   let oab_estado = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
   let advogados_estado = ''
+  let contratados_socios = ''
   let unidade_apoio = ''
+  let socio1_oab = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
+  let socio2_oab = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
+  let oab_tiago = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
+  let oab_eduardo = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
 
   const uf = c.estado?.toUpperCase()
   if (uf) {
@@ -586,21 +785,25 @@ async function montarContexto (): Promise<Record<string, any>> {
       const advs = await advogadosStore.fetchPorUf(uf)
 
       // OABs dos sócios
-      const socios = advs.filter(a => a.is_socio)
+      const socios = advs
+        .filter(a => a.is_socio)
+        .sort((a, b) => a.nome_completo.localeCompare(b.nome_completo))
       if (socios.length > 0) {
         oab_estado = socios.map(s => s.numero_oab).join(' e ')
+        contratados_socios = socios.map(qualificarAdvogado).join(' e ')
+        socio1_oab = socios[0]?.numero_oab || socio1_oab
+        socio2_oab = socios[1]?.numero_oab || socio2_oab
+
+        const tiago = socios.find(s => normalize(s.nome_completo).includes('tiago'))
+        const eduardo = socios.find(s => normalize(s.nome_completo).includes('eduardo'))
+        if (tiago?.numero_oab) oab_tiago = tiago.numero_oab
+        if (eduardo?.numero_oab) oab_eduardo = eduardo.numero_oab
       }
 
       // Advogados adicionais (não-sócios)
       const adicionais = advs.filter(a => !a.is_socio)
       if (adicionais.length > 0) {
-        advogados_estado = adicionais.map(a => {
-          let texto = `${a.nome_completo}, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${inscrito} na ${a.numero_oab}`
-          if (a.escritorio_nome) {
-            texto += `, neste ato representando o escritório ${a.escritorio_nome}, pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ${a.escritorio_cnpj}`
-          }
-          return texto
-        }).join('; e ')
+        advogados_estado = adicionais.map(qualificarAdvogado).join('; e ')
       }
 
       // Unidade de apoio (pega a primeira que tiver)
@@ -652,7 +855,12 @@ async function montarContexto (): Promise<Record<string, any>> {
     informado: isMasc ? 'informado' : 'informada',
     impossibilitado: isMasc ? 'impossibilitado' : 'impossibilitada',
     oab_estado,
+    socio1_oab,
+    socio2_oab,
+    oab_tiago,
+    oab_eduardo,
     unidade_apoio,
+    contratados_socios,
     advogados_estado,
     bancos,
     tipos_acao,
@@ -718,12 +926,15 @@ async function renderBlobToEl (blob: Blob, container: HTMLElement) {
   const { renderAsync } = await import('docx-preview')
   container.innerHTML = ''
   await renderAsync(blob, container, undefined, {
-    className: 'docx-preview',
+    className: 'docx',
     inWrapper: true,
     ignoreWidth: false,
     ignoreHeight: false,
     ignoreFonts: false,
     breakPages: true,
+    ignoreLastRenderedPageBreak: false,
+    experimental: true,
+    hideWrapperOnPrint: true,
   })
 }
 
@@ -920,8 +1131,9 @@ async function avancarComPersistencia () {
       if (clienteId.value) {
         await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
       }
-      await kitsStore.saveAcoes(kitId.value, acoes.value, acoesExistentes.value)
-      acoesExistentes.value = []
+      const savedAcoes = await kitsStore.saveAcoes(kitId.value, acoes.value, acoesExistentes.value)
+      acoesExistentes.value = savedAcoes
+      acoes.value = savedAcoes.map(a => acaoFromAPI(a))
       etapaAtual.value = 'kit-final'
     } finally {
       saving.value = false
@@ -933,6 +1145,18 @@ async function avancarComPersistencia () {
 function etapaAnterior () {
   const prev = etapaIndex.value - 1
   if (prev >= 0) etapaAtual.value = etapas[prev]
+}
+
+function resetSelectedCliente () {
+  clienteEncontrado.value = false
+  clienteId.value = null
+  clienteNaoEncontrado.value = false
+  cpfBusca.value = ''
+  docsPessoais.value = []
+  relatedDocs.value.rogado = []
+  relatedDocs.value.testemunha1 = []
+  relatedDocs.value.testemunha2 = []
+  relatedDocs.value.responsavel_legal = []
 }
 
 async function finalizarKit () {
@@ -972,6 +1196,10 @@ onMounted(async () => {
     cad.value = clienteToCadastro(kit.cliente_detail)
     clienteNome.value = kit.cliente_detail.nome_completo || ''
     docsPessoais.value = kit.cliente_detail.documentos_pessoais || []
+    relatedDocs.value.rogado = kit.cliente_detail.rogado_documentos || []
+    relatedDocs.value.testemunha1 = kit.cliente_detail.testemunha1_documentos || []
+    relatedDocs.value.testemunha2 = kit.cliente_detail.testemunha2_documentos || []
+    relatedDocs.value.responsavel_legal = kit.cliente_detail.responsavel_legal_documentos || []
   }
   cad.value.status = kit.status
 
@@ -1096,7 +1324,7 @@ onMounted(async () => {
                     color="default"
                     size="x-small"
                     variant="text"
-                    @click="clienteEncontrado = false; clienteId = null; clienteNaoEncontrado = false; cpfBusca = ''"
+                    @click="resetSelectedCliente"
                   >
                     Trocar cliente
                   </v-btn>
@@ -1187,11 +1415,40 @@ onMounted(async () => {
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
-                        <div class="upload-inline" @click="($refs.rogadoDocInput as HTMLInputElement)?.click()">
-                          <input ref="rogadoDocInput" accept="image/*,.pdf" hidden type="file">
-                          <v-icon color="primary" icon="mdi-upload" size="small" />
-                          <span>Clique para enviar</span>
+                        <div v-if="relatedDocs.rogado.length" class="docs-list mb-3">
+                          <div v-for="doc in relatedDocs.rogado" :key="doc.path" class="docs-list__item">
+                            <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                              <img
+                                v-if="isImage(doc.name)"
+                                :src="doc.url"
+                                :alt="doc.name"
+                                class="docs-list__img"
+                              >
+                              <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                            </a>
+                            <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                            <v-spacer />
+                            <v-btn
+                              color="error"
+                              icon="mdi-close"
+                              size="x-small"
+                              variant="text"
+                              @click="removeRelatedDoc('rogado', doc)"
+                            />
+                          </div>
                         </div>
+                        <label class="upload-inline upload-inline--boxed">
+                          <input
+                            accept="image/*,.pdf,.doc,.docx"
+                            hidden
+                            multiple
+                            type="file"
+                            @change="onSelectRelatedDocs('rogado', $event)"
+                          >
+                          <v-icon v-if="!relatedDocsUploading.rogado" color="primary" icon="mdi-upload" size="small" />
+                          <v-progress-circular v-else color="primary" indeterminate size="16" width="2" />
+                          <span>{{ relatedDocsUploading.rogado ? 'Enviando...' : 'Clique para enviar arquivos' }}</span>
+                        </label>
                       </v-col>
                     </v-row>
                   </v-card-text>
@@ -1216,11 +1473,40 @@ onMounted(async () => {
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
-                        <div class="upload-inline" @click="($refs.test1DocInput as HTMLInputElement)?.click()">
-                          <input ref="test1DocInput" accept="image/*,.pdf" hidden type="file">
-                          <v-icon color="primary" icon="mdi-upload" size="small" />
-                          <span>Clique para enviar</span>
+                        <div v-if="relatedDocs.testemunha1.length" class="docs-list mb-3">
+                          <div v-for="doc in relatedDocs.testemunha1" :key="doc.path" class="docs-list__item">
+                            <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                              <img
+                                v-if="isImage(doc.name)"
+                                :src="doc.url"
+                                :alt="doc.name"
+                                class="docs-list__img"
+                              >
+                              <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                            </a>
+                            <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                            <v-spacer />
+                            <v-btn
+                              color="error"
+                              icon="mdi-close"
+                              size="x-small"
+                              variant="text"
+                              @click="removeRelatedDoc('testemunha1', doc)"
+                            />
+                          </div>
                         </div>
+                        <label class="upload-inline upload-inline--boxed">
+                          <input
+                            accept="image/*,.pdf,.doc,.docx"
+                            hidden
+                            multiple
+                            type="file"
+                            @change="onSelectRelatedDocs('testemunha1', $event)"
+                          >
+                          <v-icon v-if="!relatedDocsUploading.testemunha1" color="primary" icon="mdi-upload" size="small" />
+                          <v-progress-circular v-else color="primary" indeterminate size="16" width="2" />
+                          <span>{{ relatedDocsUploading.testemunha1 ? 'Enviando...' : 'Clique para enviar arquivos' }}</span>
+                        </label>
                       </v-col>
                     </v-row>
                   </v-card-text>
@@ -1245,11 +1531,40 @@ onMounted(async () => {
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
-                        <div class="upload-inline" @click="($refs.test2DocInput as HTMLInputElement)?.click()">
-                          <input ref="test2DocInput" accept="image/*,.pdf" hidden type="file">
-                          <v-icon color="primary" icon="mdi-upload" size="small" />
-                          <span>Clique para enviar</span>
+                        <div v-if="relatedDocs.testemunha2.length" class="docs-list mb-3">
+                          <div v-for="doc in relatedDocs.testemunha2" :key="doc.path" class="docs-list__item">
+                            <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                              <img
+                                v-if="isImage(doc.name)"
+                                :src="doc.url"
+                                :alt="doc.name"
+                                class="docs-list__img"
+                              >
+                              <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                            </a>
+                            <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                            <v-spacer />
+                            <v-btn
+                              color="error"
+                              icon="mdi-close"
+                              size="x-small"
+                              variant="text"
+                              @click="removeRelatedDoc('testemunha2', doc)"
+                            />
+                          </div>
                         </div>
+                        <label class="upload-inline upload-inline--boxed">
+                          <input
+                            accept="image/*,.pdf,.doc,.docx"
+                            hidden
+                            multiple
+                            type="file"
+                            @change="onSelectRelatedDocs('testemunha2', $event)"
+                          >
+                          <v-icon v-if="!relatedDocsUploading.testemunha2" color="primary" icon="mdi-upload" size="small" />
+                          <v-progress-circular v-else color="primary" indeterminate size="16" width="2" />
+                          <span>{{ relatedDocsUploading.testemunha2 ? 'Enviando...' : 'Clique para enviar arquivos' }}</span>
+                        </label>
                       </v-col>
                     </v-row>
                   </v-card-text>
@@ -1279,11 +1594,40 @@ onMounted(async () => {
                       </v-col>
                       <v-col cols="12">
                         <label class="field-label">Documento de identidade (opcional)</label>
-                        <div class="upload-inline" @click="($refs.respLegalDocInput as HTMLInputElement)?.click()">
-                          <input ref="respLegalDocInput" accept="image/*,.pdf" hidden type="file">
-                          <v-icon color="primary" icon="mdi-upload" size="small" />
-                          <span>Clique para enviar</span>
+                        <div v-if="relatedDocs.responsavel_legal.length" class="docs-list mb-3">
+                          <div v-for="doc in relatedDocs.responsavel_legal" :key="doc.path" class="docs-list__item">
+                            <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                              <img
+                                v-if="isImage(doc.name)"
+                                :src="doc.url"
+                                :alt="doc.name"
+                                class="docs-list__img"
+                              >
+                              <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                            </a>
+                            <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                            <v-spacer />
+                            <v-btn
+                              color="error"
+                              icon="mdi-close"
+                              size="x-small"
+                              variant="text"
+                              @click="removeRelatedDoc('responsavel_legal', doc)"
+                            />
+                          </div>
                         </div>
+                        <label class="upload-inline upload-inline--boxed">
+                          <input
+                            accept="image/*,.pdf,.doc,.docx"
+                            hidden
+                            multiple
+                            type="file"
+                            @change="onSelectRelatedDocs('responsavel_legal', $event)"
+                          >
+                          <v-icon v-if="!relatedDocsUploading.responsavel_legal" color="primary" icon="mdi-upload" size="small" />
+                          <v-progress-circular v-else color="primary" indeterminate size="16" width="2" />
+                          <span>{{ relatedDocsUploading.responsavel_legal ? 'Enviando...' : 'Clique para enviar arquivos' }}</span>
+                        </label>
                       </v-col>
                     </v-row>
                   </v-card-text>
@@ -1310,7 +1654,7 @@ onMounted(async () => {
                         :alt="doc.name"
                         class="docs-list__img"
                       >
-                      <v-icon v-else color="error" icon="mdi-file-pdf-box" size="28" />
+                      <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
                     </a>
                     <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
                     <v-spacer />
@@ -1334,7 +1678,7 @@ onMounted(async () => {
                 >
                   <input
                     ref="docPessoalInput"
-                    accept="image/*,.pdf"
+                    accept="image/*,.pdf,.doc,.docx"
                     hidden
                     multiple
                     type="file"
@@ -1347,7 +1691,7 @@ onMounted(async () => {
                   <template v-else>
                     <v-icon class="upload-zone__icon" icon="mdi-upload" />
                     <span class="upload-zone__title">Clique ou arraste para enviar</span>
-                    <span class="upload-zone__hint">PDF, JPG ou PNG — múltiplos arquivos</span>
+                    <span class="upload-zone__hint">PDF, DOC, DOCX, JPG ou PNG — múltiplos arquivos</span>
                   </template>
                 </div>
               </div>
@@ -1557,19 +1901,39 @@ onMounted(async () => {
                   <v-row dense>
                     <v-col cols="12" md="6">
                       <label class="field-label">Histórico de empréstimo (opcional)</label>
-                      <div class="upload-inline">
-                        <input accept="image/*,.pdf" hidden type="file">
-                        <v-icon color="primary" icon="mdi-upload" size="small" />
-                        <span>Clique para enviar</span>
+                      <div v-if="acaoDocs(acao, 'historicoEmprestimo').existing.length" class="docs-list mb-2">
+                        <div v-for="doc in acaoDocs(acao, 'historicoEmprestimo').existing" :key="doc.path" class="docs-list__item">
+                          <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                            <v-icon :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                          </a>
+                          <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                          <v-spacer />
+                          <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeAcaoUpload(i, 'historicoEmprestimo', doc.path)" />
+                        </div>
                       </div>
+                      <label class="upload-inline upload-inline--boxed">
+                        <input accept="image/*,.pdf,.doc,.docx" hidden multiple type="file" @change="onSelectAcaoUpload(i, 'historicoEmprestimo', $event)">
+                        <v-icon color="primary" icon="mdi-upload" size="small" />
+                        <span>Clique para enviar arquivos</span>
+                      </label>
                     </v-col>
                     <v-col cols="12" md="6">
                       <label class="field-label">Histórico de crédito (opcional)</label>
-                      <div class="upload-inline">
-                        <input accept="image/*,.pdf" hidden type="file">
-                        <v-icon color="primary" icon="mdi-upload" size="small" />
-                        <span>Clique para enviar</span>
+                      <div v-if="acaoDocs(acao, 'historicoCredito').existing.length" class="docs-list mb-2">
+                        <div v-for="doc in acaoDocs(acao, 'historicoCredito').existing" :key="doc.path" class="docs-list__item">
+                          <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                            <v-icon :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                          </a>
+                          <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                          <v-spacer />
+                          <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeAcaoUpload(i, 'historicoCredito', doc.path)" />
+                        </div>
                       </div>
+                      <label class="upload-inline upload-inline--boxed">
+                        <input accept="image/*,.pdf,.doc,.docx" hidden multiple type="file" @change="onSelectAcaoUpload(i, 'historicoCredito', $event)">
+                        <v-icon color="primary" icon="mdi-upload" size="small" />
+                        <span>Clique para enviar arquivos</span>
+                      </label>
                     </v-col>
                   </v-row>
                 </template>
@@ -1590,11 +1954,21 @@ onMounted(async () => {
                   />
 
                   <label class="field-label">Extrato bancário (opcional)</label>
-                  <div class="upload-inline">
-                    <input accept="image/*,.pdf" hidden type="file">
-                    <v-icon color="primary" icon="mdi-upload" size="small" />
-                    <span>Clique para enviar</span>
+                  <div v-if="acaoDocs(acao, 'extratoBancario').existing.length" class="docs-list mb-2">
+                    <div v-for="doc in acaoDocs(acao, 'extratoBancario').existing" :key="doc.path" class="docs-list__item">
+                      <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                        <v-icon :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                      </a>
+                      <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                      <v-spacer />
+                      <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeAcaoUpload(i, 'extratoBancario', doc.path)" />
+                    </div>
                   </div>
+                  <label class="upload-inline upload-inline--boxed">
+                    <input accept="image/*,.pdf,.doc,.docx" hidden multiple type="file" @change="onSelectAcaoUpload(i, 'extratoBancario', $event)">
+                    <v-icon color="primary" icon="mdi-upload" size="small" />
+                    <span>Clique para enviar arquivos</span>
+                  </label>
                 </template>
 
                 <!-- Seguro não autorizado -->
@@ -1987,6 +2361,11 @@ onMounted(async () => {
   color: #3b6cb4;
 }
 
+.upload-inline--boxed {
+  width: 100%;
+  justify-content: center;
+}
+
 .native-file-wrap {
   padding: 8px 12px;
   border: 1px solid #e0e0e0;
@@ -2168,10 +2547,12 @@ onMounted(async () => {
 }
 
 .docx-container {
-  background: #f5f5f5;
-  border-radius: 4px;
-  padding: 8px;
+  background: #eef1f6;
+  border: 1px solid #d9dfeb;
+  border-radius: 10px;
+  padding: 16px;
   min-height: 400px;
+  overflow: auto;
 }
 
 :deep(.compact-input .v-field) {
@@ -2214,16 +2595,13 @@ onMounted(async () => {
 <style>
 /* docx-preview renderiza com classes próprias */
 .docx-container .docx-wrapper {
-  background: #e8e8e8;
-  border-radius: 4px;
-  padding: 16px;
+  background: transparent;
+  padding: 8px 0;
 }
 
 .docx-container .docx-wrapper > section.docx {
   margin: 0 auto 24px auto;
-  padding: 40px 60px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
   border-radius: 2px;
 }
 

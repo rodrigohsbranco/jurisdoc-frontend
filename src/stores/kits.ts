@@ -10,6 +10,7 @@ import {
   getKit,
   listKits,
   mudarStatus,
+  updateAcao,
   updateKit,
   type AcaoAPI,
   type KitDetail,
@@ -89,23 +90,34 @@ export const useKitsStore = defineStore('kits', {
     async saveAcoes (kitId: number, acoes: KitAcao[], acoesExistentes: AcaoAPI[]) {
       this.error = ''
       try {
-        // Remove ações antigas (ignora 404 se já deletadas)
-        for (const existente of acoesExistentes) {
-          if (existente.id) {
-            try {
-              await deleteAcao(kitId, existente.id)
-            } catch { /* ignora 404 */ }
-          }
+        const saved: AcaoAPI[] = []
+        const existentes = [...acoesExistentes]
+        const commonLength = Math.min(acoes.length, existentes.length)
+
+        for (let i = 0; i < commonLength; i++) {
+          const existente = existentes[i]
+          if (!existente.id) continue
+          saved.push(await updateAcao(kitId, existente.id, acoes[i]))
         }
-        // Cria novas
-        for (const acao of acoes) {
-          await createAcao(kitId, acao)
+
+        for (let i = commonLength; i < acoes.length; i++) {
+          saved.push(await createAcao(kitId, acoes[i]))
         }
-        // Avança status para 'acoes' se ainda em rascunho
-        try {
+
+        for (let i = commonLength; i < existentes.length; i++) {
+          const existente = existentes[i]
+          if (!existente.id) continue
+          try {
+            await deleteAcao(kitId, existente.id)
+          } catch { /* ignora 404 */ }
+        }
+        // Avança status para 'acoes' apenas quando o kit ainda está em rascunho.
+        const currentKit = this.byId(kitId)
+        if (currentKit?.status === 'rascunho') {
           await mudarStatus(kitId, 'acoes')
-        } catch { /* ignora se já está em 'acoes' ou adiante */ }
+        }
         await this.fetchList()
+        return saved
       } catch (e: any) {
         this.error = friendlyError(e)
         throw e
