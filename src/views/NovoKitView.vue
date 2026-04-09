@@ -1041,6 +1041,7 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
     bancos: bancoNome,
     tipos_acao: tipoLabel,
     instituicao_re: bancoNome,
+    contrato_acao: acao.numeroContrato,
   }
 }
 
