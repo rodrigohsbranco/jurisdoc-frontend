@@ -797,7 +797,11 @@ async function montarContexto (): Promise<Record<string, any>> {
   const local_data = `${c.cidade}/${c.estado}, ${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`
 
   // Bancos
-  const bancoNomes = acoes.value.map(a => (a.nomeBanco === 'Outro' ? a.bancoOutro : a.nomeBanco).toUpperCase())
+  const bancoNomes = Array.from(new Set(
+    acoes.value
+      .map(a => (a.nomeBanco === 'Outro' ? a.bancoOutro : a.nomeBanco).toUpperCase().trim())
+      .filter(Boolean),
+  ))
   const bancos = bancoNomes.length <= 1
     ? (bancoNomes[0] || '(BANCOS DA AÇÃO)')
     : bancoNomes.slice(0, -1).join(', ') + ' e ' + bancoNomes[bancoNomes.length - 1]
