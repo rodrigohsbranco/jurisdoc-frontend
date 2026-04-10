@@ -82,6 +82,7 @@ export type KitAcao = {
   tipoAcao: TipoAcao | ''
   numeroContrato: string           // quando tipo requer contrato
   tarifaQuestionada: string        // quando tipo='tarifa_bancaria'
+  tarifaQuestionadaOutro: string   // quando tarifaQuestionada='OUTROS'
   tipoSeguro: string               // quando tipo='seguro_nao_autorizado'
   tipoContribuicao: string         // quando tipo='contribuicao_sindical_nao_autorizada'
   historicoEmprestimoArquivos: UploadedDoc[]
@@ -140,12 +141,14 @@ export const BANCOS = [
 ]
 
 export const TARIFAS = [
-  'Tarifa de cadastro',
-  'Tarifa de manutenção de conta',
-  'Tarifa de transferência',
-  'Tarifa de extrato',
-  'Tarifa de saque',
-  'Outra',
+  'MORA CARTÃO DE CRÉDITO',
+  'MORA CRÉDITO PESSOAL',
+  'TARIFA BANCÁRIA',
+  'TÍTULO DE CAPITALIZAÇÃO',
+  'PAGAMENTO ELETRÔNICO DE COBRANÇA',
+  'APLICAÇÃO INVEST FÁCIL',
+  'GASTOS COM CARTÃO DE CRÉDITO',
+  'OUTROS',
 ]
 
 export const UF_LIST = [
@@ -218,6 +221,7 @@ export const emptyAcao = (): KitAcao => ({
   tipoAcao: '',
   numeroContrato: '',
   tarifaQuestionada: '',
+  tarifaQuestionadaOutro: '',
   tipoSeguro: '',
   tipoContribuicao: '',
   historicoEmprestimoArquivos: [],

@@ -396,6 +396,7 @@ function updateAcao (index: number, field: keyof KitAcao, value: string) {
   if (field === 'tipoAcao') {
     acao.numeroContrato = ''
     acao.tarifaQuestionada = ''
+    acao.tarifaQuestionadaOutro = ''
     acao.tipoSeguro = ''
     acao.tipoContribuicao = ''
     acao.historicoEmprestimoArquivos = []
@@ -405,10 +406,20 @@ function updateAcao (index: number, field: keyof KitAcao, value: string) {
     acao.extratoBancarioArquivos = []
     acao.extratoBancarioFiles = []
   }
+  if (field === 'tarifaQuestionada' && value !== 'OUTROS') {
+    acao.tarifaQuestionadaOutro = ''
+  }
   if (field === 'nomeBanco' && value !== 'Outro') {
     acao.bancoOutro = ''
   }
   ;(acao[field] as string) = value
+}
+
+function resolveTarifaQuestionada (acao: KitAcao): string {
+  if (acao.tarifaQuestionada === 'OUTROS') {
+    return acao.tarifaQuestionadaOutro?.trim() || 'OUTROS'
+  }
+  return acao.tarifaQuestionada
 }
 
 type AcaoUploadField = 'historicoEmprestimo' | 'historicoCredito' | 'extratoBancario'
@@ -581,6 +592,7 @@ function validateAcoes (): boolean {
     if (acao.nomeBanco === 'Outro' && !acao.bancoOutro?.trim()) e.bancoOutro = 'Campo obrigatório'
     if (acaoNeedsContrato(acao.tipoAcao) && !acao.numeroContrato?.trim()) e.numeroContrato = 'Campo obrigatório'
     if (acao.tipoAcao === 'tarifa_bancaria' && !acao.tarifaQuestionada) e.tarifaQuestionada = 'Campo obrigatório'
+    if (acao.tipoAcao === 'tarifa_bancaria' && acao.tarifaQuestionada === 'OUTROS' && !acao.tarifaQuestionadaOutro?.trim()) e.tarifaQuestionadaOutro = 'Campo obrigatório'
     if (acao.tipoAcao === 'seguro_nao_autorizado' && !acao.tipoSeguro?.trim()) e.tipoSeguro = 'Campo obrigatório'
     if (acao.tipoAcao === 'contribuicao_sindical_nao_autorizada' && !acao.tipoContribuicao?.trim()) e.tipoContribuicao = 'Campo obrigatório'
     if (Object.keys(e).length > 0) errs[i] = e
@@ -796,6 +808,13 @@ async function montarContexto (): Promise<Record<string, any>> {
   const tipos_acao = tipoLabels.length <= 1
     ? (tipoLabels[0] || '')
     : tipoLabels.slice(0, -1).join(', ') + ' e ' + tipoLabels[tipoLabels.length - 1]
+  const tarifasQuestionadasList = acoes.value
+    .filter(a => a.tipoAcao === 'tarifa_bancaria' && a.tarifaQuestionada)
+    .map(resolveTarifaQuestionada)
+    .filter(Boolean)
+  const tarifas_questionadas = tarifasQuestionadasList.length <= 1
+    ? (tarifasQuestionadasList[0] || '')
+    : tarifasQuestionadasList.slice(0, -1).join(', ') + ' e ' + tarifasQuestionadasList[tarifasQuestionadasList.length - 1]
 
   // ── Advogados por UF ──
   let oab_estado = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
@@ -894,6 +913,8 @@ async function montarContexto (): Promise<Record<string, any>> {
     advogados_estado,
     bancos,
     tipos_acao,
+    tarifa_questionada: tarifasQuestionadasList[0] || '',
+    tarifas_questionadas,
     instituicao_re: bancos,
     imoveis_sim_nao,
     moveis_sim_nao,
@@ -1002,6 +1023,19 @@ function downloadDoc (key: string) {
 }
 
 const pdfLoading = ref<Record<string, boolean>>({})
+const downloadAllDocLoading = ref(false)
+const downloadAllPdfLoading = ref(false)
+
+function triggerBlobDownload (blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.append(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
 
 async function downloadPdf (key: string) {
   const blob = docBlobs.value[key]
@@ -1015,18 +1049,102 @@ async function downloadPdf (key: string) {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    const url = URL.createObjectURL(data as Blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `kit_${key}_${kitId.value}.pdf`
-    document.body.append(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    triggerBlobDownload(data as Blob, `kit_${key}_${kitId.value}.pdf`)
   } catch (e: any) {
     console.error('Erro ao converter para PDF:', e)
+    showError(e?.response?.data?.detail || e?.message || 'Não foi possível baixar o PDF.')
   } finally {
     pdfLoading.value[key] = false
+  }
+}
+
+async function ensureVisibleDocBlobs (): Promise<boolean> {
+  for (const template of kitTemplatesVisiveis.value) {
+    if (docBlobs.value[template.key]) continue
+    await fetchDocBlob(template.id, template.key)
+    if (!docBlobs.value[template.key]) {
+      return false
+    }
+  }
+  return true
+}
+
+async function downloadAllPdf () {
+  if (kitTemplatesVisiveis.value.length < 2) {
+    const [template] = kitTemplatesVisiveis.value
+    if (template?.key) {
+      await downloadPdf(template.key)
+    }
+    return
+  }
+
+  downloadAllPdfLoading.value = true
+  try {
+    const ready = await ensureVisibleDocBlobs()
+    if (!ready) {
+      showError('Não foi possível gerar todos os documentos para montar o PDF único.')
+      return
+    }
+
+    const fd = new FormData()
+    for (const template of kitTemplatesVisiveis.value) {
+      const blob = docBlobs.value[template.key]
+      if (!blob) continue
+      fd.append('files', blob, `kit_${template.key}_${kitId.value}.docx`)
+    }
+    fd.append('filename', `kit_completo_${kitId.value}`)
+
+    const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
+      responseType: 'blob',
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+
+    triggerBlobDownload(data as Blob, `kit_completo_${kitId.value}.pdf`)
+    showSuccess('PDF único gerado com sucesso!')
+  } catch (e: any) {
+    console.error('Erro ao gerar PDF único:', e)
+    showError(e?.response?.data?.detail || e?.message || 'Não foi possível gerar o PDF único.')
+  } finally {
+    downloadAllPdfLoading.value = false
+  }
+}
+
+async function downloadAllDoc () {
+  if (kitTemplatesVisiveis.value.length < 2) {
+    const [template] = kitTemplatesVisiveis.value
+    if (template?.key) {
+      downloadDoc(template.key)
+    }
+    return
+  }
+
+  downloadAllDocLoading.value = true
+  try {
+    const ready = await ensureVisibleDocBlobs()
+    if (!ready) {
+      showError('Não foi possível gerar todos os documentos para montar o DOCX único.')
+      return
+    }
+
+    const fd = new FormData()
+    for (const template of kitTemplatesVisiveis.value) {
+      const blob = docBlobs.value[template.key]
+      if (!blob) continue
+      fd.append('files', blob, `kit_${template.key}_${kitId.value}.docx`)
+    }
+
+    const { data } = await api.post('/api/templates/compose/', fd, {
+      responseType: 'blob',
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+
+    triggerBlobDownload(data as Blob, `kit_completo_${kitId.value}.docx`)
+    showSuccess('DOCX único gerado com sucesso!')
+  } catch (e: any) {
+    console.error('Erro ao gerar DOCX único:', e)
+    showError(e?.response?.data?.detail || e?.message || 'Não foi possível gerar o DOCX único.')
+  } finally {
+    downloadAllDocLoading.value = false
   }
 }
 
@@ -1040,6 +1158,7 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
     ...base,
     bancos: bancoNome,
     tipos_acao: tipoLabel,
+    tarifa_questionada: resolveTarifaQuestionada(acao),
     instituicao_re: bancoNome,
     contrato_acao: acao.numeroContrato,
   }
@@ -1983,6 +2102,19 @@ onMounted(async () => {
                     variant="outlined"
                     @update:model-value="updateAcao(i, 'tarifaQuestionada', $event)"
                   />
+                  <template v-if="acao.tarifaQuestionada === 'OUTROS'">
+                    <label class="field-label">Qual tarifa? *</label>
+                    <v-text-field
+                      :model-value="acao.tarifaQuestionadaOutro"
+                      class="compact-input mb-4"
+                      density="compact"
+                      :error-messages="acoesErrors[i]?.tarifaQuestionadaOutro"
+                      hide-details="auto"
+                      placeholder="Descreva a outra tarifa"
+                      variant="outlined"
+                      @update:model-value="updateAcao(i, 'tarifaQuestionadaOutro', $event)"
+                    />
+                  </template>
 
                   <label class="field-label">Extrato bancário (opcional)</label>
                   <div v-if="acaoDocs(acao, 'extratoBancario').existing.length" class="docs-list mb-2">
@@ -2041,7 +2173,31 @@ onMounted(async () => {
             <!-- ═══════════════ STEP 3: KIT FINAL ═══════════════ -->
             <v-window-item value="kit-final">
               <div class="d-flex align-center justify-space-between mb-2">
-                <h2 class="section-title mb-0">Pré-visualização dos Documentos</h2>
+                <div class="d-flex align-center ga-2 flex-wrap">
+                  <h2 class="section-title mb-0">Pré-visualização dos Documentos</h2>
+                  <v-btn
+                    v-if="kitTemplatesVisiveis.length"
+                    color="primary"
+                    :loading="downloadAllDocLoading"
+                    prepend-icon="mdi-file-word-outline"
+                    size="small"
+                    variant="tonal"
+                    @click="downloadAllDoc"
+                  >
+                    Baixar tudo (.docx)
+                  </v-btn>
+                  <v-btn
+                    v-if="kitTemplatesVisiveis.length"
+                    color="error"
+                    :loading="downloadAllPdfLoading"
+                    prepend-icon="mdi-file-pdf-box"
+                    size="small"
+                    variant="tonal"
+                    @click="downloadAllPdf"
+                  >
+                    Baixar tudo (.pdf)
+                  </v-btn>
+                </div>
                 <v-chip v-if="cad.status === 'assinado'" color="success" prepend-icon="mdi-check-circle" variant="tonal">
                   Assinado
                 </v-chip>
