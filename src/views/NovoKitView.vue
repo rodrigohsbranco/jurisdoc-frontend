@@ -941,6 +941,33 @@ async function montarContexto (): Promise<Record<string, any>> {
   }
 }
 
+/** Nome do cliente seguro para nome de arquivo (sem acentos, só letras/números/_). */
+function sanitizeNomeArquivo (nome: string): string {
+  const base = nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 80)
+  return base || 'cliente'
+}
+
+function nomeClienteArquivo (): string {
+  const raw = (cad.value.nome || clienteNome.value || 'cliente').trim()
+  return sanitizeNomeArquivo(raw)
+}
+
+/** Base sem extensão: contrato_Nome, procuracao_Nome (um único doc com todas as ações), kit_completo_Nome */
+function baseNomeDownloadDoc (key: string): string {
+  const slug = nomeClienteArquivo()
+  return `${key}_${slug}`
+}
+
+function baseNomeKitCompleto (): string {
+  return `kit_completo_${nomeClienteArquivo()}`
+}
+
 // ── Docs fixos ──
 
 async function fetchDocBlob (templateId: number, key: string) {
@@ -961,7 +988,7 @@ async function fetchDocBlob (templateId: number, key: string) {
     const context = await montarContexto()
     const result = await templatesStore.render(templateId, {
       context,
-      filename: `kit_${key}_${kitId.value}`,
+      filename: baseNomeDownloadDoc(key),
     })
     docBlobs.value[key] = result.blob
   } catch (e: any) {
@@ -1019,7 +1046,7 @@ function downloadDoc (key: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `kit_${key}_${kitId.value}.docx`
+  a.download = `${baseNomeDownloadDoc(key)}.docx`
   document.body.append(a)
   a.click()
   a.remove()
@@ -1047,13 +1074,14 @@ async function downloadPdf (key: string) {
   pdfLoading.value[key] = true
   try {
     const fd = new FormData()
-    fd.append('file', blob, `kit_${key}.docx`)
-    fd.append('filename', `kit_${key}_${kitId.value}`)
+    const base = baseNomeDownloadDoc(key)
+    fd.append('file', blob, `${base}.docx`)
+    fd.append('filename', base)
     const { data } = await api.post('/api/templates/convert-to-pdf/', fd, {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    triggerBlobDownload(data as Blob, `kit_${key}_${kitId.value}.pdf`)
+    triggerBlobDownload(data as Blob, `${base}.pdf`)
   } catch (e: any) {
     console.error('Erro ao converter para PDF:', e)
     showError(e?.response?.data?.detail || e?.message || 'Não foi possível baixar o PDF.')
@@ -1094,16 +1122,16 @@ async function downloadAllPdf () {
     for (const template of kitTemplatesVisiveis.value) {
       const blob = docBlobs.value[template.key]
       if (!blob) continue
-      fd.append('files', blob, `kit_${template.key}_${kitId.value}.docx`)
+      fd.append('files', blob, `${baseNomeDownloadDoc(template.key)}.docx`)
     }
-    fd.append('filename', `kit_completo_${kitId.value}`)
+    fd.append('filename', baseNomeKitCompleto())
 
     const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
     })
 
-    triggerBlobDownload(data as Blob, `kit_completo_${kitId.value}.pdf`)
+    triggerBlobDownload(data as Blob, `${baseNomeKitCompleto()}.pdf`)
     showSuccess('PDF único gerado com sucesso!')
   } catch (e: any) {
     console.error('Erro ao gerar PDF único:', e)
@@ -1134,7 +1162,7 @@ async function downloadAllDoc () {
     for (const template of kitTemplatesVisiveis.value) {
       const blob = docBlobs.value[template.key]
       if (!blob) continue
-      fd.append('files', blob, `kit_${template.key}_${kitId.value}.docx`)
+      fd.append('files', blob, `${baseNomeDownloadDoc(template.key)}.docx`)
     }
 
     const { data } = await api.post('/api/templates/compose/', fd, {
@@ -1142,7 +1170,7 @@ async function downloadAllDoc () {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
 
-    triggerBlobDownload(data as Blob, `kit_completo_${kitId.value}.docx`)
+    triggerBlobDownload(data as Blob, `${baseNomeKitCompleto()}.docx`)
     showSuccess('DOCX único gerado com sucesso!')
   } catch (e: any) {
     console.error('Erro ao gerar DOCX único:', e)
@@ -1154,17 +1182,52 @@ async function downloadAllDoc () {
 
 // ── Procuração especial: uma página por ação, tudo num único doc ──
 
+/** Tarifa / seguro / contribuição: texto que entra entre parênteses na frase da procuração. */
+function detalheBrutoProcuracao (acao: KitAcao): string {
+  if (acao.tipoAcao === 'tarifa_bancaria') return resolveTarifaQuestionada(acao)
+  if (acao.tipoAcao === 'seguro_nao_autorizado') return (acao.tipoSeguro || '').trim()
+  if (acao.tipoAcao === 'contribuicao_sindical_nao_autorizada') return (acao.tipoContribuicao || '').trim()
+  return ''
+}
+
+/** Detalhe em minúsculas para uso em "( mora cartão de crédito )" no Jinja. */
+function formatarDetalheProcuracao (raw: string): string {
+  if (!raw?.trim()) return ''
+  return raw
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+/**
+ * Frase quando não há número de contrato: "de Tarifa Bancária (mora cartão de crédito) em face do BRADESCO".
+ * Se não houver detalhe, omite os parênteses.
+ */
+function fraseProcuracaoSemContrato (tipoLabel: string, detalheFormatado: string, bancoUpper: string): string {
+  const banco = bancoUpper.toUpperCase()
+  if (detalheFormatado) {
+    return ` de ${detalheFormatado}`
+  }
+  return ''
+}
+
 async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, any>> {
   const base = await montarContexto()
   const bancoNome = (acao.nomeBanco === 'Outro' ? acao.bancoOutro : acao.nomeBanco).toUpperCase()
   const tipoLabel = TIPOS_ACAO.find(t => t.value === acao.tipoAcao)?.label || acao.tipoAcao
+  const usaContrato = TIPOS_COM_CONTRATO.includes(acao.tipoAcao as TipoAcao)
+  const procuracao_detalhe_tipo = usaContrato ? '' : formatarDetalheProcuracao(detalheBrutoProcuracao(acao))
   return {
     ...base,
     bancos: bancoNome,
     tipos_acao: tipoLabel,
     tarifa_questionada: resolveTarifaQuestionada(acao),
     instituicao_re: bancoNome,
-    contrato_acao: acao.numeroContrato,
+    contrato_acao: `contrato nº ${acao.numeroContrato}`,
+    procuracao_usa_numero_contrato: usaContrato,
+    procuracao_detalhe_tipo,
+    procuracao_frase_acao: usaContrato
+      ? ''
+      : fraseProcuracaoSemContrato(tipoLabel, procuracao_detalhe_tipo, bancoNome),
   }
 }
 
@@ -1184,7 +1247,7 @@ async function fetchProcuracaoMultipla () {
       const context = await montarContextoProcuracao(acao)
       const result = await templatesStore.render(procuracaoTemplateId.value, {
         context,
-        filename: `kit_procuracao_${kitId.value}`,
+        filename: baseNomeDownloadDoc('procuracao'),
       })
       blobs.push(result.blob)
     }
