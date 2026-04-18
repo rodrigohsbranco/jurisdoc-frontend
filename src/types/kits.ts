@@ -1,3 +1,5 @@
+export type KitTipo = 'bancario' | 'previdenciario'
+
 export type KitStatus = 'rascunho' | 'acoes' | 'finalizado' | 'assinado'
 
 export type KitEtapa = 'cliente' | 'acoes' | 'kit-final'
@@ -95,6 +97,7 @@ export type KitAcao = {
 
 export type Kit = {
   id: number
+  tipo: KitTipo
   status: KitStatus
   cadastro: KitCadastro
   acoes: KitAcao[]
@@ -103,6 +106,11 @@ export type Kit = {
 }
 
 // --- Constantes ---
+
+export const TIPOS_KIT: { value: KitTipo; label: string }[] = [
+  { value: 'bancario', label: 'Bancário' },
+  { value: 'previdenciario', label: 'Previdenciário' },
+]
 
 export const TIPOS_ACAO: { value: TipoAcao; label: string }[] = [
   { value: 'cartao_credito_consignado', label: 'Cartão de Crédito Consignado' },

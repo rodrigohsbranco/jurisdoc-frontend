@@ -1,8 +1,9 @@
 import api, { fetchAllPages, type PaginatedResponse } from '@/services/api'
-import type { KitAcao, KitStatus, UploadedDoc } from '@/types/kits'
+import type { KitAcao, KitStatus, KitTipo, UploadedDoc } from '@/types/kits'
 
 export interface KitListItem {
   id: number
+  tipo: KitTipo
   cliente: number
   cliente_nome: string
   cliente_cpf: string
@@ -16,6 +17,7 @@ export interface KitListItem {
 
 export interface KitDetail {
   id: number
+  tipo: KitTipo
   cliente: number
   cliente_detail: Record<string, any>
   criado_por: number
@@ -83,8 +85,8 @@ export async function getKit (id: number): Promise<KitDetail> {
   return data
 }
 
-export async function createKit (clienteId: number): Promise<KitDetail> {
-  const { data } = await api.post<KitDetail>(BASE, { cliente: clienteId })
+export async function createKit (clienteId: number, tipo: KitTipo = 'bancario'): Promise<KitDetail> {
+  const { data } = await api.post<KitDetail>(BASE, { cliente: clienteId, tipo })
   return data
 }
 

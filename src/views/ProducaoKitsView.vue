@@ -3,10 +3,12 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useKitsStore } from '@/stores/kits'
 import { useAuthStore } from '@/stores/auth'
 import { listUsers, type User } from '@/services/users'
+import type { KitTipo } from '@/types/kits'
 
 type StatusKit = 'rascunho' | 'em_andamento' | 'pend_assinatura' | 'assinado'
 type KitItem = {
   id: number
+  tipo: KitTipo
   cliente: string
   cpf: string
   status: StatusKit
@@ -14,6 +16,7 @@ type KitItem = {
 }
 
 const busca = ref('')
+const filtroTipo = ref<string | null>(null)
 const filtroStatus = ref<string | null>(null)
 const filtroCriadoPor = ref<number | null>(null)
 const usuarios = ref<User[]>([])
@@ -21,6 +24,11 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 const kitsStore = useKitsStore()
 const authStore = useAuthStore()
+
+const tipoOptions = [
+  { title: 'Bancário', value: 'bancario' },
+  { title: 'Previdenciário', value: 'previdenciario' },
+]
 
 const statusOptions = [
   { title: 'Rascunho', value: 'rascunho' },
@@ -40,6 +48,7 @@ function buildParams () {
   const params: Record<string, any> = {}
   const q = busca.value.trim()
   if (q) params.search = q
+  if (filtroTipo.value) params.tipo = filtroTipo.value
   if (filtroStatus.value) params.status = filtroStatus.value
   if (filtroCriadoPor.value) params.criado_por = filtroCriadoPor.value
   return params
@@ -62,19 +71,43 @@ watch(busca, () => {
   }, 400)
 })
 
-watch([filtroStatus, filtroCriadoPor], () => {
+watch([filtroTipo, filtroStatus, filtroCriadoPor], () => {
   kitsStore.currentPage = 1
   carregarPagina()
 })
+
+const pageSizeOptions = [8, 10, 25, 50, 100]
 
 function onPageChange (page: number) {
   kitsStore.currentPage = page
   carregarPagina()
 }
 
+function onPageSizeChange (size: number) {
+  kitsStore.pageSize = size
+  kitsStore.currentPage = 1
+  carregarPagina()
+}
+
+const rangeText = computed(() => {
+  const start = (kitsStore.currentPage - 1) * kitsStore.pageSize + 1
+  const end = Math.min(kitsStore.currentPage * kitsStore.pageSize, kitsStore.totalItems)
+  return `${start}–${end} de ${kitsStore.totalItems}`
+})
+
+const labelsTipo: Record<KitTipo, string> = {
+  bancario: 'Bancário',
+  previdenciario: 'Previdenciário',
+}
+
+function tipoColor (tipo: KitTipo) {
+  return tipo === 'previdenciario' ? 'purple' : 'secondary'
+}
+
 const kitsFormatted = computed(() =>
   kitsStore.items.map(k => ({
     id: k.id,
+    tipo: k.tipo || 'bancario',
     cliente: k.cliente_nome || 'Cliente sem nome',
     cpf: k.cliente_cpf || '---',
     status: k.status === 'acoes'
@@ -185,7 +218,20 @@ onUnmounted(() => {
           variant="outlined"
         />
       </v-col>
-      <v-col cols="6" md="3">
+      <v-col cols="6" md="2">
+        <v-select
+          v-model="filtroTipo"
+          clearable
+          density="comfortable"
+          hide-details
+          :items="tipoOptions"
+          label="Tipo"
+          prepend-inner-icon="mdi-tag-outline"
+          rounded="sm"
+          variant="outlined"
+        />
+      </v-col>
+      <v-col cols="6" md="2">
         <v-select
           v-model="filtroStatus"
           clearable
@@ -239,6 +285,14 @@ onUnmounted(() => {
         </div>
         <v-spacer />
         <v-chip
+          class="mr-2"
+          :color="tipoColor(kit.tipo)"
+          size="small"
+          variant="tonal"
+        >
+          {{ labelsTipo[kit.tipo] }}
+        </v-chip>
+        <v-chip
           v-if="authStore.isAdmin && kit.criadoPorNome"
           class="mr-2"
           color="info"
@@ -255,12 +309,29 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <div v-if="kitsStore.totalPages > 1" class="d-flex justify-center mt-4">
+    <div v-if="kitsStore.totalItems > 0" class="pagination-bar mt-5 d-flex align-center flex-wrap ga-3">
+      <span class="text-body-2 text-medium-emphasis">{{ rangeText }}</span>
+      <v-spacer />
+      <div class="d-flex align-center ga-2">
+        <span class="text-body-2 text-medium-emphasis">Linhas por página:</span>
+        <v-select
+          :model-value="kitsStore.pageSize"
+          density="compact"
+          hide-details
+          :items="pageSizeOptions"
+          style="max-width: 80px"
+          variant="outlined"
+          @update:model-value="onPageSizeChange"
+        />
+      </div>
       <v-pagination
+        v-if="kitsStore.totalPages > 1"
         :length="kitsStore.totalPages"
         :model-value="kitsStore.currentPage"
+        density="comfortable"
         rounded="sm"
         size="small"
+        :total-visible="5"
         @update:model-value="onPageChange"
       />
     </div>

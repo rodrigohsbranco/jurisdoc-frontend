@@ -21,7 +21,7 @@ import {
 import api from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
 import { formatCPF, formatCEP } from '@/utils/formatters'
-import type { KitAcao, KitCadastro, KitStatus } from '@/types/kits'
+import type { KitAcao, KitCadastro, KitStatus, KitTipo } from '@/types/kits'
 import { emptyCadastro, emptyAcao } from '@/types/kits'
 
 export const useKitsStore = defineStore('kits', {
@@ -29,7 +29,7 @@ export const useKitsStore = defineStore('kits', {
     items: [] as KitListItem[],
     totalItems: 0,
     currentPage: 1,
-    pageSize: 10,
+    pageSize: 8,
     stats: { total: 0, rascunho: 0, em_andamento: 0, pendentes: 0, assinados: 0 } as KitStats,
     loading: false,
     error: '' as string,
@@ -75,10 +75,10 @@ export const useKitsStore = defineStore('kits', {
       }
     },
 
-    async createDraft (clienteId: number): Promise<KitDetail> {
+    async createDraft (clienteId: number, tipo: KitTipo = 'bancario'): Promise<KitDetail> {
       this.error = ''
       try {
-        const created = await createKit(clienteId)
+        const created = await createKit(clienteId, tipo)
         await Promise.all([this.fetchList(), this.fetchStats()])
         return created
       } catch (e: any) {

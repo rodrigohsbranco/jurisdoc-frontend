@@ -18,6 +18,7 @@ import {
   TARIFAS,
   TIPOS_ACAO,
   TIPOS_COM_CONTRATO,
+  TIPOS_KIT,
   UF_LIST,
   emptyAcao,
   emptyCadastro,
@@ -25,6 +26,7 @@ import {
   type KitAcao,
   type KitCadastro,
   type KitEtapa,
+  type KitTipo,
   type TipoAcao,
 } from '@/types/kits'
 
@@ -37,6 +39,7 @@ const kitsStore = useKitsStore()
 const kitId = computed(() => Number(route.params.id || 0))
 const isEditMode = computed(() => !!kitId.value)
 const saving = ref(false)
+const tipoKit = ref<KitTipo>('bancario')
 const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
@@ -1323,7 +1326,7 @@ async function avancarComPersistencia () {
 
       if (!isEditMode.value) {
         savingMessage.value = 'Salvando rascunho do kit...'
-        const created = await kitsStore.createDraft(clienteId.value)
+        const created = await kitsStore.createDraft(clienteId.value, tipoKit.value)
         // Redireciona para editar já na aba de ações
         await router.replace({
           name: 'producao-kits-editar',
@@ -1406,7 +1409,7 @@ onMounted(async () => {
   const kit = await kitsStore.getDetail(kitId.value)
   if (!kit) return
 
-  // Preencher dados do cliente
+  tipoKit.value = kit.tipo || 'bancario'
   clienteId.value = kit.cliente
   clienteEncontrado.value = true
   if (kit.cliente_detail) {
@@ -1481,6 +1484,26 @@ onMounted(async () => {
 
             <!-- ═══════════════ STEP 1: CLIENTE ═══════════════ -->
             <v-window-item value="cliente">
+
+              <!-- Tipo do Kit -->
+              <h2 class="section-title">Tipo do Kit</h2>
+              <v-divider class="mb-5" />
+              <v-row dense class="mb-6">
+                <v-col cols="12" md="4">
+                  <v-select
+                    v-model="tipoKit"
+                    :disabled="isEditMode"
+                    density="compact"
+                    hide-details
+                    :items="TIPOS_KIT"
+                    item-title="label"
+                    item-value="value"
+                    label="Tipo do Kit"
+                    prepend-inner-icon="mdi-tag-outline"
+                    variant="outlined"
+                  />
+                </v-col>
+              </v-row>
 
               <!-- Busca de cliente por CPF (só para novo kit) -->
               <template v-if="!isEditMode && !clienteEncontrado">
