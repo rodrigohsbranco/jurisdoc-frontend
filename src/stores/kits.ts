@@ -7,6 +7,7 @@ import {
   deleteAcao,
   deleteKit,
   finalizarKit,
+  fetchKitStats,
   getKit,
   listKits,
   mudarStatus,
@@ -15,6 +16,7 @@ import {
   type AcaoAPI,
   type KitDetail,
   type KitListItem,
+  type KitStats,
 } from '@/services/kits'
 import api from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
@@ -25,19 +27,17 @@ import { emptyCadastro, emptyAcao } from '@/types/kits'
 export const useKitsStore = defineStore('kits', {
   state: () => ({
     items: [] as KitListItem[],
+    totalItems: 0,
+    currentPage: 1,
+    pageSize: 10,
+    stats: { total: 0, rascunho: 0, em_andamento: 0, pendentes: 0, assinados: 0 } as KitStats,
     loading: false,
     error: '' as string,
   }),
 
   getters: {
     byId: state => (id: number) => state.items.find(k => k.id === id) || null,
-    stats: state => {
-      const total = state.items.length
-      const emAndamento = state.items.filter(k => k.status === 'acoes').length
-      const pendentes = state.items.filter(k => k.status === 'finalizado').length
-      const assinados = state.items.filter(k => k.status === 'assinado').length
-      return { total, emAndamento, pendentes, assinados }
-    },
+    totalPages: state => Math.ceil(state.totalItems / state.pageSize),
   },
 
   actions: {
@@ -45,12 +45,24 @@ export const useKitsStore = defineStore('kits', {
       this.loading = true
       this.error = ''
       try {
-        this.items = await listKits(params)
+        const res = await listKits({
+          page: this.currentPage,
+          page_size: this.pageSize,
+          ...params,
+        })
+        this.items = res.results
+        this.totalItems = res.count
       } catch (e: any) {
         this.error = friendlyError(e)
       } finally {
         this.loading = false
       }
+    },
+
+    async fetchStats () {
+      try {
+        this.stats = await fetchKitStats()
+      } catch { /* silencioso */ }
     },
 
     async getDetail (id: number): Promise<KitDetail | null> {
@@ -67,7 +79,7 @@ export const useKitsStore = defineStore('kits', {
       this.error = ''
       try {
         const created = await createKit(clienteId)
-        await this.fetchList()
+        await Promise.all([this.fetchList(), this.fetchStats()])
         return created
       } catch (e: any) {
         this.error = friendlyError(e)
@@ -116,7 +128,7 @@ export const useKitsStore = defineStore('kits', {
         if (currentKit?.status === 'rascunho') {
           await mudarStatus(kitId, 'acoes')
         }
-        await this.fetchList()
+        await Promise.all([this.fetchList(), this.fetchStats()])
         return saved
       } catch (e: any) {
         this.error = friendlyError(e)
@@ -128,7 +140,7 @@ export const useKitsStore = defineStore('kits', {
       this.error = ''
       try {
         const result = await finalizarKit(id)
-        await this.fetchList()
+        await Promise.all([this.fetchList(), this.fetchStats()])
         return result
       } catch (e: any) {
         this.error = friendlyError(e)
@@ -140,7 +152,7 @@ export const useKitsStore = defineStore('kits', {
       this.error = ''
       try {
         const result = await assinarKit(id)
-        await this.fetchList()
+        await Promise.all([this.fetchList(), this.fetchStats()])
         return result
       } catch (e: any) {
         this.error = friendlyError(e)
@@ -153,6 +165,8 @@ export const useKitsStore = defineStore('kits', {
       try {
         await deleteKit(id)
         this.items = this.items.filter(k => k.id !== id)
+        this.totalItems = Math.max(0, this.totalItems - 1)
+        this.fetchStats()
       } catch (e: any) {
         this.error = friendlyError(e)
         throw e

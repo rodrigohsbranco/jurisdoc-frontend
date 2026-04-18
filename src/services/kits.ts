@@ -1,4 +1,4 @@
-import api, { fetchAllPages } from '@/services/api'
+import api, { fetchAllPages, type PaginatedResponse } from '@/services/api'
 import type { KitAcao, KitStatus, UploadedDoc } from '@/types/kits'
 
 export interface KitListItem {
@@ -56,8 +56,26 @@ export interface DocumentoAPI {
 
 const BASE = '/api/kits/'
 
-export async function listKits (params?: Record<string, any>): Promise<KitListItem[]> {
+export interface KitStats {
+  total: number
+  rascunho: number
+  em_andamento: number
+  pendentes: number
+  assinados: number
+}
+
+export async function listKits (params?: Record<string, any>): Promise<PaginatedResponse<KitListItem>> {
+  const { data } = await api.get<PaginatedResponse<KitListItem>>(BASE, { params })
+  return data
+}
+
+export async function listAllKits (params?: Record<string, any>): Promise<KitListItem[]> {
   return fetchAllPages<KitListItem>(BASE, { params })
+}
+
+export async function fetchKitStats (): Promise<KitStats> {
+  const { data } = await api.get<KitStats>(`${BASE}stats/`)
+  return data
 }
 
 export async function getKit (id: number): Promise<KitDetail> {

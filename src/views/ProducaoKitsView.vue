@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useKitsStore } from '@/stores/kits'
 import { useAuthStore } from '@/stores/auth'
 import { listUsers, type User } from '@/services/users'
@@ -14,22 +14,20 @@ type KitItem = {
 }
 
 const busca = ref('')
+const filtroStatus = ref<string | null>(null)
+const filtroCriadoPor = ref<number | null>(null)
+const usuarios = ref<User[]>([])
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
 const kitsStore = useKitsStore()
 const authStore = useAuthStore()
 
-const usuarios = ref<User[]>([])
-const filtroCriadoPor = ref<number | null>(null)
-
-async function carregarUsuarios () {
-  if (!authStore.isAdmin) return
-  usuarios.value = await listUsers({})
-}
-
-watch(filtroCriadoPor, async () => {
-  const params: Record<string, any> = {}
-  if (filtroCriadoPor.value) params.criado_por = filtroCriadoPor.value
-  await kitsStore.fetchList(params)
-})
+const statusOptions = [
+  { title: 'Rascunho', value: 'rascunho' },
+  { title: 'Em andamento', value: 'acoes' },
+  { title: 'Pend. assinatura', value: 'finalizado' },
+  { title: 'Assinado', value: 'assinado' },
+]
 
 const labelsStatus: Record<StatusKit, string> = {
   rascunho: 'Rascunho',
@@ -38,8 +36,44 @@ const labelsStatus: Record<StatusKit, string> = {
   assinado: 'Assinado',
 }
 
-const filteredKits = computed(() => {
-  const kits = kitsStore.items.map(k => ({
+function buildParams () {
+  const params: Record<string, any> = {}
+  const q = busca.value.trim()
+  if (q) params.search = q
+  if (filtroStatus.value) params.status = filtroStatus.value
+  if (filtroCriadoPor.value) params.criado_por = filtroCriadoPor.value
+  return params
+}
+
+async function carregarPagina () {
+  await kitsStore.fetchList(buildParams())
+}
+
+async function carregarUsuarios () {
+  if (!authStore.isAdmin) return
+  usuarios.value = await listUsers({})
+}
+
+watch(busca, () => {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    kitsStore.currentPage = 1
+    carregarPagina()
+  }, 400)
+})
+
+watch([filtroStatus, filtroCriadoPor], () => {
+  kitsStore.currentPage = 1
+  carregarPagina()
+})
+
+function onPageChange (page: number) {
+  kitsStore.currentPage = page
+  carregarPagina()
+}
+
+const kitsFormatted = computed(() =>
+  kitsStore.items.map(k => ({
     id: k.id,
     cliente: k.cliente_nome || 'Cliente sem nome',
     cpf: k.cliente_cpf || '---',
@@ -51,42 +85,31 @@ const filteredKits = computed(() => {
           ? 'assinado'
           : 'rascunho',
     criadoPorNome: k.criado_por_nome || '',
-  })) as KitItem[]
-  const q = busca.value.trim().toLowerCase()
-  if (!q) return kits
-  return kits.filter(kit =>
-    kit.cliente.toLowerCase().includes(q) ||
-    kit.cpf.toLowerCase().includes(q),
-  )
-})
-
-const totalClientes = computed(() => kitsStore.stats.total)
-const totalEmAndamento = computed(() => kitsStore.stats.emAndamento)
-const totalPendAssinatura = computed(() => kitsStore.stats.pendentes)
-const totalAssinados = computed(() => kitsStore.stats.assinados)
+  })) as KitItem[],
+)
 
 const statCards = computed(() => [
   {
     label: 'Total de clientes',
-    value: totalClientes.value,
+    value: kitsStore.stats.total,
     icon: 'mdi-account-group-outline',
     tone: 'blue',
   },
   {
     label: 'Em andamento',
-    value: totalEmAndamento.value,
+    value: kitsStore.stats.em_andamento,
     icon: 'mdi-file-document-edit-outline',
     tone: 'amber',
   },
   {
     label: 'Pend. assinatura',
-    value: totalPendAssinatura.value,
+    value: kitsStore.stats.pendentes,
     icon: 'mdi-pencil-outline',
     tone: 'amber-soft',
   },
   {
     label: 'Assinados',
-    value: totalAssinados.value,
+    value: kitsStore.stats.assinados,
     icon: 'mdi-scale-balance',
     tone: 'green',
   },
@@ -110,9 +133,14 @@ function iniciais (nome: string) {
 
 onMounted(async () => {
   await Promise.all([
-    kitsStore.fetchList(),
+    carregarPagina(),
+    kitsStore.fetchStats(),
     carregarUsuarios(),
   ])
+})
+
+onUnmounted(() => {
+  if (debounceTimer) clearTimeout(debounceTimer)
 })
 </script>
 
@@ -146,7 +174,7 @@ onMounted(async () => {
     </v-row>
 
     <v-row class="mt-2 mb-5" dense>
-      <v-col :cols="authStore.isAdmin ? 8 : 12" md>
+      <v-col cols="12" md>
         <v-text-field
           v-model="busca"
           density="comfortable"
@@ -157,7 +185,20 @@ onMounted(async () => {
           variant="outlined"
         />
       </v-col>
-      <v-col v-if="authStore.isAdmin" cols="4" md="3">
+      <v-col cols="6" md="3">
+        <v-select
+          v-model="filtroStatus"
+          clearable
+          density="comfortable"
+          hide-details
+          :items="statusOptions"
+          label="Status"
+          prepend-inner-icon="mdi-filter-outline"
+          rounded="sm"
+          variant="outlined"
+        />
+      </v-col>
+      <v-col v-if="authStore.isAdmin" cols="6" md="3">
         <v-select
           v-model="filtroCriadoPor"
           clearable
@@ -178,12 +219,12 @@ onMounted(async () => {
       <v-progress-circular indeterminate />
     </div>
 
-    <v-alert v-else-if="filteredKits.length === 0" class="mb-4" color="info" icon="mdi-information-outline" variant="tonal">
-      Nenhum kit cadastrado. Clique em "Novo Kit" para começar.
+    <v-alert v-else-if="kitsFormatted.length === 0" class="mb-4" color="info" icon="mdi-information-outline" variant="tonal">
+      Nenhum kit encontrado.
     </v-alert>
 
     <v-card
-      v-for="kit in filteredKits"
+      v-for="kit in kitsFormatted"
       :key="kit.id"
       class="kit-row mb-3"
       rounded="sm"
@@ -213,6 +254,16 @@ onMounted(async () => {
         <v-icon color="medium-emphasis" icon="mdi-chevron-right" />
       </v-card-text>
     </v-card>
+
+    <div v-if="kitsStore.totalPages > 1" class="d-flex justify-center mt-4">
+      <v-pagination
+        :length="kitsStore.totalPages"
+        :model-value="kitsStore.currentPage"
+        rounded="sm"
+        size="small"
+        @update:model-value="onPageChange"
+      />
+    </div>
   </v-container>
 </template>
 
