@@ -41,11 +41,11 @@ export const useKitsStore = defineStore('kits', {
   },
 
   actions: {
-    async fetchList () {
+    async fetchList (params?: Record<string, any>) {
       this.loading = true
       this.error = ''
       try {
-        this.items = await listKits()
+        this.items = await listKits(params)
       } catch (e: any) {
         this.error = friendlyError(e)
       } finally {

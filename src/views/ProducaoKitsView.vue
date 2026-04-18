@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useKitsStore } from '@/stores/kits'
+import { useAuthStore } from '@/stores/auth'
+import { listUsers, type User } from '@/services/users'
 
 type StatusKit = 'rascunho' | 'em_andamento' | 'pend_assinatura' | 'assinado'
 type KitItem = {
@@ -8,10 +10,26 @@ type KitItem = {
   cliente: string
   cpf: string
   status: StatusKit
+  criadoPorNome: string
 }
 
 const busca = ref('')
 const kitsStore = useKitsStore()
+const authStore = useAuthStore()
+
+const usuarios = ref<User[]>([])
+const filtroCriadoPor = ref<number | null>(null)
+
+async function carregarUsuarios () {
+  if (!authStore.isAdmin) return
+  usuarios.value = await listUsers({})
+}
+
+watch(filtroCriadoPor, async () => {
+  const params: Record<string, any> = {}
+  if (filtroCriadoPor.value) params.criado_por = filtroCriadoPor.value
+  await kitsStore.fetchList(params)
+})
 
 const labelsStatus: Record<StatusKit, string> = {
   rascunho: 'Rascunho',
@@ -32,6 +50,7 @@ const filteredKits = computed(() => {
         : k.status === 'assinado'
           ? 'assinado'
           : 'rascunho',
+    criadoPorNome: k.criado_por_nome || '',
   })) as KitItem[]
   const q = busca.value.trim().toLowerCase()
   if (!q) return kits
@@ -90,7 +109,10 @@ function iniciais (nome: string) {
 }
 
 onMounted(async () => {
-  await kitsStore.fetchList()
+  await Promise.all([
+    kitsStore.fetchList(),
+    carregarUsuarios(),
+  ])
 })
 </script>
 
@@ -123,16 +145,34 @@ onMounted(async () => {
       </v-col>
     </v-row>
 
-    <v-text-field
-      v-model="busca"
-      class="mt-2 mb-5"
-      density="comfortable"
-      hide-details
-      placeholder="Buscar por nome ou CPF..."
-      prepend-inner-icon="mdi-magnify"
-      rounded="sm"
-      variant="outlined"
-    />
+    <v-row class="mt-2 mb-5" dense>
+      <v-col :cols="authStore.isAdmin ? 8 : 12" md>
+        <v-text-field
+          v-model="busca"
+          density="comfortable"
+          hide-details
+          placeholder="Buscar por nome ou CPF..."
+          prepend-inner-icon="mdi-magnify"
+          rounded="sm"
+          variant="outlined"
+        />
+      </v-col>
+      <v-col v-if="authStore.isAdmin" cols="4" md="3">
+        <v-select
+          v-model="filtroCriadoPor"
+          clearable
+          density="comfortable"
+          hide-details
+          :items="usuarios"
+          item-title="username"
+          item-value="id"
+          label="Feito por"
+          prepend-inner-icon="mdi-account-filter-outline"
+          rounded="sm"
+          variant="outlined"
+        />
+      </v-col>
+    </v-row>
 
     <div v-if="kitsStore.loading" class="text-center py-8">
       <v-progress-circular indeterminate />
@@ -157,6 +197,16 @@ onMounted(async () => {
           <div class="text-caption text-medium-emphasis">{{ kit.cpf }}</div>
         </div>
         <v-spacer />
+        <v-chip
+          v-if="authStore.isAdmin && kit.criadoPorNome"
+          class="mr-2"
+          color="info"
+          prepend-icon="mdi-account-outline"
+          size="small"
+          variant="tonal"
+        >
+          {{ kit.criadoPorNome }}
+        </v-chip>
         <v-chip class="mr-2" :color="statusColor(kit.status)" size="small" variant="tonal">
           {{ labelsStatus[kit.status] }}
         </v-chip>

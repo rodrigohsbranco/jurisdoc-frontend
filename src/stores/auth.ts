@@ -77,6 +77,10 @@ export const useAuthStore = defineStore("auth", {
 
   getters: {
     isAuthenticated: (s) => !!s.accessToken,
+    isAdmin: (s) => {
+      const payload = decodeJwt(s.accessToken)
+      return !!payload?.is_admin
+    },
   },
 
   actions: {
