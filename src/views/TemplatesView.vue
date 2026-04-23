@@ -5,13 +5,14 @@ import {
   type TemplateItem,
   useTemplatesStore,
 } from "@/stores/templates";
+import api from "@/services/api";
 import { useSnackbar } from "@/composables/useSnackbar";
 import { friendlyError } from "@/utils/errorMessages";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SidePanel from "@/components/SidePanel.vue";
 
 const templates = useTemplatesStore();
-const { showSuccess } = useSnackbar();
+const { showSuccess, showError } = useSnackbar();
 
 // Confirm dialog
 const confirmVisible = ref(false);
@@ -134,12 +135,18 @@ function onPickFile(e: Event) {
 // =============================
 // Remover
 // =============================
-function downloadTemplate(item: TemplateItem) {
-  if (!item.file) return
-  const a = document.createElement('a')
-  a.href = item.file
-  a.download = `${item.name}.docx`
-  a.click()
+async function downloadTemplate(item: TemplateItem) {
+  try {
+    const { data } = await api.get(`/api/templates/${item.id}/download/`, { responseType: 'blob' })
+    const url = URL.createObjectURL(data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${item.name}.docx`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    showError('Erro ao baixar template')
+  }
 }
 
 async function removeTemplate(item: TemplateItem) {
