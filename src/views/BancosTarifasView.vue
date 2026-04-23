@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useSnackbar } from '@/composables/useSnackbar'
 import {
   listBancos, createBanco, updateBanco, deleteBanco,
@@ -11,6 +11,7 @@ const { showSuccess, showError } = useSnackbar()
 
 const tab = ref('bancos')
 const loading = ref(false)
+const pageSizeOptions = [8, 10, 25, 50]
 
 // ── Bancos ──
 const bancos = ref<BancoKit[]>([])
@@ -19,6 +20,30 @@ const bancoEditing = ref<BancoKit | null>(null)
 const bancoForm = ref({ nome: '', ativo: true, ordem: 0 })
 const bancoConfirmDelete = ref(false)
 const bancoToDelete = ref<BancoKit | null>(null)
+const bancoPage = ref(1)
+const bancoPageSize = ref(8)
+const bancoBusca = ref('')
+
+const bancosFiltrados = computed(() => {
+  const q = bancoBusca.value.trim().toLowerCase()
+  if (!q) return bancos.value
+  return bancos.value.filter(b => b.nome.toLowerCase().includes(q))
+})
+
+const bancosTotalPages = computed(() => Math.ceil(bancosFiltrados.value.length / bancoPageSize.value))
+
+const bancosPaginados = computed(() => {
+  const start = (bancoPage.value - 1) * bancoPageSize.value
+  return bancosFiltrados.value.slice(start, start + bancoPageSize.value)
+})
+
+const bancosRange = computed(() => {
+  const total = bancosFiltrados.value.length
+  if (!total) return '0 registros'
+  const start = (bancoPage.value - 1) * bancoPageSize.value + 1
+  const end = Math.min(bancoPage.value * bancoPageSize.value, total)
+  return `${start}–${end} de ${total}`
+})
 
 async function fetchBancos () {
   loading.value = true
@@ -75,6 +100,30 @@ const tarifaEditing = ref<TarifaKit | null>(null)
 const tarifaForm = ref({ nome: '', ativo: true, ordem: 0 })
 const tarifaConfirmDelete = ref(false)
 const tarifaToDelete = ref<TarifaKit | null>(null)
+const tarifaPage = ref(1)
+const tarifaPageSize = ref(8)
+const tarifaBusca = ref('')
+
+const tarifasFiltradas = computed(() => {
+  const q = tarifaBusca.value.trim().toLowerCase()
+  if (!q) return tarifas.value
+  return tarifas.value.filter(t => t.nome.toLowerCase().includes(q))
+})
+
+const tarifasTotalPages = computed(() => Math.ceil(tarifasFiltradas.value.length / tarifaPageSize.value))
+
+const tarifasPaginadas = computed(() => {
+  const start = (tarifaPage.value - 1) * tarifaPageSize.value
+  return tarifasFiltradas.value.slice(start, start + tarifaPageSize.value)
+})
+
+const tarifasRange = computed(() => {
+  const total = tarifasFiltradas.value.length
+  if (!total) return '0 registros'
+  const start = (tarifaPage.value - 1) * tarifaPageSize.value + 1
+  const end = Math.min(tarifaPage.value * tarifaPageSize.value, total)
+  return `${start}–${end} de ${total}`
+})
 
 async function fetchTarifas () {
   loading.value = true
@@ -146,11 +195,24 @@ onMounted(async () => {
     <v-window v-model="tab" class="mt-4">
       <!-- ═══ BANCOS ═══ -->
       <v-window-item value="bancos">
-        <div class="d-flex justify-end mb-3">
-          <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openBancoDialog()">
-            Novo Banco
-          </v-btn>
-        </div>
+        <v-row class="mb-3" dense>
+          <v-col cols="12" md>
+            <v-text-field
+              v-model="bancoBusca"
+              density="compact"
+              hide-details
+              placeholder="Buscar banco..."
+              prepend-inner-icon="mdi-magnify"
+              variant="outlined"
+              @update:model-value="bancoPage = 1"
+            />
+          </v-col>
+          <v-col cols="auto">
+            <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openBancoDialog()">
+              Novo Banco
+            </v-btn>
+          </v-col>
+        </v-row>
 
         <v-progress-linear v-if="loading" indeterminate class="mb-3" />
 
@@ -164,10 +226,10 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-if="bancos.length === 0">
-              <td colspan="4" class="text-center text-medium-emphasis py-6">Nenhum banco cadastrado</td>
+            <tr v-if="bancosPaginados.length === 0">
+              <td colspan="4" class="text-center text-medium-emphasis py-6">Nenhum banco encontrado</td>
             </tr>
-            <tr v-for="banco in bancos" :key="banco.id">
+            <tr v-for="banco in bancosPaginados" :key="banco.id">
               <td>{{ banco.nome }}</td>
               <td class="text-center">{{ banco.ordem }}</td>
               <td class="text-center">
@@ -182,15 +244,54 @@ onMounted(async () => {
             </tr>
           </tbody>
         </v-table>
+
+        <div v-if="bancosFiltrados.length > 0" class="pagination-bar mt-4 d-flex align-center flex-wrap ga-3">
+          <span class="text-body-2 text-medium-emphasis">{{ bancosRange }}</span>
+          <v-spacer />
+          <div class="d-flex align-center ga-2">
+            <span class="text-body-2 text-medium-emphasis">Linhas por página:</span>
+            <v-select
+              :model-value="bancoPageSize"
+              density="compact"
+              hide-details
+              :items="pageSizeOptions"
+              style="max-width: 80px"
+              variant="outlined"
+              @update:model-value="bancoPageSize = $event; bancoPage = 1"
+            />
+          </div>
+          <v-pagination
+            v-if="bancosTotalPages > 1"
+            v-model="bancoPage"
+            density="comfortable"
+            :length="bancosTotalPages"
+            rounded="sm"
+            size="small"
+            :total-visible="5"
+          />
+        </div>
       </v-window-item>
 
       <!-- ═══ TARIFAS ═══ -->
       <v-window-item value="tarifas">
-        <div class="d-flex justify-end mb-3">
-          <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openTarifaDialog()">
-            Nova Tarifa
-          </v-btn>
-        </div>
+        <v-row class="mb-3" dense>
+          <v-col cols="12" md>
+            <v-text-field
+              v-model="tarifaBusca"
+              density="compact"
+              hide-details
+              placeholder="Buscar tarifa..."
+              prepend-inner-icon="mdi-magnify"
+              variant="outlined"
+              @update:model-value="tarifaPage = 1"
+            />
+          </v-col>
+          <v-col cols="auto">
+            <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openTarifaDialog()">
+              Nova Tarifa
+            </v-btn>
+          </v-col>
+        </v-row>
 
         <v-progress-linear v-if="loading" indeterminate class="mb-3" />
 
@@ -204,10 +305,10 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-if="tarifas.length === 0">
-              <td colspan="4" class="text-center text-medium-emphasis py-6">Nenhuma tarifa cadastrada</td>
+            <tr v-if="tarifasPaginadas.length === 0">
+              <td colspan="4" class="text-center text-medium-emphasis py-6">Nenhuma tarifa encontrada</td>
             </tr>
-            <tr v-for="tarifa in tarifas" :key="tarifa.id">
+            <tr v-for="tarifa in tarifasPaginadas" :key="tarifa.id">
               <td>{{ tarifa.nome }}</td>
               <td class="text-center">{{ tarifa.ordem }}</td>
               <td class="text-center">
@@ -222,6 +323,32 @@ onMounted(async () => {
             </tr>
           </tbody>
         </v-table>
+
+        <div v-if="tarifasFiltradas.length > 0" class="pagination-bar mt-4 d-flex align-center flex-wrap ga-3">
+          <span class="text-body-2 text-medium-emphasis">{{ tarifasRange }}</span>
+          <v-spacer />
+          <div class="d-flex align-center ga-2">
+            <span class="text-body-2 text-medium-emphasis">Linhas por página:</span>
+            <v-select
+              :model-value="tarifaPageSize"
+              density="compact"
+              hide-details
+              :items="pageSizeOptions"
+              style="max-width: 80px"
+              variant="outlined"
+              @update:model-value="tarifaPageSize = $event; tarifaPage = 1"
+            />
+          </div>
+          <v-pagination
+            v-if="tarifasTotalPages > 1"
+            v-model="tarifaPage"
+            density="comfortable"
+            :length="tarifasTotalPages"
+            rounded="sm"
+            size="small"
+            :total-visible="5"
+          />
+        </div>
       </v-window-item>
     </v-window>
 
