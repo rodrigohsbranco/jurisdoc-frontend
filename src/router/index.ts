@@ -22,7 +22,7 @@ const routes: RouteRecordRaw[] = [
         path: 'usuarios',
         name: 'usuarios',
         component: () => import('../views/UsersView.vue'),
-        meta: { title: 'Usuários' },
+        meta: { title: 'Usuários', requiresAdmin: true },
       },
       {
         path: 'clientes',
@@ -79,12 +79,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Editar Kit' },
       },
       {
+        path: 'bancos-tarifas',
+        name: 'bancos-tarifas',
+        component: () => import('../views/BancosTarifasView.vue'),
+        meta: { title: 'Bancos e Tarifas', requiresAdmin: true },
+      },
+      {
         path: 'advogados',
         name: 'advogados',
         component: () => import('../views/AdvogadosView.vue'),
-        meta: { title: 'Advogados' },
+        meta: { title: 'Advogados', requiresAdmin: true },
       },
-      { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios' } },
+      { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios', requiresAdmin: true } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -124,6 +130,12 @@ router.beforeEach(async to => {
   if (!auth.isAuthenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
+
+  // rotas admin-only
+  if (to.meta?.requiresAdmin && !auth.isAdmin) {
+    return { path: '/' }
+  }
+
   return true
 })
 

@@ -6,6 +6,7 @@ import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
 import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
+import { listBancos, listTarifas } from '@/services/bancosETarifas'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useCpf } from '@/composables/useCpf'
@@ -14,8 +15,6 @@ import { onlyDigits, formatCPF } from '@/utils/formatters'
 import { friendlyError, extractFieldErrors } from '@/utils/errorMessages'
 import SidePanel from '@/components/SidePanel.vue'
 import {
-  BANCOS,
-  TARIFAS,
   TIPOS_ACAO,
   TIPOS_COM_CONTRATO,
   TIPOS_KIT,
@@ -30,9 +29,13 @@ import {
   type TipoAcao,
 } from '@/types/kits'
 
-const etapas: KitEtapa[] = ['cliente', 'acoes', 'kit-final']
 const etapaAtual = ref<KitEtapa>('cliente')
-const etapaIndex = computed(() => etapas.indexOf(etapaAtual.value))
+const etapas = computed<KitEtapa[]>(() =>
+  tipoKit.value === 'previdenciario'
+    ? ['cliente', 'kit-final']
+    : ['cliente', 'acoes', 'kit-final'],
+)
+const etapaIndex = computed(() => etapas.value.indexOf(etapaAtual.value))
 const route = useRoute()
 const router = useRouter()
 const kitsStore = useKitsStore()
@@ -44,6 +47,18 @@ const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
 const { showSuccess, showError } = useSnackbar()
+
+// Bancos e tarifas dinâmicos (do banco de dados)
+const bancosOptions = ref<string[]>([])
+const tarifasOptions = ref<string[]>([])
+
+async function carregarBancosETarifas () {
+  const [bancos, tarifas] = await Promise.all([listBancos(), listTarifas()])
+  bancosOptions.value = bancos.filter(b => b.ativo).map(b => b.nome)
+  if (!bancosOptions.value.includes('Outro')) bancosOptions.value.push('Outro')
+  tarifasOptions.value = tarifas.filter(t => t.ativo).map(t => t.nome)
+  if (!tarifasOptions.value.includes('OUTROS')) tarifasOptions.value.push('OUTROS')
+}
 
 // ── Busca de cliente por CPF ──
 const cpfBusca = ref('')
@@ -532,6 +547,7 @@ function validateCadastro (): boolean {
   if (!cad.value.nome?.trim()) e.nome = 'Campo obrigatório'
   if (!cad.value.cpf?.trim()) e.cpf = 'Campo obrigatório'
   else if (!isValidCPF(cad.value.cpf)) e.cpf = 'CPF inválido'
+  if (tipoKit.value === 'previdenciario' && !cad.value.dataNascimento) e.dataNascimento = 'Campo obrigatório para kit previdenciário'
   if (!cad.value.genero) e.genero = 'Campo obrigatório'
   if (!cad.value.nacionalidadeTipo) e.nacionalidadeTipo = 'Campo obrigatório'
   if (cad.value.nacionalidadeTipo === 'outro' && !cad.value.nacionalidade?.trim()) e.nacionalidade = 'Campo obrigatório'
@@ -651,13 +667,21 @@ const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
 
 // Templates do kit — keyword para match no nome do template no banco
-// Nomes no banco seguem padrão "Kit Contrato", "Kit Procuração", etc.
-const KIT_TEMPLATE_DEFS = [
+// Bancário: "Kit Contrato", "Kit Procuração", etc.
+// Previdenciário: "Kit Contrato Previdenciario", "Kit Procuração Previdenciário", etc.
+const KIT_TEMPLATE_DEFS_BANCARIO = [
   { key: 'contrato', label: 'Contrato', keyword: 'kit contrato' },
   { key: 'procuracao', label: 'Procuração', keyword: 'kit procuracao' },
   { key: 'hipossuficiencia', label: 'Decl. Hipossuficiência', keyword: 'kit hipossuficiencia' },
   { key: 'ciencia', label: 'Decl. Ciência', keyword: 'kit ciencia' },
   { key: 'domicilio', label: 'Decl. Domicílio', keyword: 'kit domicilio' },
+]
+
+const KIT_TEMPLATE_DEFS_PREVIDENCIARIO = [
+  { key: 'contrato', label: 'Contrato', keyword: 'kit contrato previdenciario' },
+  { key: 'procuracao', label: 'Procuração', keyword: 'kit procuracao previdenciario' },
+  { key: 'hipossuficiencia', label: 'Decl. Hipossuficiência', keyword: 'kit hipossuficiencia previdenciario' },
+  { key: 'domicilio', label: 'Decl. Domicílio', keyword: 'kit domicilio previdenciario' },
 ]
 
 // Mapeamento resolvido: key → template id (preenchido no mount)
@@ -668,13 +692,25 @@ function normalize (s: string) {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
 }
 
+function nameMatchesKeyword (name: string, keyword: string): boolean {
+  const words = keyword.split(/\s+/)
+  return words.every(w => name.includes(w))
+}
+
 async function resolveKitTemplates () {
   const allTemplates = await templatesStore.fetchAll({ active: true })
   const resolved: typeof resolvedTemplates.value = []
+  const isPrevid = tipoKit.value === 'previdenciario'
+  const defs = isPrevid ? KIT_TEMPLATE_DEFS_PREVIDENCIARIO : KIT_TEMPLATE_DEFS_BANCARIO
 
-  for (const def of KIT_TEMPLATE_DEFS) {
+  for (const def of defs) {
     const kw = normalize(def.keyword)
-    const match = allTemplates.find(t => normalize(t.name).includes(kw))
+    const match = allTemplates.find(t => {
+      const name = normalize(t.name)
+      if (!nameMatchesKeyword(name, kw)) return false
+      if (!isPrevid && name.includes('previdenciario')) return false
+      return true
+    })
     if (match) {
       resolved.push({ id: match.id, key: def.key, label: def.label })
     }
@@ -895,6 +931,7 @@ async function montarContexto (): Promise<Record<string, any>> {
   return {
     nome_cliente: c.nome.toUpperCase(),
     nacionalidade,
+    data_nascimento: c.dataNascimento ? new Date(c.dataNascimento + 'T12:00:00').toLocaleDateString('pt-BR') : '',
     estado_civil,
     profissao,
     cpf_cliente: fmtCPF(c.cpf),
@@ -979,8 +1016,9 @@ async function fetchDocBlob (templateId: number, key: string) {
     return
   }
 
-  // Procuração tem lógica especial: uma página por ação
-  if (key === 'procuracao') {
+  // Procuração bancária tem lógica especial: uma página por ação
+  // Procuração previdenciária é documento único (sem ações)
+  if (key === 'procuracao' && tipoKit.value !== 'previdenciario') {
     await fetchProcuracaoMultipla()
     return
   }
@@ -1286,6 +1324,7 @@ async function fetchProcuracaoMultipla () {
 // Busca todos os blobs quando entra no Kit Final
 watch(etapaAtual, async (val) => {
   if (val === 'kit-final' && cad.value.nome) {
+    await resolveKitTemplates()
     const promises = kitTemplatesVisiveis.value.map(t => fetchDocBlob(t.id, t.key))
     await Promise.all(promises)
     await nextTick()
@@ -1327,14 +1366,14 @@ async function avancarComPersistencia () {
       if (!isEditMode.value) {
         savingMessage.value = 'Salvando rascunho do kit...'
         const created = await kitsStore.createDraft(clienteId.value, tipoKit.value)
-        // Redireciona para editar já na aba de ações
+        const proximaEtapa = tipoKit.value === 'previdenciario' ? 'kit-final' : 'acoes'
         await router.replace({
           name: 'producao-kits-editar',
           params: { id: created.id },
-          query: { etapa: 'acoes' },
+          query: { etapa: proximaEtapa },
         })
       } else {
-        etapaAtual.value = 'acoes'
+        etapaAtual.value = tipoKit.value === 'previdenciario' ? 'kit-final' : 'acoes'
       }
     } finally {
       saving.value = false
@@ -1364,7 +1403,7 @@ async function avancarComPersistencia () {
 
 function etapaAnterior () {
   const prev = etapaIndex.value - 1
-  if (prev >= 0) etapaAtual.value = etapas[prev]
+  if (prev >= 0) etapaAtual.value = etapas.value[prev]
 }
 
 function resetSelectedCliente () {
@@ -1403,7 +1442,7 @@ async function marcarAssinado () {
 
 // ── Load existing kit ──
 onMounted(async () => {
-  await resolveKitTemplates()
+  await Promise.all([resolveKitTemplates(), carregarBancosETarifas()])
   await kitsStore.fetchList()
   if (!isEditMode.value) return
   const kit = await kitsStore.getDetail(kitId.value)
@@ -1429,10 +1468,15 @@ onMounted(async () => {
 
   // Ir para a etapa correta: query param tem prioridade, senão usa o status
   const etapaQuery = route.query.etapa as string | undefined
-  if (etapaQuery === 'acoes' || etapaQuery === 'kit-final') {
-    etapaAtual.value = etapaQuery
-  } else if (kit.status === 'acoes') {
+  const isPrevid = tipoKit.value === 'previdenciario'
+  if (etapaQuery === 'kit-final') {
+    etapaAtual.value = 'kit-final'
+  } else if (etapaQuery === 'acoes' && !isPrevid) {
     etapaAtual.value = 'acoes'
+  } else if (kit.status === 'acoes' && !isPrevid) {
+    etapaAtual.value = 'acoes'
+  } else if (isPrevid && kit.status !== 'rascunho') {
+    etapaAtual.value = 'kit-final'
   } else if (kit.status === 'finalizado' || kit.status === 'assinado') {
     etapaAtual.value = 'kit-final'
   }
@@ -1461,14 +1505,16 @@ onMounted(async () => {
           </v-avatar>
           <span class="step-label">Cliente</span>
         </div>
-        <div :class="['step-line', etapaIndex > 0 ? 'step-line--done' : '']" />
-        <div class="step">
-          <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > 1 ? 'step-icon--done' : '')]" size="44">
-            <v-icon :icon="etapaIndex > 1 ? 'mdi-check' : 'mdi-scale-balance'" />
-          </v-avatar>
-          <span class="step-label">Ações</span>
-        </div>
-        <div :class="['step-line', etapaIndex > 1 ? 'step-line--done' : '']" />
+        <template v-if="tipoKit !== 'previdenciario'">
+          <div :class="['step-line', etapaIndex > 0 ? 'step-line--done' : '']" />
+          <div class="step">
+            <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > 1 ? 'step-icon--done' : '')]" size="44">
+              <v-icon :icon="etapaIndex > 1 ? 'mdi-check' : 'mdi-scale-balance'" />
+            </v-avatar>
+            <span class="step-label">Ações</span>
+          </div>
+        </template>
+        <div :class="['step-line', etapaAtual === 'kit-final' ? 'step-line--done' : (etapaIndex > 0 && tipoKit === 'previdenciario' ? 'step-line--done' : '')]" />
         <div class="step">
           <v-avatar :class="['step-icon', etapaAtual === 'kit-final' ? 'step-icon--active' : '']" size="44">
             <v-icon icon="mdi-eye-outline" />
@@ -1582,6 +1628,10 @@ onMounted(async () => {
                 <v-col cols="12" md="6">
                   <label class="field-label">CPF *</label>
                   <v-text-field :model-value="cad.cpf" class="compact-input" density="compact" disabled :error-messages="errors.cpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.cpf = maskCPF($event)" />
+                </v-col>
+                <v-col v-if="tipoKit === 'previdenciario'" cols="12" md="6">
+                  <label class="field-label">Data de Nascimento *</label>
+                  <v-text-field v-model="cad.dataNascimento" class="compact-input" density="compact" :error-messages="errors.dataNascimento" hide-details="auto" placeholder="DD/MM/AAAA" type="date" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
                   <label class="field-label">Gênero *</label>
@@ -2103,7 +2153,7 @@ onMounted(async () => {
                   density="compact"
                   :error-messages="acoesErrors[i]?.nomeBanco"
                   hide-details="auto"
-                  :items="BANCOS"
+                  :items="bancosOptions"
                   placeholder="Selecione"
                   variant="outlined"
                   @update:model-value="updateAcao(i, 'nomeBanco', $event)"
@@ -2187,7 +2237,7 @@ onMounted(async () => {
                     density="compact"
                     :error-messages="acoesErrors[i]?.tarifaQuestionada"
                     hide-details="auto"
-                    :items="TARIFAS"
+                    :items="tarifasOptions"
                     placeholder="Selecione a tarifa"
                     variant="outlined"
                     @update:model-value="updateAcao(i, 'tarifaQuestionada', $event)"

@@ -181,6 +181,7 @@ function cadastroToAPI (c: Partial<KitCadastro>): Record<string, any> {
   return {
     nome_completo: c.nome || undefined,
     cpf: c.cpf ? c.cpf.replace(/\D/g, '') : undefined,
+    data_nascimento: c.dataNascimento || null,
     genero: c.genero || undefined,
     nacionalidade: c.nacionalidadeTipo === 'outro' ? c.nacionalidade : (c.nacionalidadeTipo === 'brasileiro' ? 'Brasileiro(a)' : undefined),
     estado_civil: c.estadoCivilTipo === 'outro' ? c.estadoCivil : c.estadoCivilTipo || undefined,
@@ -224,6 +225,7 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   const cad = emptyCadastro()
   cad.nome = c.nome_completo || ''
   cad.cpf = formatCPF(c.cpf || '')
+  cad.dataNascimento = c.data_nascimento || ''
   cad.genero = c.genero || ''
   cad.condicaoCliente = c.condicao_cliente || 'alfabetizado'
   cad.telefone = c.telefone || ''

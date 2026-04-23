@@ -9,9 +9,10 @@
   const route = useRoute()
   const auth = useAuthStore()
 
-  const navSections = [
+  const allNavSections = [
     {
       title: 'Gestão',
+      adminOnly: false,
       items: [
         { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: { name: 'dashboard' } },
         { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' } },
@@ -20,6 +21,7 @@
     },
     {
       title: 'Documentos',
+      adminOnly: false,
       items: [
         { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' } },
         { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' } },
@@ -29,13 +31,19 @@
     },
     {
       title: 'Sistema',
+      adminOnly: true,
       items: [
+        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' } },
         { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' } },
         { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' } },
         { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' } },
       ],
     },
   ]
+
+  const navSections = computed(() =>
+    allNavSections.filter(s => !s.adminOnly || auth.isAdmin),
+  )
 
   const userInitials = computed(() => {
     const name = auth.username || ''

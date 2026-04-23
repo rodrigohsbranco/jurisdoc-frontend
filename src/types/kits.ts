@@ -25,6 +25,7 @@ export type KitCadastro = {
   // Dados Pessoais
   nome: string
   cpf: string
+  dataNascimento: string             // YYYY-MM-DD, obrigatório para kit previdenciário
   genero: string
   nacionalidadeTipo: string        // 'brasileiro' | 'outro'
   nacionalidade: string            // preenchido quando tipo='outro'
@@ -177,6 +178,7 @@ export const STATUS_MAP: Record<KitStatus, { label: string; color: string }> = {
 export const emptyCadastro = (): KitCadastro => ({
   nome: '',
   cpf: '',
+  dataNascimento: '',
   genero: '',
   nacionalidadeTipo: '',
   nacionalidade: '',
