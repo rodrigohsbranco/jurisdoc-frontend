@@ -607,7 +607,6 @@ function validateAcoes (): boolean {
   acoes.value.forEach((acao, i) => {
     const e: Record<string, string> = {}
     if (!acao.tipoAcao) e.tipoAcao = 'Campo obrigatório'
-    if (!acao.nomeBanco) e.nomeBanco = 'Campo obrigatório'
     if (acao.nomeBanco === 'Outro' && !acao.bancoOutro?.trim()) e.bancoOutro = 'Campo obrigatório'
     if (acaoNeedsContrato(acao.tipoAcao) && !acao.numeroContrato?.trim()) e.numeroContrato = 'Campo obrigatório'
     if (acao.tipoAcao === 'tarifa_bancaria' && !acao.tarifaQuestionada) e.tarifaQuestionada = 'Campo obrigatório'
@@ -2146,10 +2145,11 @@ onMounted(async () => {
                   @update:model-value="updateAcao(i, 'tipoAcao', $event)"
                 />
 
-                <label class="field-label">Banco *</label>
+                <label class="field-label">Banco</label>
                 <v-select
                   :model-value="acao.nomeBanco"
                   class="compact-input mb-4"
+                  clearable
                   density="compact"
                   :error-messages="acoesErrors[i]?.nomeBanco"
                   hide-details="auto"
