@@ -134,6 +134,14 @@ function onPickFile(e: Event) {
 // =============================
 // Remover
 // =============================
+function downloadTemplate(item: TemplateItem) {
+  if (!item.file) return
+  const a = document.createElement('a')
+  a.href = item.file
+  a.download = `${item.name}.docx`
+  a.click()
+}
+
 async function removeTemplate(item: TemplateItem) {
   confirmMessage.value = `Excluir o template "${item.name}"?`;
   confirmAction.value = async () => {
@@ -289,6 +297,11 @@ onMounted(load);
                   prepend-icon="mdi-pencil-outline"
                   title="Editar"
                   @click="openEdit(item)"
+                />
+                <v-list-item
+                  prepend-icon="mdi-download-outline"
+                  title="Download .docx"
+                  @click="downloadTemplate(item)"
                 />
                 <v-list-item
                   :prepend-icon="item.active ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
