@@ -20,6 +20,7 @@ export interface Advogado {
   is_socio: boolean
   escritorio_nome: string
   escritorio_cnpj: string
+  escritorio_endereco: string
   ativo: boolean
   oabs?: OabUf[]
   total_ufs?: number

@@ -59,6 +59,7 @@ function openCreate () {
     is_socio: false,
     escritorio_nome: '',
     escritorio_cnpj: '',
+    escritorio_endereco: '',
     ativo: true,
   }
   oabs.value = []
@@ -333,6 +334,9 @@ onMounted(() => {
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="form.escritorio_cnpj" label="CNPJ" />
+            </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="form.escritorio_endereco" label="Endereço do escritório (CNPJ)" placeholder="Endereço completo" />
             </v-col>
           </v-row>
         </template>
