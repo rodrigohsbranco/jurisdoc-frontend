@@ -2163,15 +2163,17 @@ onMounted(async () => {
                 />
 
                 <label class="field-label">Banco</label>
-                <v-select
+                <v-autocomplete
                   :model-value="acao.nomeBanco"
+                  auto-select-first
                   class="compact-input mb-4"
                   clearable
                   density="compact"
                   :error-messages="acoesErrors[i]?.nomeBanco"
                   hide-details="auto"
                   :items="bancosOptions"
-                  placeholder="Selecione"
+                  no-data-text="Nenhum banco encontrado"
+                  placeholder="Digite para buscar"
                   variant="outlined"
                   @update:model-value="updateAcao(i, 'nomeBanco', $event)"
                 />
