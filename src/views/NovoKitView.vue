@@ -282,6 +282,17 @@ const needsResponsavel = computed(() =>
 const comprovanteNaoCliente = computed(() => cad.value.comprovanteNomeCliente === 'nao')
 const titularNaoCliente = computed(() => cad.value.titularContato === 'nao')
 
+function formatarRelacaoTitular (c: KitCadastro): string {
+  if (c.relacaoTitularTipo === 'outro') return c.relacaoTitular?.trim() || ''
+  const map: Record<string, string> = {
+    pai_mae: 'pai/mãe',
+    filho_a: 'filho(a)',
+    irmao_a: 'irmão/irmã',
+    conjuge: 'cônjuge',
+  }
+  return map[c.relacaoTitularTipo] || ''
+}
+
 // ── Upload docs pessoais (múltiplos) ──
 interface DocPessoal {
   path: string
@@ -927,6 +938,12 @@ async function montarContexto (): Promise<Record<string, any>> {
     bloco_assinatura_domicilio = `QUANDO ANALFABETO:\n\n__________________________________________________\nDeclarante/titular do comprovante de endereço\n\n__________________________________________________\nAssinatura do rogado\n\nTESTEMUNHA: ${c.testemunha1Nome} CPF: ${c.testemunha1Cpf}\nTESTEMUNHA: ${c.testemunha2Nome} CPF: ${c.testemunha2Cpf}`
   }
 
+  // Telefone com complemento quando o titular do número não é o cliente
+  const relacao_titular = formatarRelacaoTitular(c)
+  const telefone_final = c.titularContato === 'nao' && c.nomeTitularNumero?.trim() && relacao_titular
+    ? `${c.telefone}, telefone pertence à ${c.nomeTitularNumero.trim()}, ${relacao_titular} do cliente.`
+    : c.telefone
+
   return {
     nome_cliente: c.nome.toUpperCase(),
     nacionalidade,
@@ -935,7 +952,7 @@ async function montarContexto (): Promise<Record<string, any>> {
     profissao,
     cpf_cliente: fmtCPF(c.cpf),
     endereco,
-    telefone: c.telefone,
+    telefone: telefone_final,
     inscrito,
     domiciliado,
     contratado,
