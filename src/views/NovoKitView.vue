@@ -594,10 +594,12 @@ function validateCadastro (): boolean {
     if (!cad.value.responsavelImovelCpf?.trim()) e.responsavelImovelCpf = 'Campo obrigatório'
   }
 
-  // Hipossuficiência
-  if (cad.value.possuiImoveis === null) e.possuiImoveis = 'Campo obrigatório'
-  if (cad.value.possuiMoveis === null) e.possuiMoveis = 'Campo obrigatório'
-  if (cad.value.isentoIrpf === null) e.isentoIrpf = 'Campo obrigatório'
+  // Hipossuficiência (não exigida em kit previdenciário)
+  if (tipoKit.value !== 'previdenciario') {
+    if (cad.value.possuiImoveis === null) e.possuiImoveis = 'Campo obrigatório'
+    if (cad.value.possuiMoveis === null) e.possuiMoveis = 'Campo obrigatório'
+    if (cad.value.isentoIrpf === null) e.isentoIrpf = 'Campo obrigatório'
+  }
 
   // Contato
   if (!cad.value.telefone?.trim()) e.telefone = 'Campo obrigatório'
@@ -661,9 +663,7 @@ function validateCadastroSilent (): boolean {
     cad.value.cep?.trim() &&
     cad.value.comprovanteNomeCliente &&
     (!comprovanteNaoCliente.value || (cad.value.responsavelImovelNome?.trim() && cad.value.responsavelImovelCpf?.trim())) &&
-    cad.value.possuiImoveis !== null &&
-    cad.value.possuiMoveis !== null &&
-    cad.value.isentoIrpf !== null &&
+    (tipoKit.value === 'previdenciario' || (cad.value.possuiImoveis !== null && cad.value.possuiMoveis !== null && cad.value.isentoIrpf !== null)) &&
     cad.value.telefone?.trim() &&
     cad.value.titularContato &&
     (!titularNaoCliente.value || (cad.value.nomeTitularNumero?.trim() && cad.value.relacaoTitularTipo))
@@ -2069,29 +2069,31 @@ onMounted(async () => {
               </div>
 
               <!-- Questionário Patrimonial -->
-              <h2 class="section-title mt-8">Declaração de Hipossuficiência</h2>
-              <v-divider class="mb-5" />
-              <div class="mb-4">
-                <label class="field-label">Possuo bens imóveis? (Casa, apartamento, terreno) *</label>
-                <v-radio-group v-model="cad.possuiImoveis" class="compact-radios" :error-messages="errors.possuiImoveis" hide-details="auto" inline>
-                  <v-radio :value="true" label="Sim" />
-                  <v-radio :value="false" label="Não" />
-                </v-radio-group>
-              </div>
-              <div class="mb-4">
-                <label class="field-label">Possuo bens móveis? (Carro, motocicleta, caminhão) *</label>
-                <v-radio-group v-model="cad.possuiMoveis" class="compact-radios" :error-messages="errors.possuiMoveis" hide-details="auto" inline>
-                  <v-radio :value="true" label="Sim" />
-                  <v-radio :value="false" label="Não" />
-                </v-radio-group>
-              </div>
-              <div class="mb-4">
-                <label class="field-label">Isento do IRPF? (Imposto de Renda Pessoa Física) *</label>
-                <v-radio-group v-model="cad.isentoIrpf" class="compact-radios" :error-messages="errors.isentoIrpf" hide-details="auto" inline>
-                  <v-radio :value="true" label="Sim" />
-                  <v-radio :value="false" label="Não" />
-                </v-radio-group>
-              </div>
+              <template v-if="tipoKit !== 'previdenciario'">
+                <h2 class="section-title mt-8">Declaração de Hipossuficiência</h2>
+                <v-divider class="mb-5" />
+                <div class="mb-4">
+                  <label class="field-label">Possuo bens imóveis? (Casa, apartamento, terreno) *</label>
+                  <v-radio-group v-model="cad.possuiImoveis" class="compact-radios" :error-messages="errors.possuiImoveis" hide-details="auto" inline>
+                    <v-radio :value="true" label="Sim" />
+                    <v-radio :value="false" label="Não" />
+                  </v-radio-group>
+                </div>
+                <div class="mb-4">
+                  <label class="field-label">Possuo bens móveis? (Carro, motocicleta, caminhão) *</label>
+                  <v-radio-group v-model="cad.possuiMoveis" class="compact-radios" :error-messages="errors.possuiMoveis" hide-details="auto" inline>
+                    <v-radio :value="true" label="Sim" />
+                    <v-radio :value="false" label="Não" />
+                  </v-radio-group>
+                </div>
+                <div class="mb-4">
+                  <label class="field-label">Isento do IRPF? (Imposto de Renda Pessoa Física) *</label>
+                  <v-radio-group v-model="cad.isentoIrpf" class="compact-radios" :error-messages="errors.isentoIrpf" hide-details="auto" inline>
+                    <v-radio :value="true" label="Sim" />
+                    <v-radio :value="false" label="Não" />
+                  </v-radio-group>
+                </div>
+              </template>
 
               <!-- Contato -->
               <h2 class="section-title mt-8">Contato</h2>
