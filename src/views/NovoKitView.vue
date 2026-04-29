@@ -2162,35 +2162,37 @@ onMounted(async () => {
                   @update:model-value="updateAcao(i, 'tipoAcao', $event)"
                 />
 
-                <label class="field-label">Banco</label>
-                <v-autocomplete
-                  :model-value="acao.nomeBanco"
-                  auto-select-first
-                  class="compact-input mb-4"
-                  clearable
-                  density="compact"
-                  :error-messages="acoesErrors[i]?.nomeBanco"
-                  hide-details="auto"
-                  :items="bancosOptions"
-                  no-data-text="Nenhum banco encontrado"
-                  placeholder="Digite para buscar"
-                  variant="outlined"
-                  @update:model-value="updateAcao(i, 'nomeBanco', $event)"
-                />
-
-                <!-- Banco outro -->
-                <template v-if="acao.nomeBanco === 'Outro'">
-                  <label class="field-label">Nome do banco *</label>
-                  <v-text-field
-                    :model-value="acao.bancoOutro"
+                <template v-if="acao.tipoAcao !== 'contribuicao_sindical_nao_autorizada'">
+                  <label class="field-label">Banco</label>
+                  <v-autocomplete
+                    :model-value="acao.nomeBanco"
+                    auto-select-first
                     class="compact-input mb-4"
+                    clearable
                     density="compact"
-                    :error-messages="acoesErrors[i]?.bancoOutro"
+                    :error-messages="acoesErrors[i]?.nomeBanco"
                     hide-details="auto"
-                    placeholder="Informe o nome do banco"
+                    :items="bancosOptions"
+                    no-data-text="Nenhum banco encontrado"
+                    placeholder="Digite para buscar"
                     variant="outlined"
-                    @update:model-value="updateAcao(i, 'bancoOutro', $event)"
+                    @update:model-value="updateAcao(i, 'nomeBanco', $event)"
                   />
+
+                  <!-- Banco outro -->
+                  <template v-if="acao.nomeBanco === 'Outro'">
+                    <label class="field-label">Nome do banco *</label>
+                    <v-text-field
+                      :model-value="acao.bancoOutro"
+                      class="compact-input mb-4"
+                      density="compact"
+                      :error-messages="acoesErrors[i]?.bancoOutro"
+                      hide-details="auto"
+                      placeholder="Informe o nome do banco"
+                      variant="outlined"
+                      @update:model-value="updateAcao(i, 'bancoOutro', $event)"
+                    />
+                  </template>
                 </template>
 
                 <!-- Número do contrato (tipos com contrato) -->
