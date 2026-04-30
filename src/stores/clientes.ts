@@ -96,7 +96,7 @@ export const useClientesStore = defineStore('clientes', {
     // filtros padrão (server-side)
     params: {
       search: '',
-      ordering: 'nome_completo',
+      ordering: '-criado_em',
     } as Required<Pick<ListParams, 'search' | 'ordering'>>,
 
     // ---------- Representantes por cliente ----------
@@ -121,7 +121,7 @@ export const useClientesStore = defineStore('clientes', {
     },
 
     resetParams () {
-      this.params = { search: '', ordering: 'nome_completo' }
+      this.params = { search: '', ordering: '-criado_em' }
     },
 
     // ========= Clientes: CRUD =========
@@ -135,7 +135,7 @@ export const useClientesStore = defineStore('clientes', {
         // se vier override, sincroniza no estado
         this.params = {
           search: params.search ?? '',
-          ordering: params.ordering ?? 'nome_completo',
+          ordering: params.ordering ?? '-criado_em',
         }
       } catch (error: any) {
         this.error = friendlyError(error, 'clientes', 'list')

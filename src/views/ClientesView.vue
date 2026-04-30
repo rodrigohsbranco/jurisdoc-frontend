@@ -24,7 +24,7 @@ const { showSuccess, showError } = useSnackbar();
 // UI state (lista)
 const search = ref("");
 const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
-  { key: "nome_completo", order: "asc" },
+  { key: "criado_em", order: "desc" },
 ]);
 const expanded = ref<readonly any[]>([]);
 
@@ -195,7 +195,7 @@ const headers = [
 const totalClientes = computed(() => store.items.length);
 
 onMounted(() => {
-  store.fetchList({ ordering: "nome_completo" });
+  store.fetchList({ ordering: "-criado_em" });
 });
 
 // =========================
