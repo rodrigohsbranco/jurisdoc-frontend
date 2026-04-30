@@ -562,10 +562,15 @@ function validateCadastro (): boolean {
   if (!cad.value.genero) e.genero = 'Campo obrigatório'
   if (!cad.value.nacionalidadeTipo) e.nacionalidadeTipo = 'Campo obrigatório'
   if (cad.value.nacionalidadeTipo === 'outro' && !cad.value.nacionalidade?.trim()) e.nacionalidade = 'Campo obrigatório'
-  if (!cad.value.estadoCivilTipo) e.estadoCivilTipo = 'Campo obrigatório'
-  if (cad.value.estadoCivilTipo === 'outro' && !cad.value.estadoCivil?.trim()) e.estadoCivil = 'Campo obrigatório'
-  if (!cad.value.profissaoTipo) e.profissaoTipo = 'Campo obrigatório'
-  if (cad.value.profissaoTipo === 'outro' && !cad.value.profissao?.trim()) e.profissao = 'Campo obrigatório'
+  if (tipoKit.value !== 'previdenciario') {
+    if (!cad.value.estadoCivilTipo) e.estadoCivilTipo = 'Campo obrigatório'
+    if (cad.value.estadoCivilTipo === 'outro' && !cad.value.estadoCivil?.trim()) e.estadoCivil = 'Campo obrigatório'
+    if (!cad.value.profissaoTipo) e.profissaoTipo = 'Campo obrigatório'
+    if (cad.value.profissaoTipo === 'outro' && !cad.value.profissao?.trim()) e.profissao = 'Campo obrigatório'
+  } else {
+    if (cad.value.estadoCivilTipo === 'outro' && !cad.value.estadoCivil?.trim()) e.estadoCivil = 'Campo obrigatório'
+    if (cad.value.profissaoTipo === 'outro' && !cad.value.profissao?.trim()) e.profissao = 'Campo obrigatório'
+  }
 
   // Condição: analfabeto (apenas rogado é obrigatório, testemunhas são opcionais)
   if (isAnalfabeto.value) {
@@ -649,9 +654,9 @@ function validateCadastroSilent (): boolean {
     cad.value.genero &&
     cad.value.nacionalidadeTipo &&
     (cad.value.nacionalidadeTipo !== 'outro' || cad.value.nacionalidade?.trim()) &&
-    cad.value.estadoCivilTipo &&
+    (tipoKit.value === 'previdenciario' || cad.value.estadoCivilTipo) &&
     (cad.value.estadoCivilTipo !== 'outro' || cad.value.estadoCivil?.trim()) &&
-    cad.value.profissaoTipo &&
+    (tipoKit.value === 'previdenciario' || cad.value.profissaoTipo) &&
     (cad.value.profissaoTipo !== 'outro' || cad.value.profissao?.trim()) &&
     (!isAnalfabeto.value || (cad.value.rogadoNome?.trim() && cad.value.rogadoCpf?.trim())) &&
     (!needsResponsavel.value || (cad.value.responsavelLegalNome?.trim() && cad.value.responsavelLegalCpf?.trim())) &&
@@ -1662,16 +1667,16 @@ onMounted(async () => {
                   <v-text-field v-model="cad.nacionalidade" class="compact-input" density="compact" :error-messages="errors.nacionalidade" hide-details="auto" placeholder="Ex: Argentino(a)" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
-                  <label class="field-label">Estado Civil *</label>
-                  <v-select v-model="cad.estadoCivilTipo" class="compact-input" density="compact" :error-messages="errors.estadoCivilTipo" hide-details="auto" :items="opcoesEstadoCivil" placeholder="Selecione" variant="outlined" />
+                  <label class="field-label">Estado Civil {{ tipoKit !== 'previdenciario' ? '*' : '' }}</label>
+                  <v-select v-model="cad.estadoCivilTipo" class="compact-input" clearable density="compact" :error-messages="errors.estadoCivilTipo" hide-details="auto" :items="opcoesEstadoCivil" placeholder="Selecione" variant="outlined" />
                 </v-col>
                 <v-col v-if="cad.estadoCivilTipo === 'outro'" cols="12" md="6">
                   <label class="field-label">Qual estado civil? *</label>
                   <v-text-field v-model="cad.estadoCivil" class="compact-input" density="compact" :error-messages="errors.estadoCivil" hide-details="auto" placeholder="Informe o estado civil" variant="outlined" />
                 </v-col>
                 <v-col cols="12" md="6">
-                  <label class="field-label">Profissão *</label>
-                  <v-select v-model="cad.profissaoTipo" class="compact-input" density="compact" :error-messages="errors.profissaoTipo" hide-details="auto" :items="opcoesProfissao" placeholder="Selecione" variant="outlined" />
+                  <label class="field-label">Profissão {{ tipoKit !== 'previdenciario' ? '*' : '' }}</label>
+                  <v-select v-model="cad.profissaoTipo" class="compact-input" clearable density="compact" :error-messages="errors.profissaoTipo" hide-details="auto" :items="opcoesProfissao" placeholder="Selecione" variant="outlined" />
                 </v-col>
                 <v-col v-if="cad.profissaoTipo === 'outro'" cols="12" md="6">
                   <label class="field-label">Qual profissão? *</label>
