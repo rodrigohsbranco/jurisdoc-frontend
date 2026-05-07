@@ -684,6 +684,7 @@ const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
 // Templates do kit — keyword para match no nome do template no banco
 // Bancário: "Kit Contrato", "Kit Procuração", etc.
 // Previdenciário: "Kit Contrato Previdenciario", "Kit Procuração Previdenciário", etc.
+// Marketing: "Kit Contrato Marketing", "Kit Procuração Marketing", etc.
 const KIT_TEMPLATE_DEFS_BANCARIO = [
   { key: 'contrato', label: 'Contrato', keyword: 'kit contrato' },
   { key: 'procuracao', label: 'Procuração', keyword: 'kit procuracao' },
@@ -697,6 +698,13 @@ const KIT_TEMPLATE_DEFS_PREVIDENCIARIO = [
   { key: 'procuracao', label: 'Procuração', keyword: 'kit procuracao previdenciario' },
   { key: 'hipossuficiencia', label: 'Decl. Hipossuficiência', keyword: 'kit hipossuficiencia previdenciario' },
   { key: 'domicilio', label: 'Decl. Domicílio', keyword: 'kit domicilio previdenciario' },
+]
+
+const KIT_TEMPLATE_DEFS_MARKETING = [
+  { key: 'contrato', label: 'Contrato', keyword: 'kit contrato marketing' },
+  { key: 'procuracao', label: 'Procuração', keyword: 'kit procuracao marketing' },
+  { key: 'hipossuficiencia', label: 'Decl. Hipossuficiência', keyword: 'kit hipossuficiencia marketing' },
+  { key: 'ciencia', label: 'Decl. Ciência', keyword: 'kit ciencia marketing' },
 ]
 
 // Mapeamento resolvido: key → template id (preenchido no mount)
@@ -715,15 +723,22 @@ function nameMatchesKeyword (name: string, keyword: string): boolean {
 async function resolveKitTemplates () {
   const allTemplates = await templatesStore.fetchAll({ active: true })
   const resolved: typeof resolvedTemplates.value = []
-  const isPrevid = tipoKit.value === 'previdenciario'
-  const defs = isPrevid ? KIT_TEMPLATE_DEFS_PREVIDENCIARIO : KIT_TEMPLATE_DEFS_BANCARIO
+  const tipo = tipoKit.value
+  const defs = tipo === 'previdenciario'
+    ? KIT_TEMPLATE_DEFS_PREVIDENCIARIO
+    : tipo === 'marketing'
+      ? KIT_TEMPLATE_DEFS_MARKETING
+      : KIT_TEMPLATE_DEFS_BANCARIO
 
   for (const def of defs) {
     const kw = normalize(def.keyword)
     const match = allTemplates.find(t => {
       const name = normalize(t.name)
       if (!nameMatchesKeyword(name, kw)) return false
-      if (!isPrevid && name.includes('previdenciario')) return false
+      // Bancário usa keywords genéricos (ex.: "kit contrato"); precisa excluir
+      // nomes que pertencem a outros tipos para não pegar templates errados.
+      if (tipo === 'bancario' && (name.includes('previdenciario') || name.includes('marketing'))) return false
+      if (tipo === 'previdenciario' && name.includes('marketing')) return false
       return true
     })
     if (match) {

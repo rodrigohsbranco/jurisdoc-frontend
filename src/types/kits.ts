@@ -1,4 +1,4 @@
-export type KitTipo = 'bancario' | 'previdenciario'
+export type KitTipo = 'bancario' | 'previdenciario' | 'marketing'
 
 export type KitStatus = 'rascunho' | 'acoes' | 'finalizado' | 'assinado'
 
@@ -111,6 +111,7 @@ export type Kit = {
 export const TIPOS_KIT: { value: KitTipo; label: string }[] = [
   { value: 'bancario', label: 'Bancário' },
   { value: 'previdenciario', label: 'Previdenciário' },
+  { value: 'marketing', label: 'Marketing' },
 ]
 
 export const TIPOS_ACAO: { value: TipoAcao; label: string }[] = [

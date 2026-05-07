@@ -98,10 +98,13 @@ const rangeText = computed(() => {
 const labelsTipo: Record<KitTipo, string> = {
   bancario: 'Bancário',
   previdenciario: 'Previdenciário',
+  marketing: 'Marketing',
 }
 
 function tipoColor (tipo: KitTipo) {
-  return tipo === 'previdenciario' ? 'purple' : 'secondary'
+  if (tipo === 'previdenciario') return 'purple'
+  if (tipo === 'marketing') return 'teal'
+  return 'secondary'
 }
 
 const kitsFormatted = computed(() =>
