@@ -975,19 +975,39 @@ async function montarContexto (): Promise<Record<string, any>> {
     bloco_assinatura_domicilio = `QUANDO ANALFABETO:\n\n__________________________________________________\nDeclarante/titular do comprovante de endereço\n\n__________________________________________________\nAssinatura do rogado\n\nTESTEMUNHA: ${c.testemunha1Nome} CPF: ${c.testemunha1Cpf}\nTESTEMUNHA: ${c.testemunha2Nome} CPF: ${c.testemunha2Cpf}`
   }
 
-  // Concatena os telefones num único texto para o template, separados por
-  // vírgula. Sem ponto final no descritor — o template já fornece a pontuação
-  // depois de {{ telefone }}, evitando ".." no documento.
-  const telefone_final = c.telefones
-    .filter(t => t.numero?.trim())
-    .map(t => {
+  // Monta o texto de telefones separando em dois grupos:
+  // (a) próprios do cliente — listados juntos: "X, Y e Z, pertencente(s) ao cliente"
+  // (b) terceiros — cada um com sua descrição: "X, pertencente à NOME, relação do cliente"
+  // Sem ponto final — o template já adiciona pontuação depois de {{ telefone }}.
+  const telefone_final = (() => {
+    const validos = c.telefones.filter(t => t.numero?.trim())
+    if (validos.length === 0) return ''
+
+    const terceiros = validos.filter(t =>
+      t.titularContato === 'nao'
+      && t.nomeTitularNumero?.trim()
+      && formatarRelacaoTitular(t),
+    )
+    const proprios = validos.filter(t => !terceiros.includes(t))
+
+    function juntar (items: string[]): string {
+      if (items.length === 0) return ''
+      if (items.length === 1) return items[0]
+      if (items.length === 2) return `${items[0]} e ${items[1]}`
+      return items.slice(0, -1).join(', ') + ' e ' + items[items.length - 1]
+    }
+
+    const partes: string[] = []
+    if (proprios.length > 0) {
+      const sufixo = proprios.length === 1 ? 'pertencente' : 'pertencentes'
+      partes.push(`${juntar(proprios.map(t => t.numero))}, ${sufixo} ao cliente`)
+    }
+    for (const t of terceiros) {
       const relacao = formatarRelacaoTitular(t)
-      const isOutro = t.titularContato === 'nao' && t.nomeTitularNumero?.trim() && relacao
-      return isOutro
-        ? `${t.numero}, telefone pertence à ${t.nomeTitularNumero.trim()}, ${relacao} do cliente`
-        : t.numero
-    })
-    .join(', ')
+      partes.push(`${t.numero}, pertencente à ${t.nomeTitularNumero.trim()}, ${relacao} do cliente`)
+    }
+    return juntar(partes)
+  })()
 
   return {
     nome_cliente: c.nome.toUpperCase(),
