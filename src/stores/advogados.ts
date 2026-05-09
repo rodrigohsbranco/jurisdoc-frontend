@@ -21,6 +21,7 @@ export interface Advogado {
   escritorio_nome: string
   escritorio_cnpj: string
   escritorio_endereco: string
+  tipos_acao: string[]
   ativo: boolean
   oabs?: OabUf[]
   total_ufs?: number
@@ -37,6 +38,7 @@ export interface AdvogadoPorUf {
   is_socio: boolean
   escritorio_nome: string
   escritorio_cnpj: string
+  tipos_acao: string[]
   numero_oab: string
   unidade_apoio_nome: string
   unidade_apoio_endereco: string

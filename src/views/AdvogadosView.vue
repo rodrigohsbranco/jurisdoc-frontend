@@ -3,8 +3,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useAdvogadosStore, type Advogado, type OabUf } from '@/stores/advogados'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { friendlyError, extractFieldErrors } from '@/utils/errorMessages'
+import { TIPOS_ACAO } from '@/types/kits'
 import SidePanel from '@/components/SidePanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+
+// Opções do multi-select de tipos de ação no cadastro do advogado.
+// 'todas' é um marcador especial: significa "atua em todas as ações".
+const TIPOS_ACAO_ADVOGADO = [
+  { title: 'Todas as ações', value: 'todas' },
+  ...TIPOS_ACAO.map(t => ({ title: t.label, value: t.value })),
+]
 
 const store = useAdvogadosStore()
 const { showSuccess, showError } = useSnackbar()
@@ -60,6 +68,7 @@ function openCreate () {
     escritorio_nome: '',
     escritorio_cnpj: '',
     escritorio_endereco: '',
+    tipos_acao: ['todas'],
     ativo: true,
   }
   oabs.value = []
@@ -340,6 +349,22 @@ onMounted(() => {
             </v-col>
           </v-row>
         </template>
+
+        <!-- Tipos de ação que o advogado atua -->
+        <v-row class="mt-2" dense>
+          <v-col cols="12">
+            <v-select
+              v-model="form.tipos_acao"
+              chips
+              clearable
+              hint="Selecione 'Todas as ações' para o advogado entrar em qualquer kit, ou marque tipos específicos para que ele só apareça quando o kit tiver alguma dessas ações."
+              :items="TIPOS_ACAO_ADVOGADO"
+              label="Tipos de ação que o advogado atua"
+              multiple
+              persistent-hint
+            />
+          </v-col>
+        </v-row>
 
         <!-- OABs por UF -->
         <div class="d-flex align-center mt-6 mb-2">

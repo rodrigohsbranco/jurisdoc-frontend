@@ -807,31 +807,15 @@ function qualificarAdvogado (a: { nome_completo: string, nacionalidade: string, 
   return texto
 }
 
-function includeAdvogadoAdicionalNoContrato (
-  uf: string,
-  nomeCompleto: string,
+function advogadoAtuaNoKit (
+  tiposAcaoAdvogado: string[] | undefined,
   tiposAcaoSelecionados: Set<string>,
-) {
-  const nome = normalize(nomeCompleto)
-  const isGabriel = nome.includes('gabriel')
-  const isAlexandre = nome.includes('alexandre')
-  const isPatrick = nome.includes('patrick')
-
-  if (uf === 'ES') return isGabriel
-  if (uf === 'BA') return isGabriel
-  if (uf === 'SE') return isAlexandre
-  if (uf === 'MG') return isAlexandre
-  if (uf === 'SC') return isGabriel
-  if (uf === 'AL') return isAlexandre
-  if (uf === 'AM') {
-    if (isPatrick) return true
-    // Regra do PDF: Gabriel atua em tarifa no AM, mas não entra como contratado.
-    if (isGabriel && tiposAcaoSelecionados.has('tarifa_bancaria')) return false
-    return false
-  }
-  if (uf === 'PR') return isGabriel
-  if (uf === 'PE') return isAlexandre
-  return false
+): boolean {
+  // Sem configuração ou marcador 'todas' => atua em qualquer kit
+  if (!tiposAcaoAdvogado || tiposAcaoAdvogado.length === 0) return true
+  if (tiposAcaoAdvogado.includes('todas')) return true
+  // Caso contrário, precisa ter pelo menos uma sobreposição com os tipos do kit
+  return tiposAcaoAdvogado.some(t => tiposAcaoSelecionados.has(t))
 }
 
 async function montarContexto (): Promise<Record<string, any>> {
@@ -921,9 +905,9 @@ async function montarContexto (): Promise<Record<string, any>> {
     try {
       const advs = await advogadosStore.fetchPorUf(uf)
 
-      // OABs dos sócios
+      // OABs dos sócios — filtra por tipos_acao (vazio/'todas' = atua em qualquer)
       const socios = advs
-        .filter(a => a.is_socio)
+        .filter(a => a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados))
         .sort((a, b) => a.nome_completo.localeCompare(b.nome_completo))
       if (socios.length > 0) {
         oab_estado = socios.map(s => s.numero_oab).join(' e ')
@@ -937,9 +921,9 @@ async function montarContexto (): Promise<Record<string, any>> {
         if (eduardo?.numero_oab) oab_eduardo = eduardo.numero_oab
       }
 
-      // Advogados adicionais (não-sócios)
+      // Advogados adicionais (não-sócios) — mesma regra de tipos_acao
       const adicionais = advs.filter(a =>
-        !a.is_socio && includeAdvogadoAdicionalNoContrato(uf, a.nome_completo, tiposAcaoSelecionados),
+        !a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados),
       )
       if (adicionais.length > 0) {
         advogados_estado = adicionais.map(qualificarAdvogado).join('; e ')
