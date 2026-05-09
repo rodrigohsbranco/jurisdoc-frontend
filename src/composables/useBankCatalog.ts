@@ -24,6 +24,52 @@ const FALLBACK_BANKS: BankItem[] = [
   'PagBank (290)',
 ].map((label) => ({ label }))
 
+// Bumpado de v1 -> v2 para invalidar caches corrompidos (proxy/AV mutilando JSON em Windows).
+const CACHE_KEY = 'br_banks_v2'
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+// BrasilAPI retorna ~270 bancos. Menos que isso indica payload truncado.
+const MIN_VALID_ITEMS = 50
+
+type CachedCatalog = {
+  savedAt: number
+  items: BankItem[]
+}
+
+function isValidPayload(items: unknown): items is BankItem[] {
+  if (!Array.isArray(items)) return false
+  if (items.length < MIN_VALID_ITEMS) return false
+  return items.every(
+    (i) =>
+      i
+      && typeof i === 'object'
+      && typeof (i as any).label === 'string'
+      && (i as any).label.length > 0,
+  )
+}
+
+function readCache(): BankItem[] | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as CachedCatalog
+    if (!parsed || typeof parsed.savedAt !== 'number') return null
+    if (Date.now() - parsed.savedAt > CACHE_TTL_MS) return null
+    if (!isValidPayload(parsed.items)) return null
+    return parsed.items
+  } catch {
+    return null
+  }
+}
+
+function writeCache(items: BankItem[]) {
+  try {
+    const payload: CachedCatalog = { savedAt: Date.now(), items }
+    localStorage.setItem(CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // localStorage indisponível/cheio: segue sem cachear
+  }
+}
+
 export function useBankCatalog(customBanks?: readonly { label: string; ispb: string }[]) {
   const bankItems = ref<BankItem[]>([])
   const bankLoading = ref(false)
@@ -41,9 +87,9 @@ export function useBankCatalog(customBanks?: readonly { label: string; ispb: str
     if (bankItems.value.length > 0) return
     bankLoading.value = true
     try {
-      const cached = localStorage.getItem('br_banks_v1')
+      const cached = readCache()
       if (cached) {
-        bankItems.value = JSON.parse(cached)
+        bankItems.value = cached
         ensureCustomBanks(bankItems.value)
         return
       }
@@ -56,9 +102,12 @@ export function useBankCatalog(customBanks?: readonly { label: string; ispb: str
         ispb: b.ispb ? String(b.ispb) : undefined,
       }))
       mapped.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
+      if (!isValidPayload(mapped)) {
+        throw new Error('payload de bancos invalido')
+      }
       ensureCustomBanks(mapped)
       bankItems.value = mapped
-      localStorage.setItem('br_banks_v1', JSON.stringify(mapped))
+      writeCache(mapped)
     } catch {
       bankItems.value = [...FALLBACK_BANKS]
       ensureCustomBanks(bankItems.value)
