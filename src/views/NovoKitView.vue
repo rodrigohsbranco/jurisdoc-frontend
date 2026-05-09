@@ -21,6 +21,7 @@ import {
   UF_LIST,
   emptyAcao,
   emptyCadastro,
+  emptyTelefone,
   type CondicaoCliente,
   type KitAcao,
   type KitCadastro,
@@ -280,17 +281,24 @@ const needsResponsavel = computed(() =>
   cad.value.condicaoCliente === 'incapaz' || cad.value.condicaoCliente === 'crianca_adolescente',
 )
 const comprovanteNaoCliente = computed(() => cad.value.comprovanteNomeCliente === 'nao')
-const titularNaoCliente = computed(() => cad.value.titularContato === 'nao')
-
-function formatarRelacaoTitular (c: KitCadastro): string {
-  if (c.relacaoTitularTipo === 'outro') return c.relacaoTitular?.trim() || ''
+function formatarRelacaoTitular (t: { relacaoTitularTipo: string, relacaoTitular: string }): string {
+  if (t.relacaoTitularTipo === 'outro') return t.relacaoTitular?.trim() || ''
   const map: Record<string, string> = {
     pai_mae: 'pai/mãe',
     filho_a: 'filho(a)',
     irmao_a: 'irmão/irmã',
     conjuge: 'cônjuge',
   }
-  return map[c.relacaoTitularTipo] || ''
+  return map[t.relacaoTitularTipo] || ''
+}
+
+function addTelefone () {
+  cad.value.telefones.push(emptyTelefone())
+}
+
+function removeTelefone (idx: number) {
+  if (cad.value.telefones.length <= 1) return
+  cad.value.telefones.splice(idx, 1)
 }
 
 // ── Upload docs pessoais (múltiplos) ──
@@ -606,14 +614,17 @@ function validateCadastro (): boolean {
     if (cad.value.isentoIrpf === null) e.isentoIrpf = 'Campo obrigatório'
   }
 
-  // Contato
-  if (!cad.value.telefone?.trim()) e.telefone = 'Campo obrigatório'
-  if (!cad.value.titularContato) e.titularContato = 'Campo obrigatório'
-  if (titularNaoCliente.value) {
-    if (!cad.value.nomeTitularNumero?.trim()) e.nomeTitularNumero = 'Campo obrigatório'
-    if (!cad.value.relacaoTitularTipo) e.relacaoTitularTipo = 'Campo obrigatório'
-    if (cad.value.relacaoTitularTipo === 'outro' && !cad.value.relacaoTitular?.trim()) e.relacaoTitular = 'Campo obrigatório'
-  }
+  // Contato — valida cada telefone do array
+  cad.value.telefones.forEach((t, i) => {
+    const idx = String(i)
+    if (!t.numero?.trim()) e[`telefone_${idx}`] = 'Campo obrigatório'
+    if (!t.titularContato) e[`titularContato_${idx}`] = 'Campo obrigatório'
+    if (t.titularContato === 'nao') {
+      if (!t.nomeTitularNumero?.trim()) e[`nomeTitularNumero_${idx}`] = 'Campo obrigatório'
+      if (!t.relacaoTitularTipo) e[`relacaoTitularTipo_${idx}`] = 'Campo obrigatório'
+      if (t.relacaoTitularTipo === 'outro' && !t.relacaoTitular?.trim()) e[`relacaoTitular_${idx}`] = 'Campo obrigatório'
+    }
+  })
 
   errors.value = e
   return Object.keys(e).length === 0
@@ -669,9 +680,12 @@ function validateCadastroSilent (): boolean {
     cad.value.comprovanteNomeCliente &&
     (!comprovanteNaoCliente.value || (cad.value.responsavelImovelNome?.trim() && cad.value.responsavelImovelCpf?.trim())) &&
     (tipoKit.value === 'previdenciario' || (cad.value.possuiImoveis !== null && cad.value.possuiMoveis !== null && cad.value.isentoIrpf !== null)) &&
-    cad.value.telefone?.trim() &&
-    cad.value.titularContato &&
-    (!titularNaoCliente.value || (cad.value.nomeTitularNumero?.trim() && cad.value.relacaoTitularTipo))
+    cad.value.telefones.every(t =>
+      t.numero?.trim()
+      && t.titularContato
+      && (t.titularContato !== 'nao' || (t.nomeTitularNumero?.trim() && t.relacaoTitularTipo))
+      && (t.relacaoTitularTipo !== 'outro' || t.relacaoTitular?.trim())
+    )
   )
 }
 
@@ -961,11 +975,18 @@ async function montarContexto (): Promise<Record<string, any>> {
     bloco_assinatura_domicilio = `QUANDO ANALFABETO:\n\n__________________________________________________\nDeclarante/titular do comprovante de endereço\n\n__________________________________________________\nAssinatura do rogado\n\nTESTEMUNHA: ${c.testemunha1Nome} CPF: ${c.testemunha1Cpf}\nTESTEMUNHA: ${c.testemunha2Nome} CPF: ${c.testemunha2Cpf}`
   }
 
-  // Telefone com complemento quando o titular do número não é o cliente
-  const relacao_titular = formatarRelacaoTitular(c)
-  const telefone_final = c.titularContato === 'nao' && c.nomeTitularNumero?.trim() && relacao_titular
-    ? `${c.telefone}, telefone pertence à ${c.nomeTitularNumero.trim()}, ${relacao_titular} do cliente.`
-    : c.telefone
+  // Concatena todos os telefones cadastrados num único texto para o template.
+  // Cada item: número simples ou "número, telefone pertence à NOME, relação do cliente."
+  const telefone_final = c.telefones
+    .filter(t => t.numero?.trim())
+    .map(t => {
+      const relacao = formatarRelacaoTitular(t)
+      const isOutro = t.titularContato === 'nao' && t.nomeTitularNumero?.trim() && relacao
+      return isOutro
+        ? `${t.numero}, telefone pertence à ${t.nomeTitularNumero.trim()}, ${relacao} do cliente.`
+        : t.numero
+    })
+    .join(' ')
 
   return {
     nome_cliente: c.nome.toUpperCase(),
@@ -2179,34 +2200,94 @@ onMounted(async () => {
               <!-- Contato -->
               <h2 class="section-title mt-8">Contato</h2>
               <v-divider class="mb-5" />
-              <v-row dense>
-                <v-col cols="12" md="6">
-                  <label class="field-label">Telefone do cliente *</label>
-                  <v-text-field :model-value="cad.telefone" class="compact-input" density="compact" :error-messages="errors.telefone" hide-details="auto" placeholder="(49) 99999-9999" variant="outlined" @update:model-value="cad.telefone = maskPhone($event)" />
-                </v-col>
-                <v-col cols="12" md="6">
-                  <label class="field-label">O titular do número é o cliente? *</label>
-                  <v-select v-model="cad.titularContato" class="compact-input" density="compact" :error-messages="errors.titularContato" hide-details="auto" :items="opcoesTitularContato" placeholder="Selecione" variant="outlined" />
-                </v-col>
-              </v-row>
 
-              <!-- Dados do titular do número (quando não é o cliente) -->
-              <template v-if="titularNaoCliente">
-                <v-row class="mt-1" dense>
+              <div v-for="(tel, i) in cad.telefones" :key="i" class="telefone-bloco mb-4">
+                <div class="d-flex align-center justify-space-between mb-2">
+                  <span class="text-body-2 text-medium-emphasis">
+                    Telefone {{ i + 1 }}
+                  </span>
+                  <v-btn
+                    v-if="cad.telefones.length > 1"
+                    color="error"
+                    icon="mdi-trash-can-outline"
+                    size="x-small"
+                    variant="text"
+                    @click="removeTelefone(i)"
+                  />
+                </div>
+                <v-row dense>
+                  <v-col cols="12" md="6">
+                    <label class="field-label">Telefone *</label>
+                    <v-text-field
+                      :model-value="tel.numero"
+                      class="compact-input"
+                      density="compact"
+                      :error-messages="errors[`telefone_${i}`]"
+                      hide-details="auto"
+                      placeholder="(49) 99999-9999"
+                      variant="outlined"
+                      @update:model-value="tel.numero = maskPhone($event)"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <label class="field-label">O titular do número é o cliente? *</label>
+                    <v-select
+                      v-model="tel.titularContato"
+                      class="compact-input"
+                      density="compact"
+                      :error-messages="errors[`titularContato_${i}`]"
+                      hide-details="auto"
+                      :items="opcoesTitularContato"
+                      placeholder="Selecione"
+                      variant="outlined"
+                    />
+                  </v-col>
+                </v-row>
+
+                <v-row v-if="tel.titularContato === 'nao'" class="mt-1" dense>
                   <v-col cols="12" md="4">
                     <label class="field-label">Nome do titular do número *</label>
-                    <v-text-field v-model="cad.nomeTitularNumero" class="compact-input" density="compact" :error-messages="errors.nomeTitularNumero" hide-details="auto" placeholder="Nome completo" variant="outlined" />
+                    <v-text-field
+                      v-model="tel.nomeTitularNumero"
+                      class="compact-input"
+                      density="compact"
+                      :error-messages="errors[`nomeTitularNumero_${i}`]"
+                      hide-details="auto"
+                      placeholder="Nome completo"
+                      variant="outlined"
+                    />
                   </v-col>
                   <v-col cols="12" md="4">
                     <label class="field-label">Relação com o cliente *</label>
-                    <v-select v-model="cad.relacaoTitularTipo" class="compact-input" density="compact" :error-messages="errors.relacaoTitularTipo" hide-details="auto" :items="opcoesRelacaoTitular" placeholder="Selecione" variant="outlined" />
+                    <v-select
+                      v-model="tel.relacaoTitularTipo"
+                      class="compact-input"
+                      density="compact"
+                      :error-messages="errors[`relacaoTitularTipo_${i}`]"
+                      hide-details="auto"
+                      :items="opcoesRelacaoTitular"
+                      placeholder="Selecione"
+                      variant="outlined"
+                    />
                   </v-col>
-                  <v-col v-if="cad.relacaoTitularTipo === 'outro'" cols="12" md="4">
+                  <v-col v-if="tel.relacaoTitularTipo === 'outro'" cols="12" md="4">
                     <label class="field-label">Qual relação? *</label>
-                    <v-text-field v-model="cad.relacaoTitular" class="compact-input" density="compact" :error-messages="errors.relacaoTitular" hide-details="auto" placeholder="Informe a relação" variant="outlined" />
+                    <v-text-field
+                      v-model="tel.relacaoTitular"
+                      class="compact-input"
+                      density="compact"
+                      :error-messages="errors[`relacaoTitular_${i}`]"
+                      hide-details="auto"
+                      placeholder="Informe a relação"
+                      variant="outlined"
+                    />
                   </v-col>
                 </v-row>
-              </template>
+              </div>
+
+              <div class="mb-2">
+                <span class="add-acao-link" @click="addTelefone">+ Adicionar telefone</span>
+              </div>
 
               </template><!-- /clienteEncontrado || isEditMode -->
 
@@ -2860,6 +2941,13 @@ onMounted(async () => {
   border: 1px solid #eaecf0;
   border-radius: 4px;
   padding: 24px;
+  background: #fff;
+}
+
+.telefone-bloco {
+  border: 1px solid #eaecf0;
+  border-radius: 4px;
+  padding: 16px;
   background: #fff;
 }
 

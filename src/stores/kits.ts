@@ -21,8 +21,8 @@ import {
 import api from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
 import { formatCPF, formatCEP } from '@/utils/formatters'
-import type { KitAcao, KitCadastro, KitStatus, KitTipo } from '@/types/kits'
-import { emptyCadastro, emptyAcao } from '@/types/kits'
+import type { KitAcao, KitCadastro, KitStatus, KitTelefone, KitTipo } from '@/types/kits'
+import { emptyCadastro, emptyAcao, emptyTelefone } from '@/types/kits'
 
 export const useKitsStore = defineStore('kits', {
   state: () => ({
@@ -178,6 +178,20 @@ export const useKitsStore = defineStore('kits', {
 // ── Helpers de conversão camelCase ↔ snake_case ──
 
 function cadastroToAPI (c: Partial<KitCadastro>): Record<string, any> {
+  // Telefones: telefones[0] = primário (vai para os campos legacy do Cliente),
+  // telefones[1..] = adicionais (vão para telefones_extras como JSON).
+  const tels = c.telefones && c.telefones.length > 0 ? c.telefones : [emptyTelefone()]
+  const primary = tels[0]
+  const extras = tels.slice(1)
+    .filter(t => t.numero?.trim())
+    .map(t => ({
+      numero: t.numero || '',
+      titular_contato: t.titularContato || '',
+      nome_titular_numero: t.nomeTitularNumero || '',
+      relacao_titular_tipo: t.relacaoTitularTipo || '',
+      relacao_titular: t.relacaoTitular || '',
+    }))
+
   return {
     nome_completo: c.nome || undefined,
     cpf: c.cpf ? c.cpf.replace(/\D/g, '') : undefined,
@@ -187,7 +201,7 @@ function cadastroToAPI (c: Partial<KitCadastro>): Record<string, any> {
     estado_civil: c.estadoCivilTipo === 'outro' ? c.estadoCivil : c.estadoCivilTipo || undefined,
     profissao: c.profissaoTipo === 'outro' ? c.profissao : c.profissaoTipo || undefined,
     condicao_cliente: c.condicaoCliente || undefined,
-    telefone: c.telefone || undefined,
+    telefone: primary.numero || undefined,
     // Endereço
     logradouro: c.rua || undefined,
     numero: c.numero || undefined,
@@ -213,11 +227,12 @@ function cadastroToAPI (c: Partial<KitCadastro>): Record<string, any> {
     ...(c.possuiImoveis !== null && c.possuiImoveis !== undefined ? { possui_imoveis: c.possuiImoveis } : {}),
     ...(c.possuiMoveis !== null && c.possuiMoveis !== undefined ? { possui_moveis: c.possuiMoveis } : {}),
     ...(c.isentoIrpf !== null && c.isentoIrpf !== undefined ? { isento_irpf: c.isentoIrpf } : {}),
-    // Contato
-    titular_contato: c.titularContato || '',
-    nome_titular_numero: c.nomeTitularNumero || '',
-    relacao_titular_tipo: c.relacaoTitularTipo || '',
-    relacao_titular: c.relacaoTitular || '',
+    // Contato — primário em campos legacy + adicionais em telefones_extras
+    titular_contato: primary.titularContato || '',
+    nome_titular_numero: primary.nomeTitularNumero || '',
+    relacao_titular_tipo: primary.relacaoTitularTipo || '',
+    relacao_titular: primary.relacaoTitular || '',
+    telefones_extras: extras,
   }
 }
 
@@ -228,7 +243,6 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   cad.dataNascimento = c.data_nascimento || ''
   cad.genero = c.genero || ''
   cad.condicaoCliente = c.condicao_cliente || 'alfabetizado'
-  cad.telefone = c.telefone || ''
 
   // Nacionalidade
   if (c.nacionalidade && !['Brasileiro(a)', 'brasileiro', 'brasileira'].includes(c.nacionalidade)) {
@@ -286,11 +300,25 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   cad.responsavelImovelNome = c.responsavel_imovel_nome || ''
   cad.responsavelImovelCpf = formatCPF(c.responsavel_imovel_cpf || '')
 
-  // Contato
-  cad.titularContato = c.titular_contato || ''
-  cad.nomeTitularNumero = c.nome_titular_numero || ''
-  cad.relacaoTitularTipo = c.relacao_titular_tipo || ''
-  cad.relacaoTitular = c.relacao_titular || ''
+  // Contato — reconstrói telefones[] a partir do primário (campos legacy)
+  // + adicionais em telefones_extras
+  const primary: KitTelefone = {
+    numero: c.telefone || '',
+    titularContato: c.titular_contato || '',
+    nomeTitularNumero: c.nome_titular_numero || '',
+    relacaoTitularTipo: c.relacao_titular_tipo || '',
+    relacaoTitular: c.relacao_titular || '',
+  }
+  const extras: KitTelefone[] = Array.isArray(c.telefones_extras)
+    ? c.telefones_extras.map((t: any) => ({
+        numero: t?.numero || '',
+        titularContato: t?.titular_contato || '',
+        nomeTitularNumero: t?.nome_titular_numero || '',
+        relacaoTitularTipo: t?.relacao_titular_tipo || '',
+        relacaoTitular: t?.relacao_titular || '',
+      }))
+    : []
+  cad.telefones = [primary, ...extras]
 
   return cad
 }

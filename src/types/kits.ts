@@ -68,15 +68,30 @@ export type KitCadastro = {
   possuiMoveis: boolean | null
   isentoIrpf: boolean | null
 
-  // Contato
-  telefone: string
+  // Contato — N telefones (mínimo 1). telefones[0] persiste nos campos
+  // legacy do Cliente; telefones[1..] vão para telefones_extras.
+  telefones: KitTelefone[]
+
+  // Status
+  status: KitStatus
+}
+
+export type KitTelefone = {
+  numero: string
   titularContato: string           // 'sim' | 'nao'
   nomeTitularNumero: string        // quando titularContato='nao'
   relacaoTitularTipo: string       // 'pai_mae' | 'filho_a' | 'irmao_a' | 'conjuge' | 'outro'
   relacaoTitular: string           // quando relacaoTitularTipo='outro'
+}
 
-  // Status
-  status: KitStatus
+export function emptyTelefone (): KitTelefone {
+  return {
+    numero: '',
+    titularContato: '',
+    nomeTitularNumero: '',
+    relacaoTitularTipo: '',
+    relacaoTitular: '',
+  }
 }
 
 export type KitAcao = {
@@ -217,11 +232,7 @@ export const emptyCadastro = (): KitCadastro => ({
   possuiMoveis: null,
   isentoIrpf: null,
 
-  telefone: '',
-  titularContato: '',
-  nomeTitularNumero: '',
-  relacaoTitularTipo: '',
-  relacaoTitular: '',
+  telefones: [emptyTelefone()],
 
   status: 'rascunho',
 })
