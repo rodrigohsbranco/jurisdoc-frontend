@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useKitsStore, clienteToCadastro } from '@/stores/kits'
 import { useClientesStore, type Cliente } from '@/stores/clientes'
@@ -675,7 +675,7 @@ function validateCadastroSilent (): boolean {
   )
 }
 
-// ── Kit Final: Preview de documentos via docx-preview ──
+// ── Kit Final: Preview de documentos via PDF (LibreOffice no backend) ──
 const templatesStore = useTemplatesStore()
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
@@ -757,7 +757,10 @@ const kitTemplatesVisiveis = computed(() => {
 })
 
 const docTab = ref('contrato')
-const docBlobs = ref<Record<string, Blob>>({})
+const pdfBlobs = ref<Record<string, Blob>>({})
+const docxBlobs = ref<Record<string, Blob>>({})
+const pdfBlobUrls = ref<Record<string, string>>({})
+const procuracaoActionDocxBlobs = ref<Blob[] | null>(null)
 const docLoading = ref<Record<string, boolean>>({})
 const docErrors = ref<Record<string, string>>({})
 const docxContainers = ref<Record<string, HTMLElement | null>>({})
@@ -1061,13 +1064,15 @@ async function fetchDocBlob (templateId: number, key: string) {
 
   docLoading.value[key] = true
   docErrors.value[key] = ''
+  // Invalida caches do .docx — o preview foi regerado, downloads não devem servir versão velha
+  delete docxBlobs.value[key]
   try {
     const context = await montarContexto()
-    const result = await templatesStore.render(templateId, {
+    const result = await templatesStore.renderPdf(templateId, {
       context,
       filename: baseNomeDownloadDoc(key),
     })
-    docBlobs.value[key] = result.blob
+    pdfBlobs.value[key] = result.blob
   } catch (e: any) {
     console.error(`Erro ao gerar doc ${key}:`, e)
     if (e?.response?.status === 404) {
@@ -1081,30 +1086,32 @@ async function fetchDocBlob (templateId: number, key: string) {
   }
 }
 
-async function renderBlobToEl (blob: Blob, container: HTMLElement) {
-  const { renderAsync } = await import('docx-preview')
+function renderBlobToEl (blob: Blob, container: HTMLElement, key: string) {
+  // Revoga URL anterior do mesmo key para não vazar memória
+  const prev = pdfBlobUrls.value[key]
+  if (prev) URL.revokeObjectURL(prev)
+
+  const url = URL.createObjectURL(blob)
+  pdfBlobUrls.value[key] = url
+
   container.innerHTML = ''
-  await renderAsync(blob, container, undefined, {
-    className: 'docx',
-    inWrapper: true,
-    ignoreWidth: false,
-    ignoreHeight: false,
-    ignoreFonts: false,
-    breakPages: true,
-    ignoreLastRenderedPageBreak: false,
-    experimental: true,
-    hideWrapperOnPrint: true,
-  })
+  const iframe = document.createElement('iframe')
+  // Parâmetros do leitor PDF do Chrome: oculta toolbar e ajusta zoom inicial
+  iframe.src = `${url}#toolbar=0&navpanes=0&zoom=page-width`
+  iframe.style.width = '100%'
+  iframe.style.height = '100%'
+  iframe.style.border = 'none'
+  container.append(iframe)
 }
 
 async function renderBlobToContainer (key: string) {
-  const blob = docBlobs.value[key]
+  const blob = pdfBlobs.value[key]
   if (!blob) return
   await nextTick()
   const container = docxContainers.value[key]
   if (!container) return
   try {
-    await renderBlobToEl(blob, container)
+    renderBlobToEl(blob, container, key)
   } catch {
     docErrors.value[key] = 'Não foi possível renderizar a pré-visualização.'
   }
@@ -1117,19 +1124,7 @@ async function renderDocTemplate (templateId: number, key: string) {
   await renderBlobToContainer(key)
 }
 
-function downloadDoc (key: string) {
-  const blob = docBlobs.value[key]
-  if (!blob) return
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${baseNomeDownloadDoc(key)}.docx`
-  document.body.append(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
+const docxLoading = ref<Record<string, boolean>>({})
 const pdfLoading = ref<Record<string, boolean>>({})
 const downloadAllDocLoading = ref(false)
 const downloadAllPdfLoading = ref(false)
@@ -1145,33 +1140,75 @@ function triggerBlobDownload (blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-async function downloadPdf (key: string) {
-  const blob = docBlobs.value[key]
-  if (!blob) return
-  pdfLoading.value[key] = true
+// Renderiza .docx para um key (lazy). Para procuração multipla, gera N por ação
+// e compõe via /compose/. Cacheia em docxBlobs[key].
+async function ensureDocxBlob (key: string): Promise<Blob | null> {
+  if (docxBlobs.value[key]) return docxBlobs.value[key]
+  const tpl = resolvedTemplates.value.find(t => t.key === key)
+  if (!tpl) return null
+
+  if (key === 'procuracao' && tipoKit.value !== 'previdenciario') {
+    let actionBlobs = procuracaoActionDocxBlobs.value
+    if (!actionBlobs || actionBlobs.length !== acoes.value.length) {
+      actionBlobs = []
+      for (const acao of acoes.value) {
+        const ctx = await montarContextoProcuracao(acao)
+        const result = await templatesStore.render(tpl.id, {
+          context: ctx,
+          filename: baseNomeDownloadDoc('procuracao'),
+        })
+        actionBlobs.push(result.blob)
+      }
+      procuracaoActionDocxBlobs.value = actionBlobs
+    }
+    if (actionBlobs.length === 1) {
+      docxBlobs.value[key] = actionBlobs[0]
+    } else {
+      const fd = new FormData()
+      actionBlobs.forEach((b, i) => fd.append('files', b, `proc_${i}.docx`))
+      const { data } = await api.post('/api/templates/compose/', fd, {
+        responseType: 'blob',
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      docxBlobs.value[key] = data as Blob
+    }
+    return docxBlobs.value[key]
+  }
+
+  const ctx = await montarContexto()
+  const result = await templatesStore.render(tpl.id, {
+    context: ctx,
+    filename: baseNomeDownloadDoc(key),
+  })
+  docxBlobs.value[key] = result.blob
+  return result.blob
+}
+
+async function downloadDoc (key: string) {
+  docxLoading.value[key] = true
   try {
-    const fd = new FormData()
-    const base = baseNomeDownloadDoc(key)
-    fd.append('file', blob, `${base}.docx`)
-    fd.append('filename', base)
-    const { data } = await api.post('/api/templates/convert-to-pdf/', fd, {
-      responseType: 'blob',
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    triggerBlobDownload(data as Blob, `${base}.pdf`)
+    const blob = await ensureDocxBlob(key)
+    if (!blob) return
+    triggerBlobDownload(blob, `${baseNomeDownloadDoc(key)}.docx`)
   } catch (e: any) {
-    console.error('Erro ao converter para PDF:', e)
-    showError(e?.response?.data?.detail || e?.message || 'Não foi possível baixar o PDF.')
+    console.error('Erro ao baixar .docx:', e)
+    showError(e?.response?.data?.detail || e?.message || 'Não foi possível baixar o documento .docx.')
   } finally {
-    pdfLoading.value[key] = false
+    docxLoading.value[key] = false
   }
 }
 
-async function ensureVisibleDocBlobs (): Promise<boolean> {
+async function downloadPdf (key: string) {
+  const blob = pdfBlobs.value[key]
+  if (!blob) return
+  triggerBlobDownload(blob, `${baseNomeDownloadDoc(key)}.pdf`)
+}
+
+async function ensureVisibleDocxBlobs (): Promise<boolean> {
   for (const template of kitTemplatesVisiveis.value) {
-    if (docBlobs.value[template.key]) continue
-    await fetchDocBlob(template.id, template.key)
-    if (!docBlobs.value[template.key]) {
+    if (docxBlobs.value[template.key]) continue
+    await ensureDocxBlob(template.key)
+    if (!docxBlobs.value[template.key]) {
       return false
     }
   }
@@ -1189,7 +1226,7 @@ async function downloadAllPdf () {
 
   downloadAllPdfLoading.value = true
   try {
-    const ready = await ensureVisibleDocBlobs()
+    const ready = await ensureVisibleDocxBlobs()
     if (!ready) {
       showError('Não foi possível gerar todos os documentos para montar o PDF único.')
       return
@@ -1197,7 +1234,7 @@ async function downloadAllPdf () {
 
     const fd = new FormData()
     for (const template of kitTemplatesVisiveis.value) {
-      const blob = docBlobs.value[template.key]
+      const blob = docxBlobs.value[template.key]
       if (!blob) continue
       fd.append('files', blob, `${baseNomeDownloadDoc(template.key)}.docx`)
     }
@@ -1229,7 +1266,7 @@ async function downloadAllDoc () {
 
   downloadAllDocLoading.value = true
   try {
-    const ready = await ensureVisibleDocBlobs()
+    const ready = await ensureVisibleDocxBlobs()
     if (!ready) {
       showError('Não foi possível gerar todos os documentos para montar o DOCX único.')
       return
@@ -1237,7 +1274,7 @@ async function downloadAllDoc () {
 
     const fd = new FormData()
     for (const template of kitTemplatesVisiveis.value) {
-      const blob = docBlobs.value[template.key]
+      const blob = docxBlobs.value[template.key]
       if (!blob) continue
       fd.append('files', blob, `${baseNomeDownloadDoc(template.key)}.docx`)
     }
@@ -1316,32 +1353,45 @@ async function fetchProcuracaoMultipla () {
   }
   docLoading.value[key] = true
   docErrors.value[key] = ''
+  // Invalida caches do .docx — o preview foi regerado
+  delete docxBlobs.value[key]
+  procuracaoActionDocxBlobs.value = null
 
   try {
-    // Renderiza uma procuração por ação e coleta os blobs
-    const blobs: Blob[] = []
-    for (const acao of acoes.value) {
-      const context = await montarContextoProcuracao(acao)
-      const result = await templatesStore.render(procuracaoTemplateId.value, {
-        context,
+    // Caminho rápido: 1 ação -> render-pdf direto
+    if (acoes.value.length === 1) {
+      const ctx = await montarContextoProcuracao(acoes.value[0])
+      const result = await templatesStore.renderPdf(procuracaoTemplateId.value, {
+        context: ctx,
         filename: baseNomeDownloadDoc('procuracao'),
       })
-      blobs.push(result.blob)
+      pdfBlobs.value[key] = result.blob
+      // Não cacheia o .docx por ação aqui; downloadDoc o gerará sob demanda.
+      procuracaoActionDocxBlobs.value = null
+      return
     }
 
-    // Se só tem uma ação, usa o blob direto
-    if (blobs.length === 1) {
-      docBlobs.value[key] = blobs[0]
-    } else if (blobs.length > 1) {
-      // Combina todos os blobs: manda para o backend compor
-      const formData = new FormData()
-      blobs.forEach((blob, i) => formData.append('files', blob, `proc_${i}.docx`))
-      const { data } = await api.post('/api/templates/compose/', formData, {
-        responseType: 'blob',
-        headers: { 'Content-Type': 'multipart/form-data' },
+    // N ações: renderiza .docx por ação (cacheado para reuso no Word) e
+    // envia tudo para compose-to-pdf, que devolve o PDF combinado.
+    const actionBlobs: Blob[] = []
+    for (const acao of acoes.value) {
+      const ctx = await montarContextoProcuracao(acao)
+      const result = await templatesStore.render(procuracaoTemplateId.value, {
+        context: ctx,
+        filename: baseNomeDownloadDoc('procuracao'),
       })
-      docBlobs.value[key] = data as Blob
+      actionBlobs.push(result.blob)
     }
+    procuracaoActionDocxBlobs.value = actionBlobs
+
+    const fd = new FormData()
+    actionBlobs.forEach((b, i) => fd.append('files', b, `proc_${i}.docx`))
+    fd.append('filename', baseNomeDownloadDoc('procuracao'))
+    const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
+      responseType: 'blob',
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    pdfBlobs.value[key] = data as Blob
   } catch (e: any) {
     console.error('Erro ao gerar procurações:', e)
     if (e?.response?.status === 404) {
@@ -1371,11 +1421,19 @@ watch(etapaAtual, async (val) => {
 
 // Renderiza o blob quando muda de aba (docs fixos)
 watch(docTab, async (key) => {
-  if (docBlobs.value[key] && etapaAtual.value === 'kit-final') {
+  if (pdfBlobs.value[key] && etapaAtual.value === 'kit-final') {
     await nextTick()
     await nextTick()
     await renderBlobToContainer(key)
   }
+})
+
+// Limpa object URLs dos iframes ao sair da view (evita vazamento de memória)
+onBeforeUnmount(() => {
+  for (const url of Object.values(pdfBlobUrls.value)) {
+    if (url) URL.revokeObjectURL(url)
+  }
+  pdfBlobUrls.value = {}
 })
 
 /* ── Código legado removido — geração de texto puro ──
@@ -2411,11 +2469,22 @@ onMounted(async () => {
                       </div>
                     </v-alert>
 
-                    <!-- Error: generic -->
+                    <!-- Error: generic — preview falhou; ainda permitimos baixar o Word -->
                     <v-alert v-else-if="docErrors[t.key]" class="mb-4" type="error" variant="tonal">
                       {{ docErrors[t.key] }}
                       <template #append>
-                        <v-btn size="small" variant="text" @click="renderDocTemplate(t.id, t.key)">Tentar novamente</v-btn>
+                        <div class="d-flex ga-2">
+                          <v-btn
+                            :loading="docxLoading[t.key]"
+                            prepend-icon="mdi-file-word-outline"
+                            size="small"
+                            variant="text"
+                            @click="downloadDoc(t.key)"
+                          >
+                            Baixar .docx
+                          </v-btn>
+                          <v-btn size="small" variant="text" @click="renderDocTemplate(t.id, t.key)">Tentar novamente</v-btn>
+                        </div>
                       </template>
                     </v-alert>
 
@@ -2424,7 +2493,8 @@ onMounted(async () => {
                       <div class="d-flex justify-end ga-2 mb-3">
                         <v-btn
                           color="primary"
-                          :disabled="!docBlobs[t.key]"
+                          :disabled="!pdfBlobs[t.key]"
+                          :loading="docxLoading[t.key]"
                           prepend-icon="mdi-file-word-outline"
                           size="small"
                           variant="tonal"
@@ -2434,7 +2504,7 @@ onMounted(async () => {
                         </v-btn>
                         <v-btn
                           color="error"
-                          :disabled="!docBlobs[t.key]"
+                          :disabled="!pdfBlobs[t.key]"
                           :loading="pdfLoading[t.key]"
                           prepend-icon="mdi-file-pdf-box"
                           size="small"
@@ -2920,9 +2990,16 @@ onMounted(async () => {
   background: #eef1f6;
   border: 1px solid #d9dfeb;
   border-radius: 10px;
-  padding: 16px;
-  min-height: 400px;
-  overflow: auto;
+  height: 80vh;
+  min-height: 600px;
+  overflow: hidden;
+}
+
+.docx-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
 }
 
 :deep(.compact-input .v-field) {
@@ -2962,20 +3039,3 @@ onMounted(async () => {
 }
 </style>
 
-<style>
-/* docx-preview renderiza com classes próprias */
-.docx-container .docx-wrapper {
-  background: transparent;
-  padding: 8px 0;
-}
-
-.docx-container .docx-wrapper > section.docx {
-  margin: 0 auto 24px auto;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
-  border-radius: 2px;
-}
-
-.docx-container .docx-wrapper > section.docx:last-child {
-  margin-bottom: 0;
-}
-</style>

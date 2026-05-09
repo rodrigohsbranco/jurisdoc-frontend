@@ -240,33 +240,43 @@ export const useTemplatesStore = defineStore('templates', {
       }
     },
 
-    // RENDER
+    // RENDER (.docx)
     async render (id: number, opts: RenderOptions): Promise<RenderResult> {
+      return this._renderInternal(id, opts, 'docx')
+    },
+
+    // RENDER (PDF, via LibreOffice no backend)
+    async renderPdf (id: number, opts: RenderOptions): Promise<RenderResult> {
+      return this._renderInternal(id, opts, 'pdf')
+    },
+
+    async _renderInternal (id: number, opts: RenderOptions, format: 'docx' | 'pdf'): Promise<RenderResult> {
       const body = {
         context: opts.context || {},
         ...(opts.filename ? { filename: opts.filename } : {}),
       }
+      const url = format === 'pdf'
+        ? `/api/templates/${id}/render-pdf/`
+        : `/api/templates/${id}/render/`
       try {
-        const res = await api.post(`/api/templates/${id}/render/`, body, {
+        const res = await api.post(url, body, {
           responseType: 'blob',
-          validateStatus: (status) => status < 500, // Aceita 400 para capturar erro
+          validateStatus: (status) => status < 500, // aceita 400 para extrair detail
         })
-        // Verifica se a resposta é um erro (400)
         if (res.status === 400) {
-          // Tenta ler o erro do blob
           const errorText = await (res.data as Blob).text()
           let errorDetail = errorText
           try {
             const errorJson = JSON.parse(errorText)
             errorDetail = errorJson.detail || errorText
           } catch {
-            // Se não for JSON, usa o texto direto
+            // texto puro
           }
           throw new Error(errorDetail)
         }
-        
+
         const cd = res.headers['content-disposition'] as string | undefined
-        const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'documento'}.docx`
+        const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'documento'}.${format}`
         return { blob: res.data as Blob, filename: fname }
       } catch (error: any) {
         if (error.response?.data instanceof Blob) {
