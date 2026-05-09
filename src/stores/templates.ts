@@ -50,6 +50,7 @@ export interface PaginatedResponse<T> {
 export interface RenderOptions {
   context: Record<string, unknown>
   filename?: string
+  skipPageNumbering?: boolean
 }
 
 export interface RenderResult {
@@ -254,6 +255,7 @@ export const useTemplatesStore = defineStore('templates', {
       const body = {
         context: opts.context || {},
         ...(opts.filename ? { filename: opts.filename } : {}),
+        ...(opts.skipPageNumbering ? { skip_page_numbering: true } : {}),
       }
       const url = format === 'pdf'
         ? `/api/templates/${id}/render-pdf/`

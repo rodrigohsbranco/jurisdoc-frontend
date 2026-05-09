@@ -1177,6 +1177,7 @@ async function ensureDocxBlob (key: string): Promise<Blob | null> {
         const result = await templatesStore.render(tpl.id, {
           context: ctx,
           filename: baseNomeDownloadDoc('procuracao'),
+          skipPageNumbering: true,
         })
         actionBlobs.push(result.blob)
       }
@@ -1187,6 +1188,7 @@ async function ensureDocxBlob (key: string): Promise<Blob | null> {
     } else {
       const fd = new FormData()
       actionBlobs.forEach((b, i) => fd.append('files', b, `proc_${i}.docx`))
+      fd.append('skip_page_numbering', 'true')
       const { data } = await api.post('/api/templates/compose/', fd, {
         responseType: 'blob',
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -1379,12 +1381,14 @@ async function fetchProcuracaoMultipla () {
   procuracaoActionDocxBlobs.value = null
 
   try {
-    // Caminho rápido: 1 ação -> render-pdf direto
+    // Caminho rápido: 1 ação -> render-pdf direto. skipPageNumbering: cada
+    // procuração é um documento autônomo, "Página X de Y" não faz sentido.
     if (acoes.value.length === 1) {
       const ctx = await montarContextoProcuracao(acoes.value[0])
       const result = await templatesStore.renderPdf(procuracaoTemplateId.value, {
         context: ctx,
         filename: baseNomeDownloadDoc('procuracao'),
+        skipPageNumbering: true,
       })
       pdfBlobs.value[key] = result.blob
       // Não cacheia o .docx por ação aqui; downloadDoc o gerará sob demanda.
@@ -1400,6 +1404,7 @@ async function fetchProcuracaoMultipla () {
       const result = await templatesStore.render(procuracaoTemplateId.value, {
         context: ctx,
         filename: baseNomeDownloadDoc('procuracao'),
+        skipPageNumbering: true,
       })
       actionBlobs.push(result.blob)
     }
@@ -1408,6 +1413,7 @@ async function fetchProcuracaoMultipla () {
     const fd = new FormData()
     actionBlobs.forEach((b, i) => fd.append('files', b, `proc_${i}.docx`))
     fd.append('filename', baseNomeDownloadDoc('procuracao'))
+    fd.append('skip_page_numbering', 'true')
     const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
