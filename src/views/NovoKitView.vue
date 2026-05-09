@@ -975,18 +975,19 @@ async function montarContexto (): Promise<Record<string, any>> {
     bloco_assinatura_domicilio = `QUANDO ANALFABETO:\n\n__________________________________________________\nDeclarante/titular do comprovante de endereço\n\n__________________________________________________\nAssinatura do rogado\n\nTESTEMUNHA: ${c.testemunha1Nome} CPF: ${c.testemunha1Cpf}\nTESTEMUNHA: ${c.testemunha2Nome} CPF: ${c.testemunha2Cpf}`
   }
 
-  // Concatena todos os telefones cadastrados num único texto para o template.
-  // Cada item: número simples ou "número, telefone pertence à NOME, relação do cliente."
+  // Concatena os telefones num único texto para o template, separados por
+  // vírgula. Sem ponto final no descritor — o template já fornece a pontuação
+  // depois de {{ telefone }}, evitando ".." no documento.
   const telefone_final = c.telefones
     .filter(t => t.numero?.trim())
     .map(t => {
       const relacao = formatarRelacaoTitular(t)
       const isOutro = t.titularContato === 'nao' && t.nomeTitularNumero?.trim() && relacao
       return isOutro
-        ? `${t.numero}, telefone pertence à ${t.nomeTitularNumero.trim()}, ${relacao} do cliente.`
+        ? `${t.numero}, telefone pertence à ${t.nomeTitularNumero.trim()}, ${relacao} do cliente`
         : t.numero
     })
-    .join(' ')
+    .join(', ')
 
   return {
     nome_cliente: c.nome.toUpperCase(),
