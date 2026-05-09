@@ -68,7 +68,6 @@ function openCreate () {
     escritorio_nome: '',
     escritorio_cnpj: '',
     escritorio_endereco: '',
-    tipos_acao: ['todas'],
     ativo: true,
   }
   oabs.value = []
@@ -92,6 +91,7 @@ function addOab () {
     numero_oab: '',
     unidade_apoio_nome: '',
     unidade_apoio_endereco: '',
+    tipos_acao: ['todas'],
   })
 }
 
@@ -350,22 +350,6 @@ onMounted(() => {
           </v-row>
         </template>
 
-        <!-- Tipos de ação que o advogado atua -->
-        <v-row class="mt-2" dense>
-          <v-col cols="12">
-            <v-select
-              v-model="form.tipos_acao"
-              chips
-              clearable
-              hint="Selecione 'Todas as ações' para o advogado entrar em qualquer kit, ou marque tipos específicos para que ele só apareça quando o kit tiver alguma dessas ações."
-              :items="TIPOS_ACAO_ADVOGADO"
-              label="Tipos de ação que o advogado atua"
-              multiple
-              persistent-hint
-            />
-          </v-col>
-        </v-row>
-
         <!-- OABs por UF -->
         <div class="d-flex align-center mt-6 mb-2">
           <div class="text-caption text-medium-emphasis text-uppercase" style="letter-spacing: 0.05em">
@@ -398,6 +382,18 @@ onMounted(() => {
             </v-col>
             <v-col cols="8">
               <v-text-field v-model="oab.unidade_apoio_endereco" label="Endereço da unidade" placeholder="Endereço completo" />
+            </v-col>
+            <v-col cols="12">
+              <v-select
+                v-model="oab.tipos_acao"
+                chips
+                clearable
+                hint="Selecione 'Todas as ações' para o advogado entrar em qualquer kit nesta UF, ou marque tipos específicos para que ele só apareça quando o kit tiver alguma dessas ações."
+                :items="TIPOS_ACAO_ADVOGADO"
+                label="Tipos de ação nesta UF"
+                multiple
+                persistent-hint
+              />
             </v-col>
           </v-row>
         </v-card>

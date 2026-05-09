@@ -905,9 +905,9 @@ async function montarContexto (): Promise<Record<string, any>> {
     try {
       const advs = await advogadosStore.fetchPorUf(uf)
 
-      // OABs dos sócios — filtra por tipos_acao (vazio/'todas' = atua em qualquer)
+      // OABs dos sócios — sócio entra sempre, sem filtro de tipos_acao
       const socios = advs
-        .filter(a => a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados))
+        .filter(a => a.is_socio)
         .sort((a, b) => a.nome_completo.localeCompare(b.nome_completo))
       if (socios.length > 0) {
         oab_estado = socios.map(s => s.numero_oab).join(' e ')
