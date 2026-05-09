@@ -279,21 +279,28 @@ export const useTemplatesStore = defineStore('templates', {
         const fname = parseContentDispositionFilename(cd) || `${opts.filename || 'documento'}.${format}`
         return { blob: res.data as Blob, filename: fname }
       } catch (error: any) {
+        let detail = ''
         if (error.response?.data instanceof Blob) {
           try {
+            const text = await error.response.data.text()
             if (error.response.data.type === 'application/json') {
-              const json = JSON.parse(await error.response.data.text())
-              this.lastError = json.detail || JSON.stringify(json)
+              try {
+                const json = JSON.parse(text)
+                detail = json.detail || JSON.stringify(json)
+              } catch {
+                detail = text
+              }
             } else {
-              this.lastError = await error.response.data.text()
+              detail = text
             }
           } catch {
-            this.lastError = friendlyError(error, 'templates', 'render')
+            // ignora; cai no friendlyError abaixo
           }
-        } else {
-          this.lastError = friendlyError(error, 'templates', 'render')
         }
-        throw error
+        this.lastError = detail || friendlyError(error, 'templates', 'render')
+        // Repropaga com a mensagem detalhada para a view conseguir exibir
+        // (e.response.data é Blob; um Error simples carrega a mensagem em .message)
+        throw detail ? new Error(detail) : error
       }
     },
 

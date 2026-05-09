@@ -1407,12 +1407,15 @@ async function fetchProcuracaoMultipla () {
 
 // ── Watchers ──
 
-// Busca todos os blobs quando entra no Kit Final
+// Busca todos os blobs quando entra no Kit Final.
+// Sequencial: cada conversão LibreOffice no backend pesa ~150MB de RAM
+// e ~1 core; rodar 5 em paralelo arrisca OOM em VPS pequenos.
 watch(etapaAtual, async (val) => {
   if (val === 'kit-final' && cad.value.nome) {
     await resolveKitTemplates()
-    const promises = kitTemplatesVisiveis.value.map(t => fetchDocBlob(t.id, t.key))
-    await Promise.all(promises)
+    for (const t of kitTemplatesVisiveis.value) {
+      await fetchDocBlob(t.id, t.key)
+    }
     await nextTick()
     await nextTick()
     await renderBlobToContainer(docTab.value)
