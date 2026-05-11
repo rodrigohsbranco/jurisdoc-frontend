@@ -1378,14 +1378,13 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
   const bancoNome = (acao.nomeBanco === 'Outro' ? acao.bancoOutro : acao.nomeBanco).toUpperCase()
   let tipoLabel = TIPOS_ACAO.find(t => t.value === acao.tipoAcao)?.label || acao.tipoAcao
   const usaContrato = TIPOS_COM_CONTRATO.includes(acao.tipoAcao as TipoAcao)
-  const procuracao_detalhe_tipo = usaContrato ? '' : formatarDetalheProcuracao(detalheBrutoProcuracao(acao))
-  const bancoComInss = tipoKit.value === 'bancario'
+  let procuracao_detalhe_tipo = usaContrato ? '' : formatarDetalheProcuracao(detalheBrutoProcuracao(acao))
+  let bancoComInss = tipoKit.value === 'bancario'
     ? `${bancoNome} e INSS – Instituto Nacional do Seguro Social`
     : bancoNome
 
   // Caso especial: contribuição sindical não autorizada em kit bancário com associação.
-  // O template da procuração não imprime "em face do banco" para esse tipo, então
-  // a frase completa (incluindo a associação) é injetada via tipos_acao.
+  // tipos_acao → frase do tipo, bancos → abreviação da associação (no lugar do banco).
   if (
     acao.tipoAcao === 'contribuicao_sindical_nao_autorizada'
     && tipoKit.value === 'bancario'
@@ -1393,8 +1392,9 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
   ) {
     const assoc = associacoesOptions.value.find(a => a.id === acao.associacaoId)
     if (assoc) {
-      const abrev = assoc.abreviacao || assoc.nome
-      tipoLabel = `contribuição não autorizada em benefício previdenciário em face de(a) ${abrev}`
+      tipoLabel = 'contribuição não autorizada em benefício previdenciário'
+      bancoComInss = assoc.abreviacao || assoc.nome
+      procuracao_detalhe_tipo = ''
     }
   }
 
