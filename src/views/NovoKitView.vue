@@ -776,6 +776,7 @@ const docxBlobs = ref<Record<string, Blob>>({})
 const pdfBlobUrls = ref<Record<string, string>>({})
 const procuracaoActionDocxBlobs = ref<Blob[] | null>(null)
 const docLoading = ref<Record<string, boolean>>({})
+const iframeLoading = ref<Record<string, boolean>>({})
 const docErrors = ref<Record<string, string>>({})
 const docxContainers = ref<Record<string, HTMLElement | null>>({})
 
@@ -1133,6 +1134,10 @@ function renderBlobToEl (blob: Blob, container: HTMLElement, key: string) {
   iframe.style.width = '100%'
   iframe.style.height = '100%'
   iframe.style.border = 'none'
+  iframeLoading.value[key] = true
+  iframe.addEventListener('load', () => {
+    iframeLoading.value[key] = false
+  }, { once: true })
   container.append(iframe)
 }
 
@@ -2558,7 +2563,7 @@ onMounted(async () => {
 
                 <v-window v-model="docTab" class="mt-4">
                   <v-window-item v-for="t in kitTemplatesVisiveis" :key="t.key" :value="t.key">
-                    <!-- Loading -->
+                    <!-- Loading (geração no servidor) -->
                     <div v-if="docLoading[t.key]" class="d-flex flex-column align-center justify-center py-12">
                       <v-progress-circular color="primary" indeterminate size="48" width="4" />
                       <div class="text-body-2 text-medium-emphasis mt-4">Gerando {{ t.label }}...</div>
@@ -2626,7 +2631,13 @@ onMounted(async () => {
                           Atualizar
                         </v-btn>
                       </div>
-                      <div :ref="(el: any) => { docxContainers[t.key] = el }" class="docx-container" />
+                      <div class="docx-container-wrapper">
+                        <div :ref="(el: any) => { docxContainers[t.key] = el }" class="docx-container" />
+                        <div v-if="iframeLoading[t.key]" class="docx-iframe-loading">
+                          <v-progress-circular color="primary" indeterminate size="48" width="4" />
+                          <div class="text-body-2 text-medium-emphasis mt-4">Renderizando {{ t.label }}...</div>
+                        </div>
+                      </div>
                     </template>
                   </v-window-item>
                 </v-window>
@@ -3095,6 +3106,22 @@ onMounted(async () => {
   font-weight: 600;
   color: #2e7d32;
   word-break: break-all;
+}
+
+.docx-container-wrapper {
+  position: relative;
+}
+
+.docx-iframe-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #eef1f6;
+  border-radius: 10px;
+  z-index: 2;
 }
 
 .docx-container {
