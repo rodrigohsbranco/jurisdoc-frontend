@@ -1394,7 +1394,8 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
     : bancoNome
 
   // Caso especial: contribuição sindical não autorizada em kit bancário com associação.
-  // tipos_acao → frase do tipo, bancos → "de(a) ABREVIAÇÃO" (no lugar do banco).
+  // tipos_acao → frase do tipo, bancos → abreviação, {{ do }} → "de(a)".
+  let doPronome = base.do as string
   if (
     acao.tipoAcao === 'contribuicao_sindical_nao_autorizada'
     && tipoKit.value === 'bancario'
@@ -1403,13 +1404,15 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
     const assoc = associacoesOptions.value.find(a => a.id === acao.associacaoId)
     if (assoc) {
       tipoLabel = 'contribuição não autorizada em benefício previdenciário'
-      bancoComInss = `de(a) ${assoc.abreviacao || assoc.nome}`
+      bancoComInss = assoc.abreviacao || assoc.nome
       procuracao_detalhe_tipo = ''
+      doPronome = 'de(a)'
     }
   }
 
   return {
     ...base,
+    do: doPronome,
     bancos: bancoComInss,
     tipos_acao: tipoLabel,
     tarifa_questionada: resolveTarifaQuestionada(acao),
