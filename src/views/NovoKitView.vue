@@ -872,9 +872,15 @@ async function montarContexto (): Promise<Record<string, any>> {
       .map(a => (a.nomeBanco === 'Outro' ? a.bancoOutro : a.nomeBanco).toUpperCase().trim())
       .filter(Boolean),
   ))
-  const bancos = bancoNomes.length <= 1
+  const bancosBase = bancoNomes.length <= 1
     ? (bancoNomes[0] || '(BANCOS DA AÇÃO)')
     : bancoNomes.slice(0, -1).join(', ') + ' e ' + bancoNomes[bancoNomes.length - 1]
+  // Para kit bancário, anexa o INSS ao final das instituições.
+  const bancos = tipoKit.value === 'bancario' && bancoNomes.length > 0
+    ? (bancoNomes.length === 1
+        ? `${bancoNomes[0]} e INSS – Instituto Nacional do Seguro Social`
+        : `${bancoNomes.join(', ')} e INSS – Instituto Nacional do Seguro Social`)
+    : bancosBase
 
   // Tipos de ação
   const tipoLabels = acoes.value.map(a => TIPOS_ACAO.find(t => t.value === a.tipoAcao)?.label || a.tipoAcao)
@@ -1358,12 +1364,15 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
   const tipoLabel = TIPOS_ACAO.find(t => t.value === acao.tipoAcao)?.label || acao.tipoAcao
   const usaContrato = TIPOS_COM_CONTRATO.includes(acao.tipoAcao as TipoAcao)
   const procuracao_detalhe_tipo = usaContrato ? '' : formatarDetalheProcuracao(detalheBrutoProcuracao(acao))
+  const bancoComInss = tipoKit.value === 'bancario'
+    ? `${bancoNome} e INSS – Instituto Nacional do Seguro Social`
+    : bancoNome
   return {
     ...base,
-    bancos: bancoNome,
+    bancos: bancoComInss,
     tipos_acao: tipoLabel,
     tarifa_questionada: resolveTarifaQuestionada(acao),
-    instituicao_re: bancoNome,
+    instituicao_re: bancoComInss,
     contrato_acao: `contrato nº ${acao.numeroContrato}`,
     procuracao_usa_numero_contrato: usaContrato,
     procuracao_detalhe_tipo,
