@@ -4,7 +4,8 @@ import { useSnackbar } from '@/composables/useSnackbar'
 import {
   listBancos, createBanco, updateBanco, deleteBanco,
   listTarifas, createTarifa, updateTarifa, deleteTarifa,
-  type BancoKit, type TarifaKit,
+  listAssociacoes, createAssociacao, updateAssociacao, deleteAssociacao,
+  type BancoKit, type TarifaKit, type AssociacaoKit,
 } from '@/services/bancosETarifas'
 
 const { showSuccess, showError } = useSnackbar()
@@ -173,8 +174,95 @@ async function doDeleteTarifa () {
   } catch { showError('Erro ao remover tarifa') }
 }
 
+// ── Associações ──
+const associacoes = ref<AssociacaoKit[]>([])
+const associacaoDialog = ref(false)
+const associacaoEditing = ref<AssociacaoKit | null>(null)
+const associacaoForm = ref({ nome: '', abreviacao: '', ativo: true, ordem: 0 })
+const associacaoConfirmDelete = ref(false)
+const associacaoToDelete = ref<AssociacaoKit | null>(null)
+const associacaoPage = ref(1)
+const associacaoPageSize = ref(8)
+const associacaoBusca = ref('')
+
+const associacoesFiltradas = computed(() => {
+  const q = associacaoBusca.value.trim().toLowerCase()
+  if (!q) return associacoes.value
+  return associacoes.value.filter(a =>
+    a.nome.toLowerCase().includes(q) || a.abreviacao.toLowerCase().includes(q),
+  )
+})
+
+const associacoesTotalPages = computed(() => Math.ceil(associacoesFiltradas.value.length / associacaoPageSize.value))
+
+const associacoesPaginadas = computed(() => {
+  const start = (associacaoPage.value - 1) * associacaoPageSize.value
+  return associacoesFiltradas.value.slice(start, start + associacaoPageSize.value)
+})
+
+const associacoesRange = computed(() => {
+  const total = associacoesFiltradas.value.length
+  if (!total) return '0 registros'
+  const start = (associacaoPage.value - 1) * associacaoPageSize.value + 1
+  const end = Math.min(associacaoPage.value * associacaoPageSize.value, total)
+  return `${start}–${end} de ${total}`
+})
+
+async function fetchAssociacoes () {
+  loading.value = true
+  try { associacoes.value = await listAssociacoes() }
+  catch { showError('Erro ao carregar associações') }
+  finally { loading.value = false }
+}
+
+function openAssociacaoDialog (associacao?: AssociacaoKit) {
+  if (associacao) {
+    associacaoEditing.value = associacao
+    associacaoForm.value = {
+      nome: associacao.nome,
+      abreviacao: associacao.abreviacao,
+      ativo: associacao.ativo,
+      ordem: associacao.ordem,
+    }
+  } else {
+    associacaoEditing.value = null
+    associacaoForm.value = { nome: '', abreviacao: '', ativo: true, ordem: 0 }
+  }
+  associacaoDialog.value = true
+}
+
+async function saveAssociacao () {
+  if (!associacaoForm.value.nome.trim()) return
+  try {
+    if (associacaoEditing.value) {
+      await updateAssociacao(associacaoEditing.value.id, associacaoForm.value)
+      showSuccess('Associação atualizada!')
+    } else {
+      await createAssociacao(associacaoForm.value)
+      showSuccess('Associação cadastrada!')
+    }
+    associacaoDialog.value = false
+    await fetchAssociacoes()
+  } catch { showError('Erro ao salvar associação') }
+}
+
+function confirmDeleteAssociacao (associacao: AssociacaoKit) {
+  associacaoToDelete.value = associacao
+  associacaoConfirmDelete.value = true
+}
+
+async function doDeleteAssociacao () {
+  if (!associacaoToDelete.value) return
+  try {
+    await deleteAssociacao(associacaoToDelete.value.id)
+    showSuccess('Associação removida!')
+    associacaoConfirmDelete.value = false
+    await fetchAssociacoes()
+  } catch { showError('Erro ao remover associação') }
+}
+
 onMounted(async () => {
-  await Promise.all([fetchBancos(), fetchTarifas()])
+  await Promise.all([fetchBancos(), fetchTarifas(), fetchAssociacoes()])
 })
 </script>
 
@@ -190,6 +278,7 @@ onMounted(async () => {
     <v-tabs v-model="tab" color="primary">
       <v-tab value="bancos" prepend-icon="mdi-bank-outline">Bancos</v-tab>
       <v-tab value="tarifas" prepend-icon="mdi-currency-usd">Tarifas</v-tab>
+      <v-tab value="associacoes" prepend-icon="mdi-account-group-outline">Associações</v-tab>
     </v-tabs>
 
     <v-window v-model="tab" class="mt-4">
@@ -350,6 +439,87 @@ onMounted(async () => {
           />
         </div>
       </v-window-item>
+
+      <!-- ═══ ASSOCIAÇÕES ═══ -->
+      <v-window-item value="associacoes">
+        <v-row class="mb-3" dense>
+          <v-col cols="12" md>
+            <v-text-field
+              v-model="associacaoBusca"
+              density="compact"
+              hide-details
+              placeholder="Buscar associação..."
+              prepend-inner-icon="mdi-magnify"
+              variant="outlined"
+              @update:model-value="associacaoPage = 1"
+            />
+          </v-col>
+          <v-col cols="auto">
+            <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openAssociacaoDialog()">
+              Nova Associação
+            </v-btn>
+          </v-col>
+        </v-row>
+
+        <v-progress-linear v-if="loading" indeterminate class="mb-3" />
+
+        <v-table density="comfortable" hover>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th style="width: 140px">Abreviação</th>
+              <th class="text-center" style="width: 100px">Ordem</th>
+              <th class="text-center" style="width: 100px">Ativo</th>
+              <th class="text-center" style="width: 120px">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="associacoesPaginadas.length === 0">
+              <td colspan="5" class="text-center text-medium-emphasis py-6">Nenhuma associação encontrada</td>
+            </tr>
+            <tr v-for="associacao in associacoesPaginadas" :key="associacao.id">
+              <td>{{ associacao.nome }}</td>
+              <td>{{ associacao.abreviacao || '—' }}</td>
+              <td class="text-center">{{ associacao.ordem }}</td>
+              <td class="text-center">
+                <v-chip :color="associacao.ativo ? 'success' : 'default'" size="small" variant="tonal">
+                  {{ associacao.ativo ? 'Sim' : 'Não' }}
+                </v-chip>
+              </td>
+              <td class="text-center">
+                <v-btn density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openAssociacaoDialog(associacao)" />
+                <v-btn color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteAssociacao(associacao)" />
+              </td>
+            </tr>
+          </tbody>
+        </v-table>
+
+        <div v-if="associacoesFiltradas.length > 0" class="pagination-bar mt-4 d-flex align-center flex-wrap ga-3">
+          <span class="text-body-2 text-medium-emphasis">{{ associacoesRange }}</span>
+          <v-spacer />
+          <div class="d-flex align-center ga-2">
+            <span class="text-body-2 text-medium-emphasis">Linhas por página:</span>
+            <v-select
+              :model-value="associacaoPageSize"
+              density="compact"
+              hide-details
+              :items="pageSizeOptions"
+              style="max-width: 80px"
+              variant="outlined"
+              @update:model-value="associacaoPageSize = $event; associacaoPage = 1"
+            />
+          </div>
+          <v-pagination
+            v-if="associacoesTotalPages > 1"
+            v-model="associacaoPage"
+            density="comfortable"
+            :length="associacoesTotalPages"
+            rounded="sm"
+            size="small"
+            :total-visible="5"
+          />
+        </div>
+      </v-window-item>
     </v-window>
 
     <!-- Dialog Banco -->
@@ -408,6 +578,37 @@ onMounted(async () => {
           <v-spacer />
           <v-btn variant="text" @click="tarifaConfirmDelete = false">Cancelar</v-btn>
           <v-btn color="error" @click="doDeleteTarifa">Excluir</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Dialog Associação -->
+    <v-dialog v-model="associacaoDialog" max-width="450">
+      <v-card rounded="lg">
+        <v-card-title class="text-h6 pa-5">{{ associacaoEditing ? 'Editar Associação' : 'Nova Associação' }}</v-card-title>
+        <v-card-text class="px-5 pb-2">
+          <v-text-field v-model="associacaoForm.nome" density="compact" hide-details="auto" label="Nome da associação" variant="outlined" class="mb-3" />
+          <v-text-field v-model="associacaoForm.abreviacao" density="compact" hide-details="auto" label="Abreviação" variant="outlined" class="mb-3" />
+          <v-text-field v-model.number="associacaoForm.ordem" density="compact" hide-details="auto" label="Ordem" type="number" variant="outlined" class="mb-3" />
+          <v-switch v-model="associacaoForm.ativo" color="primary" hide-details label="Ativo" />
+        </v-card-text>
+        <v-card-actions class="pa-5 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="associacaoDialog = false">Cancelar</v-btn>
+          <v-btn color="primary" :disabled="!associacaoForm.nome.trim()" @click="saveAssociacao">Salvar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Confirm Delete Associação -->
+    <v-dialog v-model="associacaoConfirmDelete" max-width="400">
+      <v-card rounded="lg">
+        <v-card-title class="text-h6 pa-5">Excluir associação?</v-card-title>
+        <v-card-text class="px-5">Deseja excluir a associação <strong>{{ associacaoToDelete?.nome }}</strong>?</v-card-text>
+        <v-card-actions class="pa-5 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="associacaoConfirmDelete = false">Cancelar</v-btn>
+          <v-btn color="error" @click="doDeleteAssociacao">Excluir</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

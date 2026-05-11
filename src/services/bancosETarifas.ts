@@ -14,8 +14,17 @@ export interface TarifaKit {
   ordem: number
 }
 
+export interface AssociacaoKit {
+  id: number
+  nome: string
+  abreviacao: string
+  ativo: boolean
+  ordem: number
+}
+
 const BANCOS_BASE = '/api/bancos-kit/'
 const TARIFAS_BASE = '/api/tarifas-kit/'
+const ASSOCIACOES_BASE = '/api/associacoes-kit/'
 
 // ── Bancos ──
 
@@ -57,4 +66,25 @@ export async function updateTarifa (id: number, payload: Partial<TarifaKit>): Pr
 
 export async function deleteTarifa (id: number): Promise<void> {
   await api.delete(`${TARIFAS_BASE}${id}/`)
+}
+
+// ── Associações ──
+
+export async function listAssociacoes (): Promise<AssociacaoKit[]> {
+  const { data } = await api.get<AssociacaoKit[]>(ASSOCIACOES_BASE)
+  return Array.isArray(data) ? data : (data as any).results ?? []
+}
+
+export async function createAssociacao (payload: Partial<AssociacaoKit>): Promise<AssociacaoKit> {
+  const { data } = await api.post<AssociacaoKit>(ASSOCIACOES_BASE, payload)
+  return data
+}
+
+export async function updateAssociacao (id: number, payload: Partial<AssociacaoKit>): Promise<AssociacaoKit> {
+  const { data } = await api.patch<AssociacaoKit>(`${ASSOCIACOES_BASE}${id}/`, payload)
+  return data
+}
+
+export async function deleteAssociacao (id: number): Promise<void> {
+  await api.delete(`${ASSOCIACOES_BASE}${id}/`)
 }

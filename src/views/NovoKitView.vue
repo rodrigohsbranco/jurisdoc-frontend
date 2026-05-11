@@ -6,7 +6,7 @@ import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
 import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
-import { listBancos, listTarifas } from '@/services/bancosETarifas'
+import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useCpf } from '@/composables/useCpf'
@@ -52,13 +52,15 @@ const { showSuccess, showError } = useSnackbar()
 // Bancos e tarifas dinâmicos (do banco de dados)
 const bancosOptions = ref<string[]>([])
 const tarifasOptions = ref<string[]>([])
+const associacoesOptions = ref<AssociacaoKit[]>([])
 
 async function carregarBancosETarifas () {
-  const [bancos, tarifas] = await Promise.all([listBancos(), listTarifas()])
+  const [bancos, tarifas, associacoes] = await Promise.all([listBancos(), listTarifas(), listAssociacoes()])
   bancosOptions.value = bancos.filter(b => b.ativo).map(b => b.nome)
   if (!bancosOptions.value.includes('Outro')) bancosOptions.value.push('Outro')
   tarifasOptions.value = tarifas.filter(t => t.ativo).map(t => t.nome)
   if (!tarifasOptions.value.includes('OUTROS')) tarifasOptions.value.push('OUTROS')
+  associacoesOptions.value = associacoes.filter(a => a.ativo)
 }
 
 // ── Busca de cliente por CPF ──
@@ -428,7 +430,7 @@ function removeAcao (index: number) {
   acoes.value.splice(index, 1)
 }
 
-function updateAcao (index: number, field: keyof KitAcao, value: string) {
+function updateAcao (index: number, field: keyof KitAcao, value: string | number | null) {
   const acao = acoes.value[index]
   if (field === 'tipoAcao') {
     acao.numeroContrato = ''
@@ -436,6 +438,7 @@ function updateAcao (index: number, field: keyof KitAcao, value: string) {
     acao.tarifaQuestionadaOutro = ''
     acao.tipoSeguro = ''
     acao.tipoContribuicao = ''
+    acao.associacaoId = null
     acao.historicoEmprestimoArquivos = []
     acao.historicoEmprestimoFiles = []
     acao.historicoCreditoArquivos = []
@@ -449,7 +452,7 @@ function updateAcao (index: number, field: keyof KitAcao, value: string) {
   if (field === 'nomeBanco' && value !== 'Outro') {
     acao.bancoOutro = ''
   }
-  ;(acao[field] as string) = value
+  ;(acao as any)[field] = value
 }
 
 function resolveTarifaQuestionada (acao: KitAcao): string {
@@ -2514,6 +2517,25 @@ onMounted(async () => {
                     variant="outlined"
                     @update:model-value="updateAcao(i, 'tipoContribuicao', $event)"
                   />
+
+                  <!-- Associação (apenas kit bancário) -->
+                  <template v-if="tipoKit === 'bancario'">
+                    <label class="field-label mt-3">Associação</label>
+                    <v-select
+                      :model-value="acao.associacaoId"
+                      class="compact-input"
+                      clearable
+                      density="compact"
+                      hide-details="auto"
+                      item-title="nome"
+                      item-value="id"
+                      :items="associacoesOptions"
+                      :no-data-text="'Nenhuma associação cadastrada'"
+                      placeholder="Selecione a associação"
+                      variant="outlined"
+                      @update:model-value="updateAcao(i, 'associacaoId', $event ?? null)"
+                    />
+                  </template>
                 </template>
               </div>
 

@@ -103,6 +103,7 @@ export type KitAcao = {
   tarifaQuestionadaOutro: string   // quando tarifaQuestionada='OUTROS'
   tipoSeguro: string               // quando tipo='seguro_nao_autorizado'
   tipoContribuicao: string         // quando tipo='contribuicao_sindical_nao_autorizada'
+  associacaoId: number | null      // quando tipo='contribuicao_sindical_nao_autorizada' (somente kit bancário)
   historicoEmprestimoArquivos: UploadedDoc[]
   historicoEmprestimoFiles: File[]
   historicoCreditoArquivos: UploadedDoc[]
@@ -246,6 +247,7 @@ export const emptyAcao = (): KitAcao => ({
   tarifaQuestionadaOutro: '',
   tipoSeguro: '',
   tipoContribuicao: '',
+  associacaoId: null,
   historicoEmprestimoArquivos: [],
   historicoEmprestimoFiles: [],
   historicoCreditoArquivos: [],

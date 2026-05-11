@@ -40,6 +40,7 @@ export interface AcaoAPI {
   tarifa_questionada_outro: string
   tipo_seguro: string
   tipo_contribuicao: string
+  associacao: number | null
   historico_emprestimo?: string
   historico_credito?: string
   extrato_bancario?: string
@@ -151,6 +152,7 @@ function acaoToFormData (acao: Partial<KitAcao>): FormData {
   fd.append('tarifa_questionada_outro', acao.tarifaQuestionadaOutro || '')
   fd.append('tipo_seguro', acao.tipoSeguro || '')
   fd.append('tipo_contribuicao', acao.tipoContribuicao || '')
+  fd.append('associacao', acao.associacaoId != null ? String(acao.associacaoId) : '')
   fd.append('historico_emprestimo_sync', '1')
   fd.append('historico_credito_sync', '1')
   fd.append('extrato_bancario_sync', '1')
@@ -180,6 +182,7 @@ export function acaoFromAPI (a: AcaoAPI): KitAcao {
     tarifaQuestionadaOutro: a.tarifa_questionada_outro,
     tipoSeguro: a.tipo_seguro,
     tipoContribuicao: a.tipo_contribuicao,
+    associacaoId: a.associacao ?? null,
     historicoEmprestimoArquivos: normalizeDocs(a.historico_emprestimo_arquivos),
     historicoEmprestimoFiles: [],
     historicoCreditoArquivos: normalizeDocs(a.historico_credito_arquivos),
