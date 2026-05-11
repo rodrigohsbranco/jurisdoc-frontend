@@ -877,10 +877,20 @@ async function montarContexto (): Promise<Record<string, any>> {
   const d = new Date()
   const local_data = `${c.cidade}/${c.estado}, ${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`
 
-  // Bancos
+  // Bancos (com substituição pela abreviação da associação em contribuição sindical bancária)
   const bancoNomes = Array.from(new Set(
     acoes.value
-      .map(a => (a.nomeBanco === 'Outro' ? a.bancoOutro : a.nomeBanco).toUpperCase().trim())
+      .map(a => {
+        if (
+          a.tipoAcao === 'contribuicao_sindical_nao_autorizada'
+          && tipoKit.value === 'bancario'
+          && a.associacaoId != null
+        ) {
+          const assoc = associacoesOptions.value.find(x => x.id === a.associacaoId)
+          if (assoc) return (assoc.abreviacao || assoc.nome).toUpperCase().trim()
+        }
+        return (a.nomeBanco === 'Outro' ? a.bancoOutro : a.nomeBanco).toUpperCase().trim()
+      })
       .filter(Boolean),
   ))
   const bancosBase = bancoNomes.length <= 1
@@ -1384,7 +1394,7 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
     : bancoNome
 
   // Caso especial: contribuição sindical não autorizada em kit bancário com associação.
-  // tipos_acao → frase do tipo, bancos → abreviação da associação (no lugar do banco).
+  // tipos_acao → frase do tipo, bancos → "de(a) ABREVIAÇÃO" (no lugar do banco).
   if (
     acao.tipoAcao === 'contribuicao_sindical_nao_autorizada'
     && tipoKit.value === 'bancario'
@@ -1393,7 +1403,7 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
     const assoc = associacoesOptions.value.find(a => a.id === acao.associacaoId)
     if (assoc) {
       tipoLabel = 'contribuição não autorizada em benefício previdenciário'
-      bancoComInss = assoc.abreviacao || assoc.nome
+      bancoComInss = `de(a) ${assoc.abreviacao || assoc.nome}`
       procuracao_detalhe_tipo = ''
     }
   }
