@@ -54,6 +54,13 @@ const bancosOptions = ref<string[]>([])
 const tarifasOptions = ref<string[]>([])
 const associacoesOptions = ref<AssociacaoKit[]>([])
 
+const associacoesSelectItems = computed(() =>
+  associacoesOptions.value.map(a => ({
+    id: a.id,
+    label: a.abreviacao ? `${a.nome} (${a.abreviacao})` : a.nome,
+  })),
+)
+
 async function carregarBancosETarifas () {
   const [bancos, tarifas, associacoes] = await Promise.all([listBancos(), listTarifas(), listAssociacoes()])
   bancosOptions.value = bancos.filter(b => b.ativo).map(b => b.nome)
@@ -644,7 +651,7 @@ function validateAcoes (): boolean {
     if (acao.tipoAcao === 'tarifa_bancaria' && !acao.tarifaQuestionada) e.tarifaQuestionada = 'Campo obrigatório'
     if (acao.tipoAcao === 'tarifa_bancaria' && acao.tarifaQuestionada === 'OUTROS' && !acao.tarifaQuestionadaOutro?.trim()) e.tarifaQuestionadaOutro = 'Campo obrigatório'
     if (acao.tipoAcao === 'seguro_nao_autorizado' && !acao.tipoSeguro?.trim()) e.tipoSeguro = 'Campo obrigatório'
-    if (acao.tipoAcao === 'contribuicao_sindical_nao_autorizada' && !acao.tipoContribuicao?.trim()) e.tipoContribuicao = 'Campo obrigatório'
+    if (acao.tipoAcao === 'contribuicao_sindical_nao_autorizada' && tipoKit.value === 'marketing' && !acao.tipoContribuicao?.trim()) e.tipoContribuicao = 'Campo obrigatório'
     if (Object.keys(e).length > 0) errs[i] = e
   })
   acoesErrors.value = errs
@@ -2503,8 +2510,27 @@ onMounted(async () => {
                   />
                 </template>
 
-                <!-- Contribuição sindical -->
-                <template v-if="acao.tipoAcao === 'contribuicao_sindical_nao_autorizada'">
+                <!-- Contribuição sindical: associação (apenas kit bancário) -->
+                <template v-if="acao.tipoAcao === 'contribuicao_sindical_nao_autorizada' && tipoKit === 'bancario'">
+                  <label class="field-label">Associação</label>
+                  <v-select
+                    :model-value="acao.associacaoId"
+                    class="compact-input"
+                    clearable
+                    density="compact"
+                    hide-details="auto"
+                    item-title="label"
+                    item-value="id"
+                    :items="associacoesSelectItems"
+                    :no-data-text="'Nenhuma associação cadastrada'"
+                    placeholder="Selecione a associação"
+                    variant="outlined"
+                    @update:model-value="updateAcao(i, 'associacaoId', $event ?? null)"
+                  />
+                </template>
+
+                <!-- Contribuição sindical: tipo livre (apenas kit marketing) -->
+                <template v-if="acao.tipoAcao === 'contribuicao_sindical_nao_autorizada' && tipoKit === 'marketing'">
                   <label class="field-label">Tipo de contribuição *</label>
                   <v-textarea
                     :model-value="acao.tipoContribuicao"
@@ -2517,25 +2543,6 @@ onMounted(async () => {
                     variant="outlined"
                     @update:model-value="updateAcao(i, 'tipoContribuicao', $event)"
                   />
-
-                  <!-- Associação (apenas kit bancário) -->
-                  <template v-if="tipoKit === 'bancario'">
-                    <label class="field-label mt-3">Associação</label>
-                    <v-select
-                      :model-value="acao.associacaoId"
-                      class="compact-input"
-                      clearable
-                      density="compact"
-                      hide-details="auto"
-                      item-title="nome"
-                      item-value="id"
-                      :items="associacoesOptions"
-                      :no-data-text="'Nenhuma associação cadastrada'"
-                      placeholder="Selecione a associação"
-                      variant="outlined"
-                      @update:model-value="updateAcao(i, 'associacaoId', $event ?? null)"
-                    />
-                  </template>
                 </template>
               </div>
 
