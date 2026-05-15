@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { usePermissions } from '@/composables/usePermissions'
 import {
   listBancos, createBanco, updateBanco, deleteBanco,
   listTarifas, createTarifa, updateTarifa, deleteTarifa,
@@ -9,6 +10,7 @@ import {
 } from '@/services/bancosETarifas'
 
 const { showSuccess, showError } = useSnackbar()
+const { can } = usePermissions()
 
 const tab = ref('bancos')
 const loading = ref(false)
@@ -297,7 +299,7 @@ onMounted(async () => {
             />
           </v-col>
           <v-col cols="auto">
-            <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openBancoDialog()">
+            <v-btn v-if="can('bancos_tarifas.criar')" color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openBancoDialog()">
               Novo Banco
             </v-btn>
           </v-col>
@@ -327,8 +329,8 @@ onMounted(async () => {
                 </v-chip>
               </td>
               <td class="text-center">
-                <v-btn density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openBancoDialog(banco)" />
-                <v-btn color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteBanco(banco)" />
+                <v-btn v-if="can('bancos_tarifas.editar')" density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openBancoDialog(banco)" />
+                <v-btn v-if="can('bancos_tarifas.deletar')" color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteBanco(banco)" />
               </td>
             </tr>
           </tbody>
@@ -376,7 +378,7 @@ onMounted(async () => {
             />
           </v-col>
           <v-col cols="auto">
-            <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openTarifaDialog()">
+            <v-btn v-if="can('bancos_tarifas.criar')" color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openTarifaDialog()">
               Nova Tarifa
             </v-btn>
           </v-col>
@@ -406,8 +408,8 @@ onMounted(async () => {
                 </v-chip>
               </td>
               <td class="text-center">
-                <v-btn density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openTarifaDialog(tarifa)" />
-                <v-btn color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteTarifa(tarifa)" />
+                <v-btn v-if="can('bancos_tarifas.editar')" density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openTarifaDialog(tarifa)" />
+                <v-btn v-if="can('bancos_tarifas.deletar')" color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteTarifa(tarifa)" />
               </td>
             </tr>
           </tbody>
@@ -455,7 +457,7 @@ onMounted(async () => {
             />
           </v-col>
           <v-col cols="auto">
-            <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openAssociacaoDialog()">
+            <v-btn v-if="can('bancos_tarifas.criar')" color="primary" prepend-icon="mdi-plus" rounded="sm" @click="openAssociacaoDialog()">
               Nova Associação
             </v-btn>
           </v-col>
@@ -487,8 +489,8 @@ onMounted(async () => {
                 </v-chip>
               </td>
               <td class="text-center">
-                <v-btn density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openAssociacaoDialog(associacao)" />
-                <v-btn color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteAssociacao(associacao)" />
+                <v-btn v-if="can('bancos_tarifas.editar')" density="compact" icon="mdi-pencil-outline" size="small" variant="text" @click="openAssociacaoDialog(associacao)" />
+                <v-btn v-if="can('bancos_tarifas.deletar')" color="error" density="compact" icon="mdi-delete-outline" size="small" variant="text" @click="confirmDeleteAssociacao(associacao)" />
               </td>
             </tr>
           </tbody>

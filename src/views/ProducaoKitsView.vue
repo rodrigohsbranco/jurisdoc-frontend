@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useKitsStore } from '@/stores/kits'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissions } from '@/composables/usePermissions'
 import { listUsers, type User } from '@/services/users'
 import type { KitTipo } from '@/types/kits'
 
@@ -24,6 +25,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 const kitsStore = useKitsStore()
 const authStore = useAuthStore()
+const { can } = usePermissions()
 
 const tipoOptions = [
   { title: 'Bancário', value: 'bancario' },
@@ -188,7 +190,13 @@ onUnmounted(() => {
         <p class="text-body-2 text-medium-emphasis mb-0">Gestão de documentos jurídicos</p>
       </div>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" rounded="sm" :to="{ name: 'producao-kits-novo' }">
+      <v-btn
+        v-if="can('kits.criar')"
+        color="primary"
+        prepend-icon="mdi-plus"
+        rounded="sm"
+        :to="{ name: 'producao-kits-novo' }"
+      >
         Novo Kit
       </v-btn>
     </div>

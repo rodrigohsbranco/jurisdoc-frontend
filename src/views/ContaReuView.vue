@@ -8,6 +8,7 @@
   import { useBankCatalog } from '@/composables/useBankCatalog'
   import { useCepLookup } from '@/composables/useCepLookup'
   import { useSnackbar } from '@/composables/useSnackbar'
+  import { usePermissions } from '@/composables/usePermissions'
   import { friendlyError, extractFieldErrors } from '@/utils/errorMessages'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import SidePanel from '@/components/SidePanel.vue'
@@ -16,6 +17,7 @@
   const { bankItems, bankLoading, loadBankCatalog, extractCompeFromLabel } = useBankCatalog()
   const { cepLoading, cepStatus, lookupCEP: doCepLookup } = useCepLookup()
   const { showSuccess } = useSnackbar()
+  const { can } = usePermissions()
 
   const loading = computed(() => contasReu.loading)
   const error = computed(() => contasReu.error)
@@ -221,7 +223,12 @@
         </div>
         <p class="text-body-2 text-medium-emphasis mt-1">Gerenciamento dos bancos réus</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-bank-plus" @click="openCreate">
+      <v-btn
+        v-if="can('conta_reu.criar')"
+        color="primary"
+        prepend-icon="mdi-bank-plus"
+        @click="openCreate"
+      >
         Novo banco réu
       </v-btn>
     </div>
@@ -300,9 +307,15 @@
                 />
               </template>
               <v-list density="compact" min-width="160">
-                <v-list-item prepend-icon="mdi-pencil-outline" title="Editar" @click="openEdit(item)" />
-                <v-divider class="my-1" />
                 <v-list-item
+                  v-if="can('conta_reu.editar')"
+                  prepend-icon="mdi-pencil-outline"
+                  title="Editar"
+                  @click="openEdit(item)"
+                />
+                <v-divider v-if="can('conta_reu.deletar')" class="my-1" />
+                <v-list-item
+                  v-if="can('conta_reu.deletar')"
                   class="text-error"
                   prepend-icon="mdi-delete-outline"
                   title="Excluir"
@@ -360,6 +373,7 @@
               <v-icon class="mb-2" color="grey-lighten-1" icon="mdi-bank-off-outline" size="40" />
               <div class="text-body-2 text-medium-emphasis">Nenhum banco cadastrado</div>
               <v-btn
+                v-if="can('conta_reu.criar')"
                 class="mt-3 text-none"
                 color="primary"
                 prepend-icon="mdi-bank-plus"

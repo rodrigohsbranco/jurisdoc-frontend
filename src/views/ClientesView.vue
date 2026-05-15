@@ -11,6 +11,7 @@ import { formatCPF, formatCEP } from "@/utils/formatters";
 import { useCepLookup } from "@/composables/useCepLookup";
 import { useCpf, isValidCPF } from "@/composables/useCpf";
 import { useSnackbar } from "@/composables/useSnackbar";
+import { usePermissions } from "@/composables/usePermissions";
 import { friendlyError, extractFieldErrors } from "@/utils/errorMessages";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SidePanel from "@/components/SidePanel.vue";
@@ -20,6 +21,7 @@ const router = useRouter();
 const { cepLoading, cepStatus, lookupCEP: doCepLookup } = useCepLookup();
 const { cpfCheckStatus, checkCPFExists, resetCpfCheck } = useCpf();
 const { showSuccess, showError } = useSnackbar();
+const { can } = usePermissions();
 
 // UI state (lista)
 const search = ref("");
@@ -347,7 +349,12 @@ const cpfStatusIcon = computed(() => {
         </div>
         <p class="text-body-2 text-medium-emphasis mt-1">Cadastro e gerenciamento de clientes</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-account-plus" @click="openCreate">
+      <v-btn
+        v-if="can('clientes.criar')"
+        color="primary"
+        prepend-icon="mdi-account-plus"
+        @click="openCreate"
+      >
         Novo cliente
       </v-btn>
     </div>
@@ -448,10 +455,21 @@ const cpfStatusIcon = computed(() => {
                 />
               </template>
               <v-list density="compact" min-width="180">
-                <v-list-item prepend-icon="mdi-pencil-outline" title="Editar" @click="openEdit(item)" />
-                <v-list-item prepend-icon="mdi-bank-outline" title="Contas bancárias" @click="goContas(item)" />
-                <v-divider class="my-1" />
                 <v-list-item
+                  v-if="can('clientes.editar')"
+                  prepend-icon="mdi-pencil-outline"
+                  title="Editar"
+                  @click="openEdit(item)"
+                />
+                <v-list-item
+                  v-if="can('contas.visualizar')"
+                  prepend-icon="mdi-bank-outline"
+                  title="Contas bancárias"
+                  @click="goContas(item)"
+                />
+                <v-divider v-if="can('clientes.deletar')" class="my-1" />
+                <v-list-item
+                  v-if="can('clientes.deletar')"
                   class="text-error"
                   prepend-icon="mdi-delete-outline"
                   title="Excluir"
@@ -798,6 +816,7 @@ const cpfStatusIcon = computed(() => {
             </div>
             <v-spacer />
             <v-btn
+              v-if="can('representantes.criar')"
               color="primary"
               prepend-icon="mdi-account-plus-outline"
               size="small"
@@ -846,6 +865,7 @@ const cpfStatusIcon = computed(() => {
                 </div>
                 <div class="d-flex ga-1">
                   <v-btn
+                    v-if="can('representantes.editar')"
                     icon
                     size="small"
                     variant="text"
@@ -855,6 +875,7 @@ const cpfStatusIcon = computed(() => {
                     <v-tooltip activator="parent" location="top">Copiar endereço do cliente</v-tooltip>
                   </v-btn>
                   <v-btn
+                    v-if="can('representantes.editar')"
                     icon
                     size="small"
                     variant="text"
@@ -864,6 +885,7 @@ const cpfStatusIcon = computed(() => {
                     <v-tooltip activator="parent" location="top">Editar</v-tooltip>
                   </v-btn>
                   <v-btn
+                    v-if="can('representantes.deletar')"
                     color="error"
                     icon
                     size="small"
@@ -882,6 +904,7 @@ const cpfStatusIcon = computed(() => {
             <v-icon class="mb-2" color="grey-lighten-1" icon="mdi-account-group-outline" size="36" />
             <div class="text-body-2 text-medium-emphasis">Nenhum representante cadastrado</div>
             <v-btn
+              v-if="can('representantes.criar')"
               class="mt-3 text-none"
               color="primary"
               prepend-icon="mdi-account-plus-outline"

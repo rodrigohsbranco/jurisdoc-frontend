@@ -19,11 +19,13 @@ import { formatCurrency, parseCurrency, applyCurrencyMask } from "@/composables/
 import api from "@/services/api";
 import { friendlyError } from "@/utils/errorMessages";
 import { useSnackbar } from "@/composables/useSnackbar";
+import { usePermissions } from "@/composables/usePermissions";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SidePanel from "@/components/SidePanel.vue";
 
 const { numeroParaExtenso, isExtensoField, getBaseFieldNameForExtenso } = useNumeroExtenso();
 const { showSuccess, showError, showInfo, showWarning } = useSnackbar();
+const { can } = usePermissions();
 
 const clientesStore = useClientesStore();
 const templatesStore = useTemplatesStore();
@@ -1044,7 +1046,12 @@ onMounted(async () => {
           Opera&ccedil;&atilde;o di&aacute;ria com foco em pend&ecirc;ncias, revis&atilde;o e assinatura
         </p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-file-document-plus" @click="openCreate">
+      <v-btn
+        v-if="can('contratos.criar')"
+        color="primary"
+        prepend-icon="mdi-file-document-plus"
+        @click="openCreate"
+      >
         Novo contrato
       </v-btn>
     </div>
@@ -1182,12 +1189,14 @@ onMounted(async () => {
                   @click="openVerificacao(item)"
                 />
                 <v-list-item
+                  v-if="can('contratos.editar')"
                   prepend-icon="mdi-pencil-outline"
                   title="Editar"
                   @click="openEdit(item)"
                 />
-                <v-divider class="my-1" />
+                <v-divider v-if="can('contratos.deletar')" class="my-1" />
                 <v-list-item
+                  v-if="can('contratos.deletar')"
                   class="text-error"
                   prepend-icon="mdi-delete-outline"
                   title="Excluir"
@@ -1200,7 +1209,13 @@ onMounted(async () => {
           <template #no-data>
             <v-sheet class="pa-6 text-center text-medium-emphasis">
               <div class="mb-2">Nenhum contrato para o filtro atual.</div>
-              <v-btn color="primary" prepend-icon="mdi-file-document-plus" variant="tonal" @click="openCreate">
+              <v-btn
+                v-if="can('contratos.criar')"
+                color="primary"
+                prepend-icon="mdi-file-document-plus"
+                variant="tonal"
+                @click="openCreate"
+              >
                 Criar novo contrato
               </v-btn>
             </v-sheet>

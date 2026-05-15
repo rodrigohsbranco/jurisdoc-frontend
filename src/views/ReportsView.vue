@@ -3,10 +3,12 @@
   import { type Bucket, useRelatoriosStore } from '@/stores/relatorios'
   import { useTemplatesStore } from '@/stores/templates'
   import { useSnackbar } from '@/composables/useSnackbar'
+  import { usePermissions } from '@/composables/usePermissions'
 
   const rel = useRelatoriosStore()
   const templates = useTemplatesStore()
   const { showSuccess, showError } = useSnackbar()
+  const { can } = usePermissions()
 
   // ─── Filtros ───
   const filters = reactive<{
@@ -207,6 +209,7 @@
         <p class="text-body-2 text-medium-emphasis mt-1">Visão geral, análises e exportação de dados</p>
       </div>
       <v-btn
+        v-if="can('relatorios.exportar')"
         class="text-none"
         color="primary"
         prepend-icon="mdi-download-outline"

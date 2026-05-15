@@ -10,6 +10,7 @@ import {
 import { onlyDigits } from "@/utils/formatters";
 import { useBankCatalog } from "@/composables/useBankCatalog";
 import { useSnackbar } from "@/composables/useSnackbar";
+import { usePermissions } from "@/composables/usePermissions";
 import { friendlyError } from "@/utils/errorMessages";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SidePanel from "@/components/SidePanel.vue";
@@ -25,6 +26,7 @@ const contas = useContasStore();
 const clientes = useClientesStore();
 const { bankItems, bankLoading, loadBankCatalog, extractCompeFromLabel, findBankMetaByLabel } = useBankCatalog(CUSTOM_BANKS);
 const { showSuccess, showError } = useSnackbar();
+const { can } = usePermissions();
 
 const clienteId = computed(() => Number(route.params.id));
 const cliente = ref<Cliente | null>(null);
@@ -313,7 +315,12 @@ watch(() => route.params.id, load);
           <span v-if="cliente?.cidade"> &mdash; {{ cliente.cidade }}/{{ cliente?.uf }}</span>
         </p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-bank-plus" @click="openCreate">
+      <v-btn
+        v-if="can('contas.criar')"
+        color="primary"
+        prepend-icon="mdi-bank-plus"
+        @click="openCreate"
+      >
         Nova conta
       </v-btn>
     </div>
@@ -381,11 +388,11 @@ watch(() => route.params.id, load);
 
           <template #item.actions="{ item }">
             <div class="d-flex ga-1 justify-end">
-              <v-btn color="primary" icon size="small" variant="text" @click="openEdit(item)">
+              <v-btn v-if="can('contas.editar')" color="primary" icon size="small" variant="text" @click="openEdit(item)">
                 <v-icon icon="mdi-pencil-outline" size="18" />
                 <v-tooltip activator="parent" location="top">Editar</v-tooltip>
               </v-btn>
-              <v-btn color="error" icon size="small" variant="text" @click="remove(item)">
+              <v-btn v-if="can('contas.deletar')" color="error" icon size="small" variant="text" @click="remove(item)">
                 <v-icon icon="mdi-delete-outline" size="18" />
                 <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
               </v-btn>

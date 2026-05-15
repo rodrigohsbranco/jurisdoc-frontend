@@ -5,6 +5,7 @@ import { type ContaBancaria, useContasStore } from "@/stores/contas";
 import { type Petition, usePeticoesStore } from "@/stores/peticoes";
 import { type TemplateField, useTemplatesStore } from "@/stores/templates";
 import { useSnackbar } from "@/composables/useSnackbar";
+import { usePermissions } from "@/composables/usePermissions";
 import { friendlyError } from "@/utils/errorMessages";
 import { normKey, isEmpty, valueFromSources, detectCanon } from "@/composables/useContratoPrefill";
 import { formatCurrency, parseCurrency, applyCurrencyMask } from "@/composables/useCurrencyMask";
@@ -17,6 +18,7 @@ const templates = useTemplatesStore();
 const clientes = useClientesStore();
 const contas = useContasStore();
 const { showSuccess, showError } = useSnackbar();
+const { can } = usePermissions();
 const { numeroParaExtenso, isExtensoField, getBaseFieldNameForExtenso } = useNumeroExtenso();
 
 // Campos monetários conhecidos
@@ -542,7 +544,12 @@ onMounted(loadAll);
         </div>
         <p class="text-body-2 text-medium-emphasis mt-1">Cadastro de petições e geração de documentos</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-file-document-plus" @click="openCreate">
+      <v-btn
+        v-if="can('peticoes.criar')"
+        color="primary"
+        prepend-icon="mdi-file-document-plus"
+        @click="openCreate"
+      >
         Nova petição
       </v-btn>
     </div>
@@ -614,23 +621,27 @@ onMounted(loadAll);
               </template>
               <v-list density="compact" min-width="200">
                 <v-list-item
+                  v-if="can('peticoes.renderizar')"
                   prepend-icon="mdi-eye-outline"
                   title="Visualizar"
                   @click="openOverview(item)"
                 />
                 <v-list-item
+                  v-if="can('peticoes.editar')"
                   prepend-icon="mdi-pencil-outline"
                   title="Editar"
                   @click="openEdit(item)"
                 />
                 <v-list-item
+                  v-if="can('peticoes.renderizar')"
                   :disabled="rendering && renderingId === item.id"
                   prepend-icon="mdi-file-export-outline"
                   title="Gerar documento"
                   @click="doRender(item)"
                 />
-                <v-divider class="my-1" />
+                <v-divider v-if="can('peticoes.deletar')" class="my-1" />
                 <v-list-item
+                  v-if="can('peticoes.deletar')"
                   class="text-error"
                   prepend-icon="mdi-delete-outline"
                   title="Excluir"
@@ -835,6 +846,7 @@ onMounted(loadAll);
       <template #actions>
         <v-btn variant="text" @click="dialogOverview = false">Fechar</v-btn>
         <v-btn
+          v-if="can('peticoes.editar')"
           color="primary"
           prepend-icon="mdi-pencil-outline"
           variant="outlined"

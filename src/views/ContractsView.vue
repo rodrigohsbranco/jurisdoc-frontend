@@ -3,6 +3,7 @@
   import { useClientesStore } from '@/stores/clientes'
   import { useContractsStore } from '@/stores/contracts'
   import { useSnackbar } from '@/composables/useSnackbar'
+  import { usePermissions } from '@/composables/usePermissions'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import SidePanel from '@/components/SidePanel.vue'
 
@@ -10,6 +11,7 @@
   const contracts = useContractsStore()
   const clientes = useClientesStore()
   const { showSuccess, showError } = useSnackbar()
+  const { can } = usePermissions()
 
   // Confirm dialog
   const confirmVisible = ref(false)
@@ -176,7 +178,12 @@
         <h1 class="text-h5 font-weight-bold text-primary">Contratos</h1>
         <p class="text-body-2 text-medium-emphasis mt-1">Cadastro e gerenciamento de contratos dos clientes</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-file-document-plus" @click="openCreate">
+      <v-btn
+        v-if="can('contratos.criar')"
+        color="primary"
+        prepend-icon="mdi-file-document-plus"
+        @click="openCreate"
+      >
         Novo contrato
       </v-btn>
     </div>
@@ -235,11 +242,11 @@
 
           <template #item.actions="{ item }">
             <div class="d-flex ga-1 justify-end">
-              <v-btn color="primary" icon size="small" variant="text" @click="openEdit(item)">
+              <v-btn v-if="can('contratos.editar')" color="primary" icon size="small" variant="text" @click="openEdit(item)">
                 <v-icon icon="mdi-pencil-outline" size="18" />
                 <v-tooltip activator="parent" location="top">Editar</v-tooltip>
               </v-btn>
-              <v-btn color="error" icon size="small" variant="text" @click="removeContract(item)">
+              <v-btn v-if="can('contratos.deletar')" color="error" icon size="small" variant="text" @click="removeContract(item)">
                 <v-icon icon="mdi-delete-outline" size="18" />
                 <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
               </v-btn>

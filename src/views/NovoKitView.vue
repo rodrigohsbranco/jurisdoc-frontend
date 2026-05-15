@@ -9,6 +9,7 @@ import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { usePermissions } from '@/composables/usePermissions'
 import { useCpf } from '@/composables/useCpf'
 import { useCepLookup } from '@/composables/useCepLookup'
 import { onlyDigits, formatCPF } from '@/utils/formatters'
@@ -48,6 +49,7 @@ const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
 const { showSuccess, showError } = useSnackbar()
+const { can } = usePermissions()
 
 // Bancos e tarifas dinâmicos (do banco de dados)
 const bancosOptions = ref<string[]>([])
@@ -1774,7 +1776,14 @@ onMounted(async () => {
                 <v-alert v-if="clienteNaoEncontrado" class="mt-5" color="warning" icon="mdi-account-search-outline" variant="tonal">
                   <div class="d-flex align-center justify-space-between flex-wrap ga-3">
                     <span>Cliente não encontrado no sistema.</span>
-                    <v-btn color="primary" prepend-icon="mdi-account-plus-outline" size="small" variant="flat" @click="abrirDrawerCadastro">
+                    <v-btn
+                      v-if="can('clientes.criar')"
+                      color="primary"
+                      prepend-icon="mdi-account-plus-outline"
+                      size="small"
+                      variant="flat"
+                      @click="abrirDrawerCadastro"
+                    >
                       Cadastrar Cliente
                     </v-btn>
                   </div>
@@ -2731,7 +2740,15 @@ onMounted(async () => {
         <v-btn v-if="etapaAtual !== 'kit-final'" :disabled="!podeAvancar || saving" :loading="saving" append-icon="mdi-arrow-right" color="primary" @click="avancarComPersistencia">
           Próximo
         </v-btn>
-        <v-btn v-else color="success" :disabled="saving" :loading="saving" prepend-icon="mdi-check" @click="finalizarKit">
+        <v-btn
+          v-else
+          v-show="can('kits.editar') || can('kits.criar')"
+          color="success"
+          :disabled="saving"
+          :loading="saving"
+          prepend-icon="mdi-check"
+          @click="finalizarKit"
+        >
           Finalizar Kit
         </v-btn>
       </div>

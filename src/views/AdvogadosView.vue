@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useAdvogadosStore, type Advogado, type OabUf } from '@/stores/advogados'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { usePermissions } from '@/composables/usePermissions'
 import { friendlyError, extractFieldErrors } from '@/utils/errorMessages'
 import { TIPOS_ACAO } from '@/types/kits'
 import SidePanel from '@/components/SidePanel.vue'
@@ -16,6 +17,7 @@ const TIPOS_ACAO_ADVOGADO = [
 
 const store = useAdvogadosStore()
 const { showSuccess, showError } = useSnackbar()
+const { can } = usePermissions()
 
 const UF_LIST = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
@@ -187,7 +189,12 @@ onMounted(() => {
         </div>
         <p class="text-body-2 text-medium-emphasis mt-1">Cadastro de advogados e OABs por região</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-account-plus" @click="openCreate">
+      <v-btn
+        v-if="can('advogados.criar')"
+        color="primary"
+        prepend-icon="mdi-account-plus"
+        @click="openCreate"
+      >
         Novo advogado
       </v-btn>
     </div>
@@ -272,12 +279,14 @@ onMounted(() => {
               </template>
               <v-list density="compact" min-width="200">
                 <v-list-item
+                  v-if="can('advogados.editar')"
                   prepend-icon="mdi-pencil-outline"
                   title="Editar"
                   @click="openEdit(item)"
                 />
-                <v-divider class="my-1" />
+                <v-divider v-if="can('advogados.deletar')" class="my-1" />
                 <v-list-item
+                  v-if="can('advogados.deletar')"
                   class="text-error"
                   prepend-icon="mdi-delete-outline"
                   title="Excluir"

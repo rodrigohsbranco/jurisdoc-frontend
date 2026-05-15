@@ -7,12 +7,14 @@ import {
 } from "@/stores/templates";
 import api from "@/services/api";
 import { useSnackbar } from "@/composables/useSnackbar";
+import { usePermissions } from "@/composables/usePermissions";
 import { friendlyError } from "@/utils/errorMessages";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SidePanel from "@/components/SidePanel.vue";
 
 const templates = useTemplatesStore();
 const { showSuccess, showError } = useSnackbar();
+const { can } = usePermissions();
 
 // Confirm dialog
 const confirmVisible = ref(false);
@@ -215,7 +217,12 @@ onMounted(load);
         </div>
         <p class="text-body-2 text-medium-emphasis mt-1">Upload e gerenciamento de modelos .docx</p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-file-word" @click="openCreate">
+      <v-btn
+        v-if="can('templates.criar')"
+        color="primary"
+        prepend-icon="mdi-file-word"
+        @click="openCreate"
+      >
         Novo template
       </v-btn>
     </div>
@@ -301,6 +308,7 @@ onMounted(load);
               </template>
               <v-list density="compact" min-width="180">
                 <v-list-item
+                  v-if="can('templates.editar')"
                   prepend-icon="mdi-pencil-outline"
                   title="Editar"
                   @click="openEdit(item)"
@@ -311,12 +319,14 @@ onMounted(load);
                   @click="downloadTemplate(item)"
                 />
                 <v-list-item
+                  v-if="can('templates.editar')"
                   :prepend-icon="item.active ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
                   :title="item.active ? 'Desativar' : 'Ativar'"
                   @click="toggleActive(item)"
                 />
-                <v-divider class="my-1" />
+                <v-divider v-if="can('templates.deletar')" class="my-1" />
                 <v-list-item
+                  v-if="can('templates.deletar')"
                   class="text-error"
                   prepend-icon="mdi-delete-outline"
                   title="Excluir"
