@@ -22,75 +22,86 @@ const routes: RouteRecordRaw[] = [
         path: 'usuarios',
         name: 'usuarios',
         component: () => import('../views/UsersView.vue'),
-        meta: { title: 'Usuários', requiresAdmin: true },
+        meta: { title: 'Usuários', requiresCapability: 'usuarios.visualizar' },
       },
       {
         path: 'clientes',
         name: 'clientes',
         component: () => import('../views/ClientesView.vue'),
-        meta: { title: 'Clientes' },
+        meta: { title: 'Clientes', requiresCapability: 'clientes.visualizar' },
       },
       {
         path: 'clientes/:id/contas',
         name: 'contas',
         component: () => import('@/views/ContasView.vue'),
-        meta: { title: 'Contas bancárias' },
+        meta: { title: 'Contas bancárias', requiresCapability: 'contas.visualizar' },
       },
       {
         path: 'conta-reu',
         name: 'conta-reu',
         component: () => import('@/views/ContaReuView.vue'),
-        meta: { title: 'Bancos Réus' },
+        meta: { title: 'Bancos Réus', requiresCapability: 'conta_reu.visualizar' },
       },
       {
         path: 'templates',
         name: 'templates',
         component: () => import('../views/TemplatesView.vue'),
-        meta: { title: 'Templates' },
+        meta: { title: 'Templates', requiresCapability: 'templates.visualizar' },
       },
       {
         path: 'peticoes',
         name: 'peticoes',
         component: () => import('../views/PetitionsView.vue'),
-        meta: { title: 'Petições' },
+        meta: { title: 'Petições', requiresCapability: 'peticoes.visualizar' },
       },
       {
         path: 'contratos',
         name: 'contratos',
         component: () => import('../views/ContratosView.vue'),
-        meta: { title: 'Contratos' },
+        meta: { title: 'Contratos', requiresCapability: 'contratos.visualizar' },
       },
       {
         path: 'producao-kits',
         name: 'producao-kits',
         component: () => import('../views/ProducaoKitsView.vue'),
-        meta: { title: 'Produção de Kits' },
+        meta: { title: 'Produção de Kits', requiresCapability: 'kits.visualizar' },
       },
       {
         path: 'producao-kits/novo',
         name: 'producao-kits-novo',
         component: () => import('../views/NovoKitView.vue'),
-        meta: { title: 'Novo Kit' },
+        meta: { title: 'Novo Kit', requiresCapability: 'kits.criar' },
       },
       {
         path: 'producao-kits/:id',
         name: 'producao-kits-editar',
         component: () => import('../views/NovoKitView.vue'),
-        meta: { title: 'Editar Kit' },
+        meta: { title: 'Editar Kit', requiresCapability: 'kits.editar' },
       },
       {
         path: 'bancos-tarifas',
         name: 'bancos-tarifas',
         component: () => import('../views/BancosTarifasView.vue'),
-        meta: { title: 'Bancos e Tarifas', requiresAdmin: true },
+        meta: { title: 'Bancos e Tarifas', requiresCapability: 'bancos_tarifas.visualizar' },
       },
       {
         path: 'advogados',
         name: 'advogados',
         component: () => import('../views/AdvogadosView.vue'),
-        meta: { title: 'Advogados', requiresAdmin: true },
+        meta: { title: 'Advogados', requiresCapability: 'advogados.visualizar' },
       },
-      { path: 'relatorios', name: 'reports', component: () => import('../views/ReportsView.vue'), meta: { title: 'Relatórios', requiresAdmin: true } },
+      {
+        path: 'relatorios',
+        name: 'reports',
+        component: () => import('../views/ReportsView.vue'),
+        meta: { title: 'Relatórios', requiresCapability: 'relatorios.visualizar' },
+      },
+      {
+        path: 'permissoes',
+        name: 'permissoes',
+        component: () => import('../views/PermissoesView.vue'),
+        meta: { title: 'Permissões', requiresCapability: 'permissoes.visualizar' },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -131,8 +142,9 @@ router.beforeEach(async to => {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 
-  // rotas admin-only
-  if (to.meta?.requiresAdmin && !auth.isAdmin) {
+  // rotas gateadas por capacidade (admin sempre passa via auth.can())
+  const requiredCap = to.meta?.requiresCapability as string | undefined
+  if (requiredCap && !auth.can(requiredCap)) {
     return { path: '/' }
   }
 

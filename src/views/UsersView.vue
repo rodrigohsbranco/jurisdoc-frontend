@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   createUser,
   deleteUser,
   listUsers,
   setUserPassword,
   updateUser,
+  type EnderecoUser,
   type User,
 } from "@/services/users";
+import { usePermissoesStore } from "@/stores/permissoes";
 import { useSnackbar } from "@/composables/useSnackbar";
+import { useCepLookup } from "@/composables/useCepLookup";
 import { friendlyError } from "@/utils/errorMessages";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SidePanel from "@/components/SidePanel.vue";
 
 const { showSuccess, showError } = useSnackbar();
+const permissoesStore = usePermissoesStore();
+const { cepLoading, cepStatus, lookupCEP } = useCepLookup();
 
 // estado
 const loading = ref(false);
@@ -34,10 +39,24 @@ const sortBy = ref<{ key: string; order?: "asc" | "desc" }[]>([
 // diálogos
 const dialog = ref(false);
 const editing = ref<User | null>(null);
-const form = ref<Partial<User> & { password?: string }>({
-  is_admin: false,
-  is_active: true,
-});
+
+type FormState = {
+  username: string;
+  nome_completo: string;
+  email: string;
+  telefone: string;
+  endereco: EnderecoUser;
+  is_admin: boolean;
+  is_active: boolean;
+  permissao: number | null;
+  password: string;
+  avatar?: File | null;
+  avatar_preview?: string | null;
+};
+
+const form = ref<FormState>(emptyForm());
+const enderecoOpen = ref<string[]>([]);
+
 const pwdDialog = ref(false);
 const pwdTarget = ref<User | null>(null);
 const newPassword = ref("");
@@ -47,95 +66,152 @@ const totalUsuarios = computed(() => items.value.length);
 const headers = [
   { title: "Usuário", key: "username" },
   { title: "Email", key: "email" },
-  { title: "Perfil", key: "is_admin", sortable: true },
-  { title: "Status", key: "is_active", sortable: true },
+  { title: "Permissão", key: "permissao", sortable: false, width: 160 },
+  { title: "Perfil", key: "is_admin", sortable: true, width: 110 },
+  { title: "Status", key: "is_active", sortable: true, width: 100 },
   { title: "", key: "actions", sortable: false, width: "48px" },
 ];
 
-async function fetchUsers() {
+function emptyForm (): FormState {
+  return {
+    username: "",
+    nome_completo: "",
+    email: "",
+    telefone: "",
+    endereco: {},
+    is_admin: false,
+    is_active: true,
+    permissao: null,
+    password: "",
+    avatar: null,
+    avatar_preview: null,
+  };
+}
+
+async function fetchUsers () {
   loading.value = true;
   error.value = "";
   try {
     items.value = await listUsers({});
   } catch (error_: any) {
-    error.value = friendlyError(error_, 'usuarios', 'list');
+    error.value = friendlyError(error_, "usuarios", "list");
   } finally {
     loading.value = false;
   }
 }
 
-onMounted(fetchUsers);
+onMounted(async () => {
+  await Promise.all([fetchUsers(), permissoesStore.fetchList()]);
+});
 
-function getInitials(user: User) {
-  const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
-  if (!name) return user.username.slice(0, 2).toUpperCase();
+function getInitials (user: User) {
+  const name = user.nome_completo || user.username || "";
   const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 }
 
-function fullName(user: User) {
-  const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
-  return name || null;
-}
-
-function openCreate() {
+function openCreate () {
   editing.value = null;
-  form.value = {
-    username: "",
-    first_name: "",
-    last_name: "",
-    email: "",
-    is_admin: false,
-    is_active: true,
-    password: "",
-  };
+  form.value = emptyForm();
+  enderecoOpen.value = [];
   dialog.value = true;
 }
 
-function openEdit(u: User) {
+function openEdit (u: User) {
   editing.value = u;
-  form.value = { ...u, password: undefined };
+  form.value = {
+    username: u.username,
+    nome_completo: u.nome_completo || "",
+    email: u.email || "",
+    telefone: u.telefone || "",
+    endereco: (u.endereco as EnderecoUser) || {},
+    is_admin: !!u.is_admin,
+    is_active: !!u.is_active,
+    permissao: u.permissao ?? null,
+    password: "",
+    avatar: null,
+    avatar_preview: u.avatar || null,
+  };
+  enderecoOpen.value = [];
   dialog.value = true;
 }
 
-async function save() {
+function onAvatarChange (file: File | File[] | null) {
+  const f = Array.isArray(file) ? file[0] : file;
+  if (!f) {
+    form.value.avatar = null;
+    return;
+  }
+  form.value.avatar = f;
+  const reader = new FileReader();
+  reader.onload = e => {
+    form.value.avatar_preview = e.target?.result as string;
+  };
+  reader.readAsDataURL(f);
+}
+
+function onCepBlur () {
+  const cep = form.value.endereco.cep || "";
+  lookupCEP(cep, ({ logradouro, bairro, cidade, uf }) => {
+    form.value.endereco = {
+      ...form.value.endereco,
+      logradouro,
+      bairro,
+      cidade,
+      uf,
+    };
+  });
+}
+
+async function save () {
   try {
+    const payload: any = {
+      username: form.value.username,
+      nome_completo: form.value.nome_completo,
+      email: form.value.email,
+      telefone: form.value.telefone,
+      endereco: form.value.endereco,
+      is_admin: form.value.is_admin,
+      is_active: form.value.is_active,
+      permissao: form.value.permissao,
+    };
+    if (form.value.avatar instanceof File) payload.avatar = form.value.avatar;
+
     if (editing.value) {
-      const { password, ...rest } = form.value;
-      const updated = await updateUser(editing.value.id, rest);
-      const idx = items.value.findIndex((i) => i.id === editing.value!.id);
-      if (idx !== -1) items.value[idx] = { ...items.value[idx], ...(rest as any) };
+      await updateUser(editing.value.id, payload);
+      await fetchUsers();
       showSuccess("Usuário atualizado com sucesso!");
     } else {
       if (!form.value.password || form.value.password.length < 6) {
         throw new Error("Senha mínima de 6 caracteres.");
       }
-      const created = await createUser(form.value as any);
-      items.value.unshift(created);
+      payload.password = form.value.password;
+      await createUser(payload);
+      await fetchUsers();
       showSuccess("Usuário criado com sucesso!");
     }
     dialog.value = false;
   } catch (error_: any) {
-    error.value = friendlyError(error_, 'usuarios', editing.value ? 'update' : 'create');
+    error.value = friendlyError(error_, "usuarios", editing.value ? "update" : "create");
   }
 }
 
-async function remove(u: User) {
+async function remove (u: User) {
   confirmMessage.value = `Excluir o usuário "${u.username}"?`;
   confirmAction.value = async () => {
     try {
       await deleteUser(u.id);
-      items.value = items.value.filter((i) => i.id !== u.id);
+      items.value = items.value.filter(i => i.id !== u.id);
       showSuccess("Usuário excluído com sucesso!");
     } catch (error_: any) {
-      error.value = friendlyError(error_, 'usuarios', 'remove');
+      error.value = friendlyError(error_, "usuarios", "remove");
     }
   };
   confirmVisible.value = true;
 }
 
-async function toggleActive(u: User, val: boolean) {
+async function toggleActive (u: User, val: boolean) {
   try {
     await updateUser(u.id, { is_active: val });
     u.is_active = val;
@@ -145,13 +221,13 @@ async function toggleActive(u: User, val: boolean) {
   }
 }
 
-function openSetPassword(u: User) {
+function openSetPassword (u: User) {
   pwdTarget.value = u;
   newPassword.value = "";
   pwdDialog.value = true;
 }
 
-async function applyPassword() {
+async function applyPassword () {
   if (!pwdTarget.value) return;
   if (newPassword.value.length < 6) {
     error.value = "Senha mínima de 6 caracteres.";
@@ -162,20 +238,35 @@ async function applyPassword() {
     pwdDialog.value = false;
     showSuccess("Senha alterada com sucesso!");
   } catch (error_: any) {
-    error.value = friendlyError(error_, 'usuarios', 'password');
+    error.value = friendlyError(error_, "usuarios", "password");
   }
 }
+
+// dropdown de permissão exibe os perfis carregados via store
+const permissoesOptions = computed(() =>
+  permissoesStore.items.map(p => ({ value: p.id, title: p.nome })),
+);
+
+function permissaoNomeDe (u: User) {
+  return u.permissao_detalhe?.nome
+    || permissoesStore.items.find(p => p.id === u.permissao)?.nome
+    || null;
+}
+
+watch(() => form.value.is_admin, val => {
+  if (val) form.value.permissao = null; // admin não precisa de perfil
+});
 </script>
 
 <template>
   <v-container fluid>
-    <!-- Page header -->
+    <!-- Header -->
     <div class="d-flex align-center flex-wrap ga-4 mb-6">
       <div class="flex-grow-1">
         <div class="d-flex align-center ga-3">
           <h1 class="text-h5 font-weight-bold text-primary">Usuários</h1>
           <v-chip v-if="totalUsuarios" color="primary" size="small" variant="tonal">
-            {{ totalUsuarios }} {{ totalUsuarios === 1 ? 'usuário' : 'usuários' }}
+            {{ totalUsuarios }} {{ totalUsuarios === 1 ? "usuário" : "usuários" }}
           </v-chip>
         </div>
         <p class="text-body-2 text-medium-emphasis mt-1">Gerenciamento de usuários do sistema</p>
@@ -185,7 +276,7 @@ async function applyPassword() {
       </v-btn>
     </div>
 
-    <!-- Table card -->
+    <!-- Tabela -->
     <v-card>
       <v-card-text>
         <div class="d-flex align-center mb-4">
@@ -213,28 +304,41 @@ async function applyPassword() {
           loading-text="Carregando..."
           :search="search"
         >
-          <!-- Usuário com avatar -->
           <template #item.username="{ item }">
             <div class="d-flex align-center py-2">
               <v-avatar class="mr-3" color="primary" size="34" variant="tonal">
-                <span class="text-caption font-weight-bold">{{ getInitials(item) }}</span>
+                <v-img v-if="item.avatar" :src="item.avatar" cover />
+                <span v-else class="text-caption font-weight-bold">{{ getInitials(item) }}</span>
               </v-avatar>
               <div>
                 <div class="text-body-2 font-weight-medium">{{ item.username }}</div>
-                <div v-if="fullName(item)" class="text-caption text-medium-emphasis">
-                  {{ fullName(item) }}
+                <div v-if="item.nome_completo" class="text-caption text-medium-emphasis">
+                  {{ item.nome_completo }}
                 </div>
               </div>
             </div>
           </template>
 
-          <!-- Email -->
           <template #item.email="{ item }">
             <span v-if="item.email" class="text-body-2">{{ item.email }}</span>
             <span v-else class="text-medium-emphasis">--</span>
           </template>
 
-          <!-- Perfil -->
+          <template #item.permissao="{ item }">
+            <v-chip
+              v-if="permissaoNomeDe(item)"
+              prepend-icon="mdi-shield-check-outline"
+              size="small"
+              variant="tonal"
+            >
+              {{ permissaoNomeDe(item) }}
+            </v-chip>
+            <span v-else-if="item.is_admin" class="text-caption text-medium-emphasis">
+              (admin)
+            </span>
+            <span v-else class="text-caption text-medium-emphasis">Sem perfil</span>
+          </template>
+
           <template #item.is_admin="{ item }">
             <v-chip
               :color="item.is_admin ? 'secondary' : 'default'"
@@ -246,39 +350,20 @@ async function applyPassword() {
             </v-chip>
           </template>
 
-          <!-- Status -->
           <template #item.is_active="{ item }">
-            <v-chip
-              :color="item.is_active ? 'success' : 'error'"
-              size="small"
-              variant="tonal"
-            >
+            <v-chip :color="item.is_active ? 'success' : 'error'" size="small" variant="tonal">
               {{ item.is_active ? "Ativo" : "Inativo" }}
             </v-chip>
           </template>
 
-          <!-- Ações (menu) -->
           <template #item.actions="{ item }">
             <v-menu location="bottom end">
               <template #activator="{ props }">
-                <v-btn
-                  v-bind="props"
-                  icon="mdi-dots-vertical"
-                  size="small"
-                  variant="text"
-                />
+                <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
               </template>
               <v-list density="compact" min-width="200">
-                <v-list-item
-                  prepend-icon="mdi-pencil-outline"
-                  title="Editar"
-                  @click="openEdit(item)"
-                />
-                <v-list-item
-                  prepend-icon="mdi-lock-reset"
-                  title="Redefinir senha"
-                  @click="openSetPassword(item)"
-                />
+                <v-list-item prepend-icon="mdi-pencil-outline" title="Editar" @click="openEdit(item)" />
+                <v-list-item prepend-icon="mdi-lock-reset" title="Redefinir senha" @click="openSetPassword(item)" />
                 <v-list-item
                   :prepend-icon="item.is_active ? 'mdi-account-off-outline' : 'mdi-account-check-outline'"
                   :title="item.is_active ? 'Desativar' : 'Ativar'"
@@ -305,8 +390,8 @@ async function applyPassword() {
       </v-card-text>
     </v-card>
 
-    <!-- Dialog criar/editar -->
-    <SidePanel v-model="dialog" :width="560">
+    <!-- Form criar/editar -->
+    <SidePanel v-model="dialog" :width="640">
       <template #header>
         <v-avatar class="mr-3" color="primary" size="36" variant="tonal">
           <v-icon :icon="editing ? 'mdi-pencil-outline' : 'mdi-account-plus-outline'" size="18" />
@@ -318,21 +403,123 @@ async function applyPassword() {
       </template>
 
       <v-form @submit.prevent="save">
-        <v-text-field v-model="form.username" label="Usuário" required />
+        <!-- Avatar -->
+        <div class="d-flex align-center ga-4 mb-4">
+          <v-avatar color="primary" size="64" variant="tonal">
+            <v-img v-if="form.avatar_preview" :src="form.avatar_preview" cover />
+            <span v-else class="text-body-1 font-weight-bold">
+              {{ (form.nome_completo || form.username || "?").slice(0, 2).toUpperCase() }}
+            </span>
+          </v-avatar>
+          <div class="flex-grow-1">
+            <v-file-input
+              accept="image/*"
+              density="compact"
+              hide-details
+              label="Avatar (opcional)"
+              prepend-icon=""
+              prepend-inner-icon="mdi-image-outline"
+              show-size
+              @update:model-value="onAvatarChange"
+            />
+          </div>
+        </div>
+
+        <!-- Identificação -->
+        <div class="section-title">Identificação</div>
+        <v-text-field
+          v-model="form.username"
+          density="comfortable"
+          label="Usuário (login)"
+          required
+        />
+        <v-text-field
+          v-model="form.nome_completo"
+          class="mt-1"
+          density="comfortable"
+          label="Nome completo"
+        />
         <v-row dense class="mt-1">
-          <v-col cols="6">
-            <v-text-field v-model="form.first_name" label="Nome" />
+          <v-col cols="7">
+            <v-text-field
+              v-model="form.email"
+              density="comfortable"
+              label="Email"
+              type="email"
+            />
           </v-col>
-          <v-col cols="6">
-            <v-text-field v-model="form.last_name" label="Sobrenome" />
+          <v-col cols="5">
+            <v-text-field
+              v-model="form.telefone"
+              density="comfortable"
+              label="Telefone"
+              placeholder="(00) 00000-0000"
+            />
           </v-col>
         </v-row>
-        <v-text-field v-model="form.email" class="mt-1" label="Email" type="email" />
 
-        <div class="text-caption text-medium-emphasis text-uppercase mb-2 mt-4" style="letter-spacing: 0.05em">
-          Permissões
-        </div>
-        <div class="d-flex ga-6 flex-wrap">
+        <!-- Endereço (colapsável) -->
+        <v-expansion-panels v-model="enderecoOpen" class="mt-3" multiple variant="accordion">
+          <v-expansion-panel value="end">
+            <v-expansion-panel-title>
+              <v-icon class="mr-2" icon="mdi-map-marker-outline" size="18" />
+              Endereço (opcional)
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <v-row dense>
+                <v-col cols="4">
+                  <v-text-field
+                    v-model="form.endereco.cep"
+                    density="comfortable"
+                    label="CEP"
+                    :loading="cepLoading"
+                    @blur="onCepBlur"
+                  />
+                </v-col>
+                <v-col cols="6">
+                  <v-text-field v-model="form.endereco.logradouro" density="comfortable" label="Logradouro" />
+                </v-col>
+                <v-col cols="2">
+                  <v-text-field v-model="form.endereco.numero" density="comfortable" label="Nº" />
+                </v-col>
+                <v-col cols="6">
+                  <v-text-field v-model="form.endereco.complemento" density="comfortable" label="Complemento" />
+                </v-col>
+                <v-col cols="6">
+                  <v-text-field v-model="form.endereco.bairro" density="comfortable" label="Bairro" />
+                </v-col>
+                <v-col cols="8">
+                  <v-text-field v-model="form.endereco.cidade" density="comfortable" label="Cidade" />
+                </v-col>
+                <v-col cols="4">
+                  <v-text-field v-model="form.endereco.uf" density="comfortable" label="UF" maxlength="2" />
+                </v-col>
+              </v-row>
+              <div v-if="cepStatus" class="text-caption text-medium-emphasis mt-1">{{ cepStatus }}</div>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
+
+        <!-- Acesso -->
+        <div class="section-title mt-4">Acesso</div>
+        <v-row dense>
+          <v-col cols="12">
+            <v-select
+              v-model="form.permissao"
+              clearable
+              density="comfortable"
+              :disabled="form.is_admin"
+              :hint="form.is_admin ? 'Administradores têm acesso total — perfil não é necessário.' : 'Selecione um perfil ou crie um em Permissões.'"
+              item-title="title"
+              item-value="value"
+              :items="permissoesOptions"
+              label="Permissão (perfil)"
+              persistent-hint
+              prepend-inner-icon="mdi-shield-check-outline"
+            />
+          </v-col>
+        </v-row>
+        <div class="d-flex ga-6 flex-wrap mt-3">
           <v-switch
             v-model="form.is_admin"
             color="secondary"
@@ -349,15 +536,18 @@ async function applyPassword() {
           />
         </div>
 
-        <v-text-field
-          v-if="!editing"
-          v-model="(form as any).password"
-          class="mt-5"
-          label="Senha"
-          required
-          :rules="[(v: string) => (!!v && v.length >= 6) || 'Mínimo 6 caracteres']"
-          type="password"
-        />
+        <!-- Senha (somente create) -->
+        <template v-if="!editing">
+          <div class="section-title mt-4">Senha</div>
+          <v-text-field
+            v-model="form.password"
+            density="comfortable"
+            label="Senha"
+            required
+            :rules="[(v: string) => (!!v && v.length >= 6) || 'Mínimo 6 caracteres']"
+            type="password"
+          />
+        </template>
       </v-form>
 
       <template #actions>
@@ -402,3 +592,14 @@ async function applyPassword() {
     />
   </v-container>
 </template>
+
+<style scoped>
+.section-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(15, 43, 70, 0.65);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+</style>

@@ -9,40 +9,47 @@
   const route = useRoute()
   const auth = useAuthStore()
 
-  const allNavSections = [
+  type NavItem = { title: string; icon: string; to: { name: string }; requires?: string }
+  type NavSection = { title: string; items: NavItem[] }
+
+  const allNavSections: NavSection[] = [
     {
       title: 'Gestão',
-      adminOnly: false,
       items: [
         { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: { name: 'dashboard' } },
-        { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' } },
-        { title: 'Bancos Réus', icon: 'mdi-bank-outline', to: { name: 'conta-reu' } },
+        { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' }, requires: 'clientes.visualizar' },
+        { title: 'Bancos Réus', icon: 'mdi-bank-outline', to: { name: 'conta-reu' }, requires: 'conta_reu.visualizar' },
       ],
     },
     {
       title: 'Documentos',
-      adminOnly: false,
       items: [
-        { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' } },
-        { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' } },
-        { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' } },
-        { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' } },
+        { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' }, requires: 'templates.visualizar' },
+        { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' }, requires: 'contratos.visualizar' },
+        { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' }, requires: 'peticoes.visualizar' },
+        { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' }, requires: 'kits.visualizar' },
       ],
     },
     {
       title: 'Sistema',
-      adminOnly: true,
       items: [
-        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' } },
-        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' } },
-        { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' } },
-        { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' } },
+        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' }, requires: 'bancos_tarifas.visualizar' },
+        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' }, requires: 'advogados.visualizar' },
+        { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' }, requires: 'relatorios.visualizar' },
+        { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' }, requires: 'usuarios.visualizar' },
+        { title: 'Permissões', icon: 'mdi-shield-key-outline', to: { name: 'permissoes' }, requires: 'permissoes.visualizar' },
       ],
     },
   ]
 
+  // Gate por capacidade item-a-item; oculta a seção se todos os itens forem ocultos.
   const navSections = computed(() =>
-    allNavSections.filter(s => !s.adminOnly || auth.isAdmin),
+    allNavSections
+      .map(s => ({
+        ...s,
+        items: s.items.filter(i => !i.requires || auth.can(i.requires)),
+      }))
+      .filter(s => s.items.length > 0),
   )
 
   const userInitials = computed(() => {

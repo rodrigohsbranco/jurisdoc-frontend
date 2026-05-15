@@ -3,11 +3,25 @@ import axios from "axios";
 import { defineStore } from "pinia";
 
 // ===== Types =====
+interface UserSnapshot {
+  id: number;
+  username: string;
+  nome_completo: string;
+  email: string;
+  avatar: string | null;
+  is_admin: boolean;
+  is_active: boolean;
+  permissao: number | null;
+  permissao_nome: string | null;
+}
+
 interface AuthData {
   accessToken: string;
   refreshToken: string;
   username: string;
   lastActiveAt: number;
+  capacidades: string[];
+  user: UserSnapshot | null;
 }
 
 const STORAGE_KEY = "auth";
@@ -27,6 +41,25 @@ function decodeJwt(token?: string) {
   }
 }
 
+function emptyUser(): UserSnapshot | null {
+  return null;
+}
+
+function normalizeUser(raw: any): UserSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    id: Number(raw.id),
+    username: String(raw.username || ""),
+    nome_completo: String(raw.nome_completo || ""),
+    email: String(raw.email || ""),
+    avatar: raw.avatar || null,
+    is_admin: !!raw.is_admin,
+    is_active: !!raw.is_active,
+    permissao: raw.permissao ?? null,
+    permissao_nome: raw.permissao_detalhe?.nome ?? null,
+  };
+}
+
 // ===== localStorage helpers =====
 function loadFromStorage(): AuthData {
   try {
@@ -38,10 +71,15 @@ function loadFromStorage(): AuthData {
         refreshToken: parsed.refreshToken || "",
         username: parsed.username || "",
         lastActiveAt: parsed.lastActiveAt || 0,
+        capacidades: Array.isArray(parsed.capacidades) ? parsed.capacidades : [],
+        user: parsed.user || emptyUser(),
       };
     }
   } catch { /* corrupto ou indisponível */ }
-  return { accessToken: "", refreshToken: "", username: "", lastActiveAt: 0 };
+  return {
+    accessToken: "", refreshToken: "", username: "", lastActiveAt: 0,
+    capacidades: [], user: emptyUser(),
+  };
 }
 
 function saveToStorage(data: AuthData) {
@@ -61,7 +99,6 @@ const REFRESH_SAFETY_WINDOW_MS = 30_000;
 const IDLE_MAX_MS = 24 * 60 * 60 * 1000;
 
 export const useAuthStore = defineStore("auth", {
-  // State inicializa direto do localStorage
   state: () => {
     const stored = loadFromStorage();
     return {
@@ -69,6 +106,8 @@ export const useAuthStore = defineStore("auth", {
       refreshToken: stored.refreshToken,
       username: stored.username,
       lastActiveAt: stored.lastActiveAt,
+      capacidades: stored.capacidades,
+      user: stored.user as UserSnapshot | null,
       _refreshTimer: 0 as unknown as number,
       _refreshPromise: null as Promise<void> | null,
       initialized: false,
@@ -78,19 +117,23 @@ export const useAuthStore = defineStore("auth", {
   getters: {
     isAuthenticated: (s) => !!s.accessToken,
     isAdmin: (s) => {
-      const payload = decodeJwt(s.accessToken)
-      return !!payload?.is_admin
+      if (s.user?.is_admin) return true;
+      const payload = decodeJwt(s.accessToken);
+      return !!payload?.is_admin;
     },
+    avatarUrl: (s) => s.user?.avatar || null,
+    permissaoNome: (s) => s.user?.permissao_nome || null,
   },
 
   actions: {
-    // Persiste estado atual no localStorage
     _persist() {
       saveToStorage({
         accessToken: this.accessToken,
         refreshToken: this.refreshToken,
         username: this.username,
         lastActiveAt: this.lastActiveAt,
+        capacidades: this.capacidades,
+        user: this.user,
       });
     },
 
@@ -109,34 +152,58 @@ export const useAuthStore = defineStore("auth", {
       this._persist();
     },
 
+    can(codigo: string): boolean {
+      if (this.isAdmin) return true;
+      return this.capacidades.includes(codigo);
+    },
+
+    _applyUserPayload(raw: any) {
+      const snap = normalizeUser(raw);
+      this.user = snap;
+      if (snap?.username) this.username = snap.username;
+      const caps = Array.isArray(raw?.capacidades) ? raw.capacidades : [];
+      this.capacidades = caps;
+      this._persist();
+    },
+
+    async fetchMe() {
+      if (!this.accessToken) return;
+      try {
+        const { data } = await authClient.get("/api/auth/me/", {
+          headers: { Authorization: `Bearer ${this.accessToken}` },
+        });
+        this._applyUserPayload(data);
+      } catch {
+        /* silencioso — tratamento em bootstrap */
+      }
+    },
+
     async bootstrap() {
       try {
-        // Relê do localStorage (fonte da verdade)
         const stored = loadFromStorage();
         this.accessToken = stored.accessToken;
         this.refreshToken = stored.refreshToken;
         this.username = stored.username;
         this.lastActiveAt = stored.lastActiveAt;
+        this.capacidades = stored.capacidades;
+        this.user = stored.user;
 
         if (!this.accessToken && !this.refreshToken) return;
 
-        // Inatividade > 24h
         if (this.lastActiveAt && Date.now() - this.lastActiveAt > IDLE_MAX_MS) {
           this._clearSession();
           return;
         }
 
-        // Valida token no servidor
         if (this.accessToken) {
           try {
-            await authClient.get("/api/auth/me/", {
-              headers: { Authorization: `Bearer ${this.accessToken}` },
-            });
+            await this.fetchMe();
             this._scheduleRefresh();
           } catch {
             if (this.refreshToken) {
               try {
                 await this.refresh();
+                await this.fetchMe();
                 this._scheduleRefresh();
               } catch {
                 this._clearSession();
@@ -150,6 +217,7 @@ export const useAuthStore = defineStore("auth", {
         } else if (this.refreshToken) {
           try {
             await this.refresh();
+            await this.fetchMe();
             this._scheduleRefresh();
           } catch {
             this._clearSession();
@@ -157,7 +225,6 @@ export const useAuthStore = defineStore("auth", {
           }
         }
 
-        // Listeners de atividade
         const onActivity = () => this.touchActivity();
         window.addEventListener("click", onActivity);
         window.addEventListener("keydown", onActivity);
@@ -175,6 +242,7 @@ export const useAuthStore = defineStore("auth", {
         refreshToken?: string;
         access?: string;
         refresh?: string;
+        user?: any;
       }>("/api/auth/login/", { username, password });
 
       const accessToken = data?.accessToken || data?.access;
@@ -187,6 +255,11 @@ export const useAuthStore = defineStore("auth", {
       this.accessToken = accessToken;
       this.refreshToken = refreshToken;
       this.username = username;
+
+      if (data?.user) {
+        this._applyUserPayload(data.user);
+      }
+
       this.touchActivity();
       this._scheduleRefresh();
     },
@@ -214,6 +287,17 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
+    /** Alias usado pelo api.ts: refresca proativamente se faltar menos que a janela. */
+    async refreshIfNeeded() {
+      if (!this.accessToken || !this.refreshToken) return;
+      const payload = decodeJwt(this.accessToken);
+      if (!payload?.exp) return;
+      const ms = payload.exp * 1000 - Date.now();
+      if (ms <= REFRESH_SAFETY_WINDOW_MS) {
+        await this.refresh();
+      }
+    },
+
     _clearSession() {
       clearTimeout(this._refreshTimer as number);
       this._refreshPromise = null;
@@ -221,6 +305,8 @@ export const useAuthStore = defineStore("auth", {
       this.refreshToken = "";
       this.username = "";
       this.lastActiveAt = 0;
+      this.capacidades = [];
+      this.user = null;
       clearStorage();
     },
 
