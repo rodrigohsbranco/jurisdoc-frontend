@@ -1467,9 +1467,10 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
   let tipoLabel = TIPOS_ACAO.find(t => t.value === acao.tipoAcao)?.label || acao.tipoAcao
   const usaContrato = TIPOS_COM_CONTRATO.includes(acao.tipoAcao as TipoAcao)
   let procuracao_detalhe_tipo = usaContrato ? '' : formatarDetalheProcuracao(detalheBrutoProcuracao(acao))
-  let bancoComInss = tipoKit.value === 'bancario'
-    ? `${bancoNome} e INSS – Instituto Nacional do Seguro Social`
-    : bancoNome
+  // Procuração nunca leva o sufixo "e INSS" — esse texto entra só no
+  // contrato (ver montarContexto). Mantém o nome da variável por compat
+  // com o caso especial de contribuição sindical mais abaixo.
+  let bancoComInss = bancoNome
 
   // Caso especial: contribuição sindical não autorizada em kit bancário com associação.
   // tipos_acao → frase do tipo, bancos → abreviação, {{ do }} → "de(a)".
