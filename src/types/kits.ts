@@ -56,12 +56,12 @@ export type KitCadastro = {
   estado: string
   cep: string
 
-  // Comprovante de Residência
-  comprovanteResidenciaUrl: string
+  // Comprovante de Residência (múltiplos arquivos)
+  comprovantesResidencia: UploadedDoc[]
   comprovanteNomeCliente: string   // 'sim' | 'nao'
   responsavelImovelNome: string    // quando comprovanteNomeCliente='nao'
   responsavelImovelCpf: string     // quando comprovanteNomeCliente='nao'
-  responsavelImovelDocUrl: string  // quando comprovanteNomeCliente='nao'
+  responsavelImovelDocs: UploadedDoc[]  // quando comprovanteNomeCliente='nao'
 
   // Declaração de Hipossuficiência
   possuiImoveis: boolean | null
@@ -223,11 +223,11 @@ export const emptyCadastro = (): KitCadastro => ({
   estado: '',
   cep: '',
 
-  comprovanteResidenciaUrl: '',
+  comprovantesResidencia: [],
   comprovanteNomeCliente: '',
   responsavelImovelNome: '',
   responsavelImovelCpf: '',
-  responsavelImovelDocUrl: '',
+  responsavelImovelDocs: [],
 
   possuiImoveis: null,
   possuiMoveis: null,

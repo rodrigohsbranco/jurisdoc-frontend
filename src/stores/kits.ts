@@ -299,6 +299,8 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   cad.comprovanteNomeCliente = c.comprovante_nome_cliente || ''
   cad.responsavelImovelNome = c.responsavel_imovel_nome || ''
   cad.responsavelImovelCpf = formatCPF(c.responsavel_imovel_cpf || '')
+  cad.comprovantesResidencia = Array.isArray(c.comprovantes_residencia) ? c.comprovantes_residencia : []
+  cad.responsavelImovelDocs = Array.isArray(c.responsavel_imovel_docs) ? c.responsavel_imovel_docs : []
 
   // Contato — reconstrói telefones[] a partir do primário (campos legacy)
   // + adicionais em telefones_extras

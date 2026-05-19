@@ -417,6 +417,91 @@ async function removeDocPessoal (doc: DocPessoal) {
   }
 }
 
+const comprovantesUploading = ref(false)
+const responsavelDocsUploading = ref(false)
+
+async function onSelectComprovantes (e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (files?.length) await uploadComprovantesResidencia(Array.from(files))
+  input.value = ''
+}
+async function onDropComprovantes (e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (files?.length) await uploadComprovantesResidencia(Array.from(files))
+}
+async function uploadComprovantesResidencia (files: File[]) {
+  if (!clienteId.value || !files.length) return
+  comprovantesUploading.value = true
+  try {
+    const fd = new FormData()
+    files.forEach(f => fd.append('files', f))
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/comprovantes-residencia/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    cad.value.comprovantesResidencia = data.comprovantes_residencia || []
+  } catch (e: any) {
+    console.error('Erro no upload de comprovantes:', e)
+  } finally {
+    comprovantesUploading.value = false
+  }
+}
+async function removeComprovante (doc: DocPessoal) {
+  if (!clienteId.value) return
+  try {
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/comprovantes-residencia/remove/`,
+      { path: doc.path },
+    )
+    cad.value.comprovantesResidencia = data.comprovantes_residencia || []
+  } catch (e: any) {
+    console.error('Erro ao remover comprovante:', e)
+  }
+}
+
+async function onSelectResponsavelDocs (e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (files?.length) await uploadResponsavelImovelDocs(Array.from(files))
+  input.value = ''
+}
+async function onDropResponsavelDocs (e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (files?.length) await uploadResponsavelImovelDocs(Array.from(files))
+}
+async function uploadResponsavelImovelDocs (files: File[]) {
+  if (!clienteId.value || !files.length) return
+  responsavelDocsUploading.value = true
+  try {
+    const fd = new FormData()
+    files.forEach(f => fd.append('files', f))
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/responsavel-imovel-docs/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    cad.value.responsavelImovelDocs = data.responsavel_imovel_docs || []
+  } catch (e: any) {
+    console.error('Erro no upload de docs do responsável:', e)
+  } finally {
+    responsavelDocsUploading.value = false
+  }
+}
+async function removeResponsavelDoc (doc: DocPessoal) {
+  if (!clienteId.value) return
+  try {
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/responsavel-imovel-docs/remove/`,
+      { path: doc.path },
+    )
+    cad.value.responsavelImovelDocs = data.responsavel_imovel_docs || []
+  } catch (e: any) {
+    console.error('Erro ao remover doc do responsável:', e)
+  }
+}
+
 async function removeRelatedDoc (owner: RelatedDocOwner, doc: DocPessoal) {
   if (!clienteId.value) return
   try {
@@ -2206,9 +2291,35 @@ onMounted(async () => {
               <h2 class="section-title mt-8">Comprovante de Residência</h2>
               <v-divider class="mb-5" />
 
-              <label class="field-label">Comprovante de residência (opcional)</label>
-              <div class="native-file-wrap mb-4">
-                <input accept="image/*,.pdf" type="file">
+              <label class="field-label">Comprovante de residência (opcional, múltiplos)</label>
+              <div v-if="cad.comprovantesResidencia.length" class="docs-list mb-3">
+                <div v-for="doc in cad.comprovantesResidencia" :key="doc.path" class="docs-list__item">
+                  <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                    <img v-if="isImage(doc.name)" :src="doc.url" :alt="doc.name" class="docs-list__img">
+                    <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                  </a>
+                  <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                  <v-spacer />
+                  <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeComprovante(doc)" />
+                </div>
+              </div>
+              <div
+                class="upload-zone mb-4"
+                :class="{ 'upload-zone--uploading': comprovantesUploading }"
+                @click="($refs.comprovanteInput as HTMLInputElement)?.click()"
+                @dragover.prevent
+                @drop.prevent="onDropComprovantes"
+              >
+                <input ref="comprovanteInput" accept="image/*,.pdf,.doc,.docx" hidden multiple type="file" @change="onSelectComprovantes">
+                <template v-if="comprovantesUploading">
+                  <v-progress-circular color="primary" indeterminate size="24" width="2" />
+                  <span class="upload-zone__title mt-2">Enviando...</span>
+                </template>
+                <template v-else>
+                  <v-icon class="upload-zone__icon" icon="mdi-upload" />
+                  <span class="upload-zone__title">Clique ou arraste para enviar</span>
+                  <span class="upload-zone__hint">PDF, DOC, DOCX, JPG ou PNG — múltiplos arquivos</span>
+                </template>
               </div>
 
               <label class="field-label">O comprovante de residência está em nome do cliente? *</label>
@@ -2226,9 +2337,35 @@ onMounted(async () => {
                     <v-text-field :model-value="cad.responsavelImovelCpf" class="compact-input" density="compact" :error-messages="errors.responsavelImovelCpf" hide-details="auto" maxlength="14" placeholder="000.000.000-00" variant="outlined" @update:model-value="cad.responsavelImovelCpf = maskCPF($event)" />
                   </v-col>
                   <v-col cols="12">
-                    <label class="field-label">Documento do responsável (opcional)</label>
-                    <div class="native-file-wrap">
-                      <input accept="image/*,.pdf" type="file">
+                    <label class="field-label">Documento do responsável (opcional, múltiplos)</label>
+                    <div v-if="cad.responsavelImovelDocs.length" class="docs-list mb-3">
+                      <div v-for="doc in cad.responsavelImovelDocs" :key="doc.path" class="docs-list__item">
+                        <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                          <img v-if="isImage(doc.name)" :src="doc.url" :alt="doc.name" class="docs-list__img">
+                          <v-icon v-else :color="/\\.pdf$/i.test(doc.name) ? 'error' : 'primary'" :icon="docIcon(doc.name)" size="28" />
+                        </a>
+                        <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                        <v-spacer />
+                        <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeResponsavelDoc(doc)" />
+                      </div>
+                    </div>
+                    <div
+                      class="upload-zone"
+                      :class="{ 'upload-zone--uploading': responsavelDocsUploading }"
+                      @click="($refs.responsavelDocInput as HTMLInputElement)?.click()"
+                      @dragover.prevent
+                      @drop.prevent="onDropResponsavelDocs"
+                    >
+                      <input ref="responsavelDocInput" accept="image/*,.pdf,.doc,.docx" hidden multiple type="file" @change="onSelectResponsavelDocs">
+                      <template v-if="responsavelDocsUploading">
+                        <v-progress-circular color="primary" indeterminate size="24" width="2" />
+                        <span class="upload-zone__title mt-2">Enviando...</span>
+                      </template>
+                      <template v-else>
+                        <v-icon class="upload-zone__icon" icon="mdi-upload" />
+                        <span class="upload-zone__title">Clique ou arraste para enviar</span>
+                        <span class="upload-zone__hint">PDF, DOC, DOCX, JPG ou PNG — múltiplos arquivos</span>
+                      </template>
                     </div>
                   </v-col>
                 </v-row>
