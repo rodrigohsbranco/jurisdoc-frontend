@@ -975,7 +975,9 @@ async function montarContexto (): Promise<Record<string, any>> {
     ? (bancoNomes[0] || '(BANCOS DA AÇÃO)')
     : bancoNomes.slice(0, -1).join(', ') + ' e ' + bancoNomes[bancoNomes.length - 1]
   // Para kit bancário, anexa o INSS ao final das instituições.
-  const bancos = tipoKit.value === 'bancario' && bancoNomes.length > 0
+  // Exceção: clientes do Amazonas (AM) — não anexa o INSS nem no contrato.
+  const clienteAM = c.estado?.toUpperCase() === 'AM'
+  const bancos = tipoKit.value === 'bancario' && bancoNomes.length > 0 && !clienteAM
     ? (bancoNomes.length === 1
         ? `${bancoNomes[0]} e INSS – Instituto Nacional do Seguro Social`
         : `${bancoNomes.join(', ')} e INSS – Instituto Nacional do Seguro Social`)
