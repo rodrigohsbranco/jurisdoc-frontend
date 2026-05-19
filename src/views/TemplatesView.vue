@@ -129,9 +129,40 @@ async function saveUpsert() {
   }
 }
 
+function setFile(file: File | null) {
+  if (!file) {
+    form.file = null;
+    return;
+  }
+  if (!file.name.toLowerCase().endsWith('.docx')) {
+    showError('Apenas arquivos .docx são aceitos.');
+    return;
+  }
+  form.file = file;
+}
+
 function onPickFile(e: Event) {
   const files = (e.target as HTMLInputElement).files;
-  form.file = files && files.length > 0 ? files[0] : null;
+  setFile(files && files.length > 0 ? files[0] : null);
+}
+
+const dragActive = ref(false);
+
+function onDragOver(e: DragEvent) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  dragActive.value = true;
+}
+
+function onDragLeave(e: DragEvent) {
+  if (e.currentTarget === e.target) dragActive.value = false;
+}
+
+function onDrop(e: DragEvent) {
+  e.preventDefault();
+  dragActive.value = false;
+  const file = e.dataTransfer?.files?.[0] ?? null;
+  setFile(file);
 }
 
 // =============================
@@ -445,7 +476,15 @@ onMounted(load);
           <v-chip color="success" size="x-small" variant="tonal">Ativo</v-chip>
         </div>
 
-        <div class="upload-area" @click="($refs.fileInput as HTMLInputElement)?.click()">
+        <div
+          class="upload-area"
+          :class="{ 'is-dragging': dragActive }"
+          @click="($refs.fileInput as HTMLInputElement)?.click()"
+          @dragenter.prevent="dragActive = true"
+          @dragover="onDragOver"
+          @dragleave="onDragLeave"
+          @drop="onDrop"
+        >
           <input
             ref="fileInput"
             accept=".docx"
@@ -456,11 +495,11 @@ onMounted(load);
           <v-icon :color="form.file ? 'success' : 'primary'" :icon="form.file ? 'mdi-file-check-outline' : 'mdi-cloud-upload-outline'" size="32" />
           <div v-if="form.file" class="mt-2 text-center">
             <span class="text-body-2 font-weight-medium">{{ (form.file as File).name }}</span>
-            <div class="text-caption text-success">Novo arquivo selecionado — clique para trocar</div>
+            <div class="text-caption text-success">Novo arquivo selecionado — clique ou arraste outro para trocar</div>
           </div>
           <div v-else class="mt-2 text-center">
             <span class="text-body-2 font-weight-medium">
-              {{ editing ? 'Clique para substituir o arquivo' : 'Clique para selecionar' }}
+              {{ dragActive ? 'Solte o arquivo aqui' : (editing ? 'Clique ou arraste para substituir' : 'Clique ou arraste o arquivo aqui') }}
             </span>
             <div class="text-caption text-medium-emphasis">
               {{ editing ? 'Opcional — o arquivo atual será mantido se não enviar outro' : 'Arquivo .docx obrigatório' }}
@@ -536,5 +575,15 @@ onMounted(load);
 .upload-area:hover {
   border-color: #3b6cb4;
   background: #f0f4fb;
+}
+
+.upload-area.is-dragging {
+  border-color: #0F2B46;
+  background: #e8eef7;
+  border-style: solid;
+}
+
+.upload-area.is-dragging * {
+  pointer-events: none;
 }
 </style>
