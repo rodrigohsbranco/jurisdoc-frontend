@@ -1008,7 +1008,7 @@ async function montarContexto (): Promise<Record<string, any>> {
     }
     for (const t of terceiros) {
       const relacao = formatarRelacaoTitular(t)
-      partes.push(`${t.numero}, pertencente à ${t.nomeTitularNumero.trim()}, ${relacao} do cliente`)
+      partes.push(`${t.numero}, pertencente à ${t.nomeTitularNumero.trim()}, ${relacao} ${isMasc ? 'do' : 'da'} cliente`)
     }
     return juntar(partes)
   })()
