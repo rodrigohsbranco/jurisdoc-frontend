@@ -199,7 +199,7 @@
     </v-app-bar>
 
     <v-main>
-      <v-container :class="mobile ? 'py-3 px-3' : 'py-6'" fluid>
+      <v-container :class="mobile ? 'py-3 px-1' : 'py-6'" fluid>
         <router-view />
       </v-container>
     </v-main>

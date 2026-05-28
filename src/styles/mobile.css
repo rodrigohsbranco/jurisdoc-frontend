@@ -1,0 +1,92 @@
+/*
+ * Ajustes responsivos globais para mobile.
+ *
+ * Objetivo: reduzir paddings/margins dos containers e cards do Vuetify
+ * em telas pequenas, evitando que o conteúdo vaze para os lados.
+ *
+ * Breakpoints (default do Vuetify 3):
+ *   xs: < 600
+ *   sm: 600 – 959
+ *   md: 960 – 1279
+ *   lg: 1280+
+ */
+
+/* Hard guard: nunca permitir scroll horizontal acidental no root da app. */
+html,
+body,
+.v-application,
+.v-application__wrap {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* ===== xs (phones em retrato/paisagem pequenos) ===== */
+@media (max-width: 599.98px) {
+  /* Container fluido encolhe o gutter lateral (era 16px por padrão). */
+  .v-container--fluid {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  /* Card respira menos por dentro. */
+  .v-card-text {
+    padding: 12px !important;
+  }
+  .v-card-title {
+    padding: 12px 12px 4px !important;
+  }
+  .v-card-actions {
+    padding: 4px 12px 12px !important;
+  }
+
+  /* Headers de página geralmente usam mb-6: reduzimos. */
+  .mb-6 {
+    margin-bottom: 16px !important;
+  }
+
+  /* Títulos grandes podem estourar — clampa altura confortavelmente. */
+  .text-h5 {
+    font-size: 1.125rem !important;
+    line-height: 1.4 !important;
+  }
+  .text-h4 {
+    font-size: 1.25rem !important;
+    line-height: 1.4 !important;
+  }
+
+  /* Toolbars internas: chips/botões grandes quebram linha em vez de empurrar
+     o conteúdo pra fora. */
+  .v-toolbar__content,
+  .v-card-actions {
+    flex-wrap: wrap;
+  }
+
+  /* SidePanel/drawer de formulário ocupando 780px de width fica maior que a
+     tela em phones — força a ocupar 100% no xs (Vuetify clampa pelo width
+     interno, então usamos !important no override). */
+  .v-navigation-drawer--temporary {
+    max-width: 100vw !important;
+  }
+
+  /* Tabelas: o container interno do v-data-table já tem overflow auto,
+     mas o wrapper externo às vezes herda padding desnecessário. */
+  .v-data-table {
+    --v-table-row-height: 44px;
+  }
+
+  /* Chips e botões agrupados não devem inflar a linha. */
+  .v-btn {
+    letter-spacing: 0.04em;
+  }
+}
+
+/* ===== sm (tablets pequenos) ===== */
+@media (min-width: 600px) and (max-width: 959.98px) {
+  .v-container--fluid {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+  .v-card-text {
+    padding: 14px !important;
+  }
+}
