@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { useDisplay } from "vuetify";
 import { type Cliente, useClientesStore } from "@/stores/clientes";
 import { type ContaBancaria, useContasStore } from "@/stores/contas";
 import { type Petition, usePeticoesStore } from "@/stores/peticoes";
@@ -120,6 +121,28 @@ const headers = [
 ];
 
 const totalPeticoes = computed(() => peticoes.items.length);
+
+// Cards mobile (< md). Busca local + paginação 10 por página.
+const { smAndDown: mobile } = useDisplay();
+const filteredItems = computed(() => {
+  const q = search.value?.trim().toLowerCase();
+  if (!q) return peticoes.items;
+  return peticoes.items.filter((p: any) => {
+    const haystack = [
+      clienteNome(p.cliente, p.cliente_nome),
+      templateLabel(p.template),
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(q);
+  });
+});
+const mobilePage = ref(1);
+const mobilePageSize = 10;
+const mobileTotalPages = computed(() => Math.max(1, Math.ceil(filteredItems.value.length / mobilePageSize)));
+const paginatedItems = computed(() => {
+  const start = (mobilePage.value - 1) * mobilePageSize;
+  return filteredItems.value.slice(start, start + mobilePageSize);
+});
+watch([search, () => peticoes.items.length], () => { mobilePage.value = 1; });
 
 const clienteNome = (id?: number, fallback?: string | null) => {
   if (fallback && String(fallback).trim()) return String(fallback);
@@ -573,7 +596,90 @@ onMounted(loadAll);
           {{ error }}
         </v-alert>
 
+        <!-- Lista de cards em mobile -->
+        <div v-if="mobile" class="mobile-list">
+          <div v-if="loading" class="text-center py-8 text-medium-emphasis">
+            <v-progress-circular color="primary" indeterminate size="28" />
+            <div class="mt-2 text-body-2">Carregando...</div>
+          </div>
+          <div v-else-if="!filteredItems.length" class="text-center py-8 text-medium-emphasis">
+            <v-icon class="mb-2" icon="mdi-file-document-outline" size="36" />
+            <div class="text-body-2">Nenhuma petição cadastrada</div>
+          </div>
+          <article v-for="item in paginatedItems" :key="item.id" class="mobile-card">
+            <div class="mobile-card__actions">
+              <v-menu location="bottom end">
+                <template #activator="{ props }">
+                  <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
+                </template>
+                <v-list density="compact" min-width="200">
+                  <v-list-item
+                    v-if="can('peticoes.renderizar')"
+                    prepend-icon="mdi-eye-outline"
+                    title="Visualizar"
+                    @click="openOverview(item)"
+                  />
+                  <v-list-item
+                    v-if="can('peticoes.editar')"
+                    prepend-icon="mdi-pencil-outline"
+                    title="Editar"
+                    @click="openEdit(item)"
+                  />
+                  <v-list-item
+                    v-if="can('peticoes.renderizar')"
+                    :disabled="rendering && renderingId === item.id"
+                    prepend-icon="mdi-file-export-outline"
+                    title="Gerar documento"
+                    @click="doRender(item)"
+                  />
+                  <v-divider v-if="can('peticoes.deletar')" class="my-1" />
+                  <v-list-item
+                    v-if="can('peticoes.deletar')"
+                    class="text-error"
+                    prepend-icon="mdi-delete-outline"
+                    title="Excluir"
+                    @click="removePetition(item)"
+                  />
+                </v-list>
+              </v-menu>
+            </div>
+
+            <div class="mobile-card__header" style="padding-right: 36px">
+              <v-avatar color="primary" size="40" variant="tonal">
+                <v-icon icon="mdi-file-document-outline" size="20" />
+              </v-avatar>
+              <div class="mobile-card__header-text">
+                <div class="mobile-card__title">{{ clienteNome(item.cliente, item.cliente_nome) }}</div>
+                <div class="mobile-card__subtitle">{{ templateLabel(item.template) }}</div>
+              </div>
+            </div>
+
+            <div class="mobile-card__divider" />
+
+            <div class="mobile-card__grid">
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">Criada em</span>
+                <span class="mobile-card__value mobile-card__value--muted">{{ formatDate(item.created_at) }}</span>
+              </div>
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">Atualizada em</span>
+                <span class="mobile-card__value mobile-card__value--muted">{{ formatDate(item.updated_at) }}</span>
+              </div>
+            </div>
+          </article>
+
+          <div v-if="filteredItems.length > mobilePageSize" class="mobile-pagination">
+            <div class="mobile-pagination__info">
+              {{ (mobilePage - 1) * mobilePageSize + 1 }}–{{
+                Math.min(mobilePage * mobilePageSize, filteredItems.length)
+              }} de {{ filteredItems.length }}
+            </div>
+            <v-pagination v-model="mobilePage" density="comfortable" :length="mobileTotalPages" :total-visible="4" />
+          </div>
+        </div>
+
         <v-data-table
+          v-else
           v-model:sort-by="sortBy"
           :headers="headers"
           item-key="id"

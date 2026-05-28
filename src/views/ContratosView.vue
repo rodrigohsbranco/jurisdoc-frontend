@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useDisplay } from "vuetify";
 import { useClientesStore, type Cliente } from "@/stores/clientes";
 import { useTemplatesStore, type TemplateField } from "@/stores/templates";
 import { useContratosStore, type Contrato, type ContratoItem } from "@/stores/contratos";
@@ -157,6 +158,17 @@ const items = computed(() => {
       .includes(q);
   });
 });
+
+// ── Mobile cards (< md) ───────────────────────────────────
+const { smAndDown: mobile } = useDisplay();
+const mobilePage = ref(1);
+const mobilePageSize = 10;
+const mobileTotalPages = computed(() => Math.max(1, Math.ceil(items.value.length / mobilePageSize)));
+const paginatedItems = computed(() => {
+  const start = (mobilePage.value - 1) * mobilePageSize;
+  return items.value.slice(start, start + mobilePageSize);
+});
+watch([search, () => items.value.length], () => { mobilePage.value = 1; });
 
 // ── Table headers ─────────────────────────────────────────
 const headers = [
@@ -1128,7 +1140,88 @@ onMounted(async () => {
       <v-card-text>
         <v-alert v-if="error" class="mb-4" type="error" variant="tonal">{{ error }}</v-alert>
 
+        <!-- Lista de cards em mobile -->
+        <div v-if="mobile" class="mobile-list">
+          <div v-if="loading" class="text-center py-8 text-medium-emphasis">
+            <v-progress-circular color="primary" indeterminate size="28" />
+            <div class="mt-2 text-body-2">Carregando...</div>
+          </div>
+          <div v-else-if="!items.length" class="text-center py-8 text-medium-emphasis">
+            <v-icon class="mb-2" icon="mdi-file-sign" size="36" />
+            <div class="text-body-2">Nenhum contrato para o filtro atual.</div>
+          </div>
+          <article v-for="item in paginatedItems" :key="item.id" class="mobile-card">
+            <div class="mobile-card__actions">
+              <v-menu location="bottom end">
+                <template #activator="{ props }">
+                  <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
+                </template>
+                <v-list density="compact" min-width="200">
+                  <v-list-item prepend-icon="mdi-eye-outline" title="Visualizar" @click="openOverview(item)" />
+                  <v-list-item prepend-icon="mdi-file-check-outline" title="Verificar documento" @click="openVerificacao(item)" />
+                  <v-list-item
+                    v-if="can('contratos.editar')"
+                    prepend-icon="mdi-pencil-outline"
+                    title="Editar"
+                    @click="openEdit(item)"
+                  />
+                  <v-divider v-if="can('contratos.deletar')" class="my-1" />
+                  <v-list-item
+                    v-if="can('contratos.deletar')"
+                    class="text-error"
+                    prepend-icon="mdi-delete-outline"
+                    title="Excluir"
+                    @click="remove(item)"
+                  />
+                </v-list>
+              </v-menu>
+            </div>
+
+            <div class="mobile-card__header" style="padding-right: 36px">
+              <v-avatar color="primary" size="40" variant="tonal">
+                <v-icon icon="mdi-file-sign" size="20" />
+              </v-avatar>
+              <div class="mobile-card__header-text">
+                <div class="mobile-card__title">
+                  {{ clienteNome(item.cliente, item.cliente_nome) }}
+                </div>
+                <div class="mobile-card__subtitle">
+                  {{ templateLabel(item.template, item.template_nome) }}
+                </div>
+                <div v-if="firstContrato(item)?.numero_do_contrato" class="mobile-card__subtitle">
+                  Nº {{ firstContrato(item)!.numero_do_contrato }}
+                </div>
+              </div>
+            </div>
+
+            <div class="mobile-card__divider" />
+
+            <div class="mobile-card__grid mobile-card__grid--full">
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">Contratos</span>
+                <span class="mobile-card__value">{{ formatContratos(item.contratos) }}</span>
+              </div>
+            </div>
+
+            <div class="mobile-card__chips">
+              <v-chip :color="statusColor(item)" size="x-small" variant="tonal">
+                {{ statusLabel(item) }}
+              </v-chip>
+            </div>
+          </article>
+
+          <div v-if="items.length > mobilePageSize" class="mobile-pagination">
+            <div class="mobile-pagination__info">
+              {{ (mobilePage - 1) * mobilePageSize + 1 }}–{{
+                Math.min(mobilePage * mobilePageSize, items.length)
+              }} de {{ items.length }}
+            </div>
+            <v-pagination v-model="mobilePage" density="comfortable" :length="mobileTotalPages" :total-visible="4" />
+          </div>
+        </div>
+
         <v-data-table
+          v-else
           v-model:sort-by="sortBy"
           class="rounded-lg"
           :headers="headers"

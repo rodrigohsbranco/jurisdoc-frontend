@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useDisplay } from "vuetify";
 import {
   type FieldsResponse,
   type TemplateItem,
@@ -217,6 +218,12 @@ const error = computed(() => templates.lastError);
 const items = computed(() => templates.items);
 const totalTemplates = computed(() => templates.totalItems);
 
+// Cards mobile (< md). Paginação server-side já existe — reusamos page/itemsPerPage.
+const { smAndDown: mobile } = useDisplay();
+const mobileTotalPages = computed(() =>
+  Math.max(1, Math.ceil(totalTemplates.value / itemsPerPage.value)),
+);
+
 async function load() {
   const sort = sortBy.value[0];
   const ordering = sort ? `${sort.order === 'desc' ? '-' : ''}${sort.key}` : undefined;
@@ -277,7 +284,85 @@ onMounted(load);
           {{ error }}
         </v-alert>
 
+        <!-- Lista de cards em mobile -->
+        <div v-if="mobile" class="mobile-list">
+          <div v-if="loadingList" class="text-center py-8 text-medium-emphasis">
+            <v-progress-circular color="primary" indeterminate size="28" />
+            <div class="mt-2 text-body-2">Carregando...</div>
+          </div>
+          <div v-else-if="!items.length" class="text-center py-8 text-medium-emphasis">
+            <v-icon class="mb-2" icon="mdi-file-word-outline" size="36" />
+            <div class="text-body-2">Nenhum template cadastrado</div>
+          </div>
+          <article v-for="item in items" :key="item.id" class="mobile-card">
+            <div class="mobile-card__actions">
+              <v-menu location="bottom end">
+                <template #activator="{ props }">
+                  <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
+                </template>
+                <v-list density="compact" min-width="180">
+                  <v-list-item
+                    v-if="can('templates.editar')"
+                    prepend-icon="mdi-pencil-outline"
+                    title="Editar"
+                    @click="openEdit(item)"
+                  />
+                  <v-list-item
+                    prepend-icon="mdi-download-outline"
+                    title="Download .docx"
+                    @click="downloadTemplate(item)"
+                  />
+                  <v-list-item
+                    v-if="can('templates.editar')"
+                    :prepend-icon="item.active ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                    :title="item.active ? 'Desativar' : 'Ativar'"
+                    @click="toggleActive(item)"
+                  />
+                  <v-divider v-if="can('templates.deletar')" class="my-1" />
+                  <v-list-item
+                    v-if="can('templates.deletar')"
+                    class="text-error"
+                    prepend-icon="mdi-delete-outline"
+                    title="Excluir"
+                    @click="removeTemplate(item)"
+                  />
+                </v-list>
+              </v-menu>
+            </div>
+
+            <div class="mobile-card__header" style="padding-right: 36px">
+              <v-avatar color="primary" size="40" variant="tonal">
+                <v-icon icon="mdi-file-word-outline" size="20" />
+              </v-avatar>
+              <div class="mobile-card__header-text">
+                <div class="mobile-card__title">{{ item.name }}</div>
+                <div class="mobile-card__subtitle">
+                  <a :href="item.file" class="text-decoration-none" rel="noopener" target="_blank" @click.stop>
+                    <v-icon icon="mdi-download" size="12" class="mr-1" />Download .docx
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div class="mobile-card__chips">
+              <v-chip :color="item.active ? 'success' : undefined" size="x-small" variant="tonal">
+                {{ item.active ? 'Ativo' : 'Inativo' }}
+              </v-chip>
+            </div>
+          </article>
+
+          <div v-if="totalTemplates > itemsPerPage" class="mobile-pagination">
+            <div class="mobile-pagination__info">
+              {{ (page - 1) * itemsPerPage + 1 }}–{{
+                Math.min(page * itemsPerPage, totalTemplates)
+              }} de {{ totalTemplates }}
+            </div>
+            <v-pagination v-model="page" density="comfortable" :length="mobileTotalPages" :total-visible="4" />
+          </div>
+        </div>
+
         <v-data-table-server
+          v-else
           v-model:expanded="expanded"
           v-model:items-per-page="itemsPerPage"
           v-model:page="page"
