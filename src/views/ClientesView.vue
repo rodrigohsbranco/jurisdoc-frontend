@@ -19,7 +19,8 @@ import SidePanel from "@/components/SidePanel.vue";
 
 const store = useClientesStore();
 const router = useRouter();
-const { mobile } = useDisplay();
+// Cards aparecem só em sm e xs (< md=960). Em md+ mantemos a v-data-table.
+const { smAndDown: mobile } = useDisplay();
 const { cepLoading, cepStatus, lookupCEP: doCepLookup } = useCepLookup();
 const { cpfCheckStatus, checkCPFExists, resetCpfCheck } = useCpf();
 const { showSuccess, showError } = useSnackbar();
