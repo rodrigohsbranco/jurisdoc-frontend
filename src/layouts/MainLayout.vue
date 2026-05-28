@@ -1,13 +1,28 @@
 <script setup lang="ts">
-  import { computed, ref } from 'vue'
+  import { computed, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
+  import { useDisplay } from 'vuetify'
   import { useAuthStore } from '@/stores/auth'
 
-  const drawer = ref(true)
-  const rail = ref(false)
   const router = useRouter()
   const route = useRoute()
   const auth = useAuthStore()
+  const { mobile } = useDisplay()
+
+  // No mobile o drawer começa fechado (temporary/overlay); no desktop, aberto.
+  const drawer = ref(!mobile.value)
+  const rail = ref(false)
+
+  // Ao trocar de breakpoint, ajusta defaults sãos.
+  watch(mobile, isMobile => {
+    drawer.value = !isMobile
+    if (isMobile) rail.value = false
+  })
+
+  // Fecha o drawer ao navegar no mobile (UX padrão de side-drawer).
+  watch(() => route.fullPath, () => {
+    if (mobile.value) drawer.value = false
+  })
 
   type NavItem = { title: string; icon: string; to: { name: string }; requires?: string }
   type NavSection = { title: string; items: NavItem[] }
@@ -62,6 +77,12 @@
   }
 
   function toggleNav () {
+    // Mobile: alterna overlay (sem rail, que não faz sentido em telas pequenas).
+    if (mobile.value) {
+      drawer.value = !drawer.value
+      return
+    }
+    // Desktop: 1º clique abre se fechado; 2º clique colapsa pra rail.
     if (!drawer.value) {
       drawer.value = true
       return
@@ -81,8 +102,9 @@
       app
       class="nav-drawer"
       color="primary"
-      permanent
-      :rail="rail"
+      :permanent="!mobile"
+      :temporary="mobile"
+      :rail="!mobile && rail"
       :width="260"
     >
       <!-- Brand -->
@@ -154,30 +176,36 @@
     </v-navigation-drawer>
 
     <!-- App bar -->
-    <v-app-bar app color="surface" elevation="0" flat>
+    <v-app-bar app color="surface" elevation="0" flat :density="mobile ? 'compact' : 'default'">
       <v-app-bar-nav-icon @click="toggleNav" />
-      <v-toolbar-title class="font-weight-medium">{{ pageTitle }}</v-toolbar-title>
+      <v-toolbar-title
+        :class="['font-weight-medium', 'page-title', mobile && 'page-title--mobile']"
+      >
+        {{ pageTitle }}
+      </v-toolbar-title>
       <v-spacer />
-      <v-btn icon variant="text" size="small">
-        <v-icon icon="mdi-bell-outline" size="22" />
-      </v-btn>
-      <v-btn icon variant="text" size="small">
-        <v-icon icon="mdi-help-circle-outline" size="22" />
-      </v-btn>
-      <v-divider class="mx-2" vertical length="24" />
+      <template v-if="!mobile">
+        <v-btn icon variant="text" size="small">
+          <v-icon icon="mdi-bell-outline" size="22" />
+        </v-btn>
+        <v-btn icon variant="text" size="small">
+          <v-icon icon="mdi-help-circle-outline" size="22" />
+        </v-btn>
+        <v-divider class="mx-2" vertical length="24" />
+      </template>
       <v-avatar class="mr-2" color="primary" size="32">
         <span class="text-caption text-white font-weight-bold">{{ userInitials }}</span>
       </v-avatar>
     </v-app-bar>
 
     <v-main>
-      <v-container class="py-6" fluid>
+      <v-container :class="mobile ? 'py-3 px-3' : 'py-6'" fluid>
         <router-view />
       </v-container>
     </v-main>
 
     <v-footer app color="transparent" elevation="0">
-      <v-container class="py-2 text-caption text-medium-emphasis text-center">
+      <v-container :class="['text-caption text-medium-emphasis text-center', mobile ? 'py-1' : 'py-2']">
         &copy; {{ new Date().getFullYear() }} Azevedo Lima & Rebonatto &mdash; JurisDoc
       </v-container>
     </v-footer>
@@ -192,9 +220,27 @@
     #0a1f33 100%
   ) !important;
   border-right: none !important;
-  height: 100vh !important;
-  top: 0 !important;
-  position: fixed !important;
+}
+
+/* Em desktop o drawer fica fixo encostado no topo;
+   no mobile deixa o Vuetify posicionar como overlay temporário. */
+@media (min-width: 1280px) {
+  .nav-drawer {
+    height: 100vh !important;
+    top: 0 !important;
+    position: fixed !important;
+  }
+}
+
+.page-title {
+  min-width: 0;
+}
+
+.page-title--mobile {
+  font-size: 1rem !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-active {
