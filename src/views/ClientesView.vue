@@ -215,6 +215,20 @@ const filteredItems = computed(() => {
   });
 });
 
+// Paginação local da lista mobile (mesmo page-size da v-data-table = 10).
+const mobilePage = ref(1);
+const mobilePageSize = 10;
+const mobileTotalPages = computed(() =>
+  Math.max(1, Math.ceil(filteredItems.value.length / mobilePageSize)),
+);
+const paginatedItems = computed(() => {
+  const start = (mobilePage.value - 1) * mobilePageSize;
+  return filteredItems.value.slice(start, start + mobilePageSize);
+});
+
+// Quando muda o filtro ou alterna pra mobile, volta pra primeira página.
+watch([search, () => store.items.length], () => { mobilePage.value = 1; });
+
 onMounted(() => {
   store.fetchList({ ordering: "-criado_em" });
 });
@@ -408,7 +422,7 @@ const cpfStatusIcon = computed(() => {
             <div class="text-body-2">Nenhum cliente encontrado.</div>
           </div>
           <article
-            v-for="item in filteredItems"
+            v-for="item in paginatedItems"
             :key="item.id"
             class="mobile-card"
           >
@@ -490,6 +504,21 @@ const cpfStatusIcon = computed(() => {
               </v-chip>
             </div>
           </article>
+
+          <!-- Paginação da lista mobile -->
+          <div v-if="filteredItems.length > mobilePageSize" class="mobile-pagination">
+            <div class="mobile-pagination__info">
+              {{ (mobilePage - 1) * mobilePageSize + 1 }}–{{
+                Math.min(mobilePage * mobilePageSize, filteredItems.length)
+              }} de {{ filteredItems.length }}
+            </div>
+            <v-pagination
+              v-model="mobilePage"
+              density="comfortable"
+              :length="mobileTotalPages"
+              :total-visible="4"
+            />
+          </div>
         </div>
 
         <v-data-table
