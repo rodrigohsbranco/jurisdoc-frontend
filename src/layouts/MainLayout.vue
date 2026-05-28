@@ -17,27 +17,27 @@
       title: 'Gestão',
       items: [
         { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: { name: 'dashboard' } },
-        { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' }, requires: 'clientes.visualizar' },
-        { title: 'Bancos Réus', icon: 'mdi-bank-outline', to: { name: 'conta-reu' }, requires: 'conta_reu.visualizar' },
+        { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' }, requires: 'pagina.clientes' },
+        { title: 'Bancos Réus', icon: 'mdi-bank-outline', to: { name: 'conta-reu' }, requires: 'pagina.conta_reu' },
       ],
     },
     {
       title: 'Documentos',
       items: [
-        { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' }, requires: 'templates.visualizar' },
-        { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' }, requires: 'contratos.visualizar' },
-        { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' }, requires: 'peticoes.visualizar' },
-        { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' }, requires: 'kits.visualizar' },
+        { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' }, requires: 'pagina.templates' },
+        { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' }, requires: 'pagina.contratos' },
+        { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' }, requires: 'pagina.peticoes' },
+        { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' }, requires: 'pagina.kits' },
       ],
     },
     {
       title: 'Sistema',
       items: [
-        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' }, requires: 'bancos_tarifas.visualizar' },
-        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' }, requires: 'advogados.visualizar' },
-        { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' }, requires: 'relatorios.visualizar' },
-        { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' }, requires: 'usuarios.visualizar' },
-        { title: 'Permissões', icon: 'mdi-shield-key-outline', to: { name: 'permissoes' }, requires: 'permissoes.visualizar' },
+        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' }, requires: 'pagina.bancos_tarifas' },
+        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' }, requires: 'pagina.advogados' },
+        { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' }, requires: 'pagina.relatorios' },
+        { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' }, requires: 'pagina.usuarios' },
+        { title: 'Permissões', icon: 'mdi-shield-key-outline', to: { name: 'permissoes' }, requires: 'pagina.permissoes' },
       ],
     },
   ]
