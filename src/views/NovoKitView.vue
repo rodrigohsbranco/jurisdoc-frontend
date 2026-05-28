@@ -3075,6 +3075,19 @@ onMounted(async () => {
   gap: 8px;
 }
 
+/* Garante que cada botão respeite a célula do grid e não estoure horizontal. */
+.conditions-grid > .v-btn {
+  min-width: 0;
+  width: 100%;
+}
+
+.conditions-grid > .v-btn :deep(.v-btn__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .sticky-actions {
   position: sticky;
   bottom: 8px;
@@ -3379,6 +3392,14 @@ onMounted(async () => {
 
   .conditions-grid {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Em phones realmente pequenos (xs), empilha em 1 coluna para evitar que
+   labels longos como "Criança/Adolescente" sejam cortados. */
+@media (max-width: 599.98px) {
+  .conditions-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
