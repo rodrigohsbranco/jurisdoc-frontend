@@ -91,74 +91,103 @@ body,
   }
 }
 
-/* ===== v-data-table em modo cards (< md) =====
- * Layout vertical: cada coluna vira "label em cima, valor embaixo",
- * o que respeita melhor células com avatar+nome, chips e ações.
+/* ===== Lista de cards mobile (substitui v-data-table em < md) =====
+ * As views renderizam <v-data-table v-if="!mobile" /> e
+ * <div class="mobile-list" v-else> com cards customizados.
  */
-@media (max-width: 959.98px) {
-  /* Header da tabela some — cada card já mostra os labels. */
-  .v-data-table > .v-table__wrapper > table > thead {
-    display: none;
-  }
+.mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
-  /* Cada linha vira um cartão. */
-  .v-data-table .v-data-table__tr--mobile {
-    display: block;
-    border: 1px solid rgba(15, 43, 70, 0.08);
-    border-radius: 10px;
-    background: #fff;
-    padding: 10px 12px;
-    margin-bottom: 10px;
-    box-shadow: 0 1px 2px rgba(15, 43, 70, 0.04);
-  }
+.mobile-card {
+  background: #fff;
+  border: 1px solid rgba(15, 43, 70, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 43, 70, 0.04);
+  padding: 12px 14px;
+  position: relative;
+}
 
-  .v-data-table .v-data-table__tr--mobile:hover {
-    background: #fff;
-  }
+.mobile-card__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 
-  /* Célula em coluna: label em cima, conteúdo embaixo. */
-  .v-data-table .v-data-table__td-mobile {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 2px;
-    padding: 6px 0;
-    border: none !important;
-    text-align: left;
-  }
+.mobile-card__header-text {
+  flex: 1;
+  min-width: 0;
+}
 
-  /* Label da coluna em cima — pequeno, uppercase. */
-  .v-data-table .v-data-table__td-mobile .v-data-table__td-title {
-    font-size: 0.68rem;
-    font-weight: 700;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
+.mobile-card__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0F2B46;
+  line-height: 1.25;
+  word-break: break-word;
+}
 
-  /* Valor abaixo — alinhado à esquerda, quebra texto longo. */
-  .v-data-table .v-data-table__td-mobile .v-data-table__td-value {
-    text-align: left;
-    word-break: break-word;
-    min-width: 0;
-  }
+.mobile-card__subtitle {
+  font-size: 0.78rem;
+  color: #6b7280;
+  margin-top: 2px;
+  word-break: break-word;
+}
 
-  /* Separador leve entre células dentro de um card. */
-  .v-data-table .v-data-table__td-mobile + .v-data-table__td-mobile {
-    border-top: 1px solid rgba(15, 43, 70, 0.06) !important;
-    padding-top: 8px;
-    margin-top: 2px;
-  }
+.mobile-card__actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
 
-  /* Última coluna geralmente é "ações" (menu/botões): destaca à direita. */
-  .v-data-table .v-data-table__tr--mobile .v-data-table__td-mobile:last-child .v-data-table__td-value {
-    text-align: right;
-  }
+.mobile-card__divider {
+  height: 1px;
+  background: rgba(15, 43, 70, 0.06);
+  margin: 10px -14px;
+}
 
-  /* Paginação compacta. */
-  .v-data-table-footer {
-    flex-wrap: wrap;
-    row-gap: 8px;
-    padding: 8px 4px !important;
-  }
+.mobile-card__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+
+.mobile-card__grid--full {
+  grid-template-columns: 1fr;
+}
+
+.mobile-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mobile-card__label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #8a94a6;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mobile-card__value {
+  font-size: 0.85rem;
+  color: #2a2f3a;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+.mobile-card__value--muted {
+  color: #8a94a6;
+}
+
+.mobile-card__chips {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
