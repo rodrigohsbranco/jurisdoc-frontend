@@ -3395,9 +3395,62 @@ onMounted(async () => {
   }
 }
 
-/* Em phones realmente pequenos (xs), empilha em 1 coluna para evitar que
-   labels longos como "Criança/Adolescente" sejam cortados. */
+/* xs: phones — apertar paddings laterais e enxugar steps. */
 @media (max-width: 599.98px) {
+  /* O wrapper externo (v-container do MainLayout) já está px-1; aqui
+     anulamos os px-6 utilitários internos pra ganhar largura. */
+  .topbar.px-6 {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    height: 56px;
+  }
+
+  .content-wrap.px-6 {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+  }
+
+  /* Form card respira menos no mobile — derruba o pa-6/pa-md-7. */
+  .form-card :deep(.v-card-text) {
+    padding: 12px !important;
+  }
+
+  /* Pessoa-card e demais cards aninhados também ficam menores. */
+  .pessoa-card :deep(.v-card-text) {
+    padding: 12px !important;
+  }
+
+  .topbar-title {
+    font-size: 1.05rem;
+  }
+
+  /* Steps mais compactos: avatar menor, label menor, sem min-width gigante. */
+  .steps {
+    gap: 4px;
+  }
+
+  .step {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .step-icon {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  .step-icon :deep(.v-icon) {
+    font-size: 18px;
+  }
+
+  .step-label {
+    font-size: 0.78rem;
+    text-align: center;
+    line-height: 1.15;
+  }
+
   .conditions-grid {
     grid-template-columns: 1fr;
   }
