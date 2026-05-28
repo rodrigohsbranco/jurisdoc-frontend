@@ -71,19 +71,6 @@ export default createVuetify({
         { value: -1, title: 'Todos' },
       ],
       hover: true,
-      // Em telas < md (960px) o v-data-table renderiza cada linha como um
-      // card (label/valor empilhado), evitando scroll horizontal e overflow
-      // em tablets pequenos e phones.
-      mobileBreakpoint: 'md',
-    },
-    VDataTableServer: {
-      itemsPerPage: 10,
-      hover: true,
-      mobileBreakpoint: 'md',
-    },
-    VDataTableVirtual: {
-      hover: true,
-      mobileBreakpoint: 'md',
     },
     VDialog: {
       transition: 'dialog-bottom-transition',
