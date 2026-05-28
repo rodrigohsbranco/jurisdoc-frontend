@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useAdvogadosStore, type Advogado, type OabUf } from '@/stores/advogados'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
@@ -44,6 +45,25 @@ const confirmMessage = ref('')
 const confirmAction = ref<(() => void) | null>(null)
 
 const totalAdvogados = computed(() => store.items.length)
+
+// Cards mobile (< md). Busca local + paginação 10 por página.
+const { smAndDown: mobile } = useDisplay()
+const filteredItems = computed(() => {
+  const q = search.value?.trim().toLowerCase()
+  if (!q) return store.items
+  return store.items.filter(a => {
+    const haystack = [a.nome_completo, a.escritorio_nome].filter(Boolean).join(' ').toLowerCase()
+    return haystack.includes(q)
+  })
+})
+const mobilePage = ref(1)
+const mobilePageSize = 10
+const mobileTotalPages = computed(() => Math.max(1, Math.ceil(filteredItems.value.length / mobilePageSize)))
+const paginatedItems = computed(() => {
+  const start = (mobilePage.value - 1) * mobilePageSize
+  return filteredItems.value.slice(start, start + mobilePageSize)
+})
+watch([search, () => store.items.length], () => { mobilePage.value = 1 })
 
 const headers = [
   { title: 'Advogado', key: 'nome_completo' },
@@ -214,7 +234,93 @@ onMounted(() => {
           />
         </div>
 
+        <!-- Lista de cards em mobile -->
+        <div v-if="mobile" class="mobile-list">
+          <div v-if="store.loading" class="text-center py-8 text-medium-emphasis">
+            <v-progress-circular color="primary" indeterminate size="28" />
+            <div class="mt-2 text-body-2">Carregando...</div>
+          </div>
+          <div v-else-if="!filteredItems.length" class="text-center py-8 text-medium-emphasis">
+            <v-icon class="mb-2" icon="mdi-account-tie-outline" size="36" />
+            <div class="text-body-2">Nenhum advogado encontrado</div>
+          </div>
+          <article v-for="item in paginatedItems" :key="item.id" class="mobile-card">
+            <div class="mobile-card__actions">
+              <v-menu location="bottom end">
+                <template #activator="{ props }">
+                  <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
+                </template>
+                <v-list density="compact" min-width="200">
+                  <v-list-item
+                    v-if="can('advogados.editar')"
+                    prepend-icon="mdi-pencil-outline"
+                    title="Editar"
+                    @click="openEdit(item)"
+                  />
+                  <v-divider v-if="can('advogados.deletar')" class="my-1" />
+                  <v-list-item
+                    v-if="can('advogados.deletar')"
+                    class="text-error"
+                    prepend-icon="mdi-delete-outline"
+                    title="Excluir"
+                    @click="confirmRemove(item)"
+                  />
+                </v-list>
+              </v-menu>
+            </div>
+
+            <div class="mobile-card__header" style="padding-right: 36px">
+              <v-avatar color="primary" size="40" variant="tonal">
+                <span class="text-caption font-weight-bold">{{ getInitials(item.nome_completo) }}</span>
+              </v-avatar>
+              <div class="mobile-card__header-text">
+                <div class="mobile-card__title">{{ item.nome_completo }}</div>
+                <div v-if="item.escritorio_nome" class="mobile-card__subtitle">{{ item.escritorio_nome }}</div>
+              </div>
+            </div>
+
+            <div class="mobile-card__divider" />
+
+            <div class="mobile-card__grid">
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">UFs</span>
+                <span class="mobile-card__value">{{ item.total_ufs || 0 }} UF{{ (item.total_ufs || 0) !== 1 ? 's' : '' }}</span>
+              </div>
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">Status</span>
+                <span class="mobile-card__value">
+                  {{ item.ativo ? 'Ativo' : 'Inativo' }}
+                </span>
+              </div>
+            </div>
+
+            <div class="mobile-card__chips">
+              <v-chip
+                :color="item.is_socio ? 'secondary' : undefined"
+                :prepend-icon="item.is_socio ? 'mdi-shield-crown-outline' : 'mdi-account-tie-outline'"
+                size="x-small"
+                variant="tonal"
+              >
+                {{ item.is_socio ? 'Sócio' : 'Advogado' }}
+              </v-chip>
+              <v-chip :color="item.ativo ? 'success' : 'error'" size="x-small" variant="tonal">
+                {{ item.ativo ? 'Ativo' : 'Inativo' }}
+              </v-chip>
+            </div>
+          </article>
+
+          <div v-if="filteredItems.length > mobilePageSize" class="mobile-pagination">
+            <div class="mobile-pagination__info">
+              {{ (mobilePage - 1) * mobilePageSize + 1 }}–{{
+                Math.min(mobilePage * mobilePageSize, filteredItems.length)
+              }} de {{ filteredItems.length }}
+            </div>
+            <v-pagination v-model="mobilePage" density="comfortable" :length="mobileTotalPages" :total-visible="4" />
+          </div>
+        </div>
+
         <v-data-table
+          v-else
           v-model:sort-by="sortBy"
           :headers="headers"
           item-key="id"
