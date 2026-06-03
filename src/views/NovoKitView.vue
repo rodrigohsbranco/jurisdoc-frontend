@@ -753,6 +753,7 @@ const podeAvancar = computed(() => {
     return validateCadastroSilent()
   }
   if (etapaAtual.value === 'acoes') return acoes.value.length > 0
+  if (etapaAtual.value === 'advogados') return !advogadosLoading.value
   return false
 })
 
