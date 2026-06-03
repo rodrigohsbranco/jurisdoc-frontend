@@ -955,9 +955,9 @@ function getOabExibida (adv: AdvForKanban): { texto: string; fallback: boolean }
 async function hidratarEtapaAdvogados () {
   advogadosLoading.value = true
   try {
-    if (advogadosTodos.value.length === 0) {
-      await advogadosStore.fetchList()
-    }
+    // Sempre força refresh — a store é persistida em localStorage e pode
+    // estar com dados velhos (ex.: sem oabs[] de versões antigas do backend).
+    await advogadosStore.fetchList()
 
     if (!kitId.value) {
       advogadosSelecionados.value = []
@@ -3171,7 +3171,16 @@ onMounted(async () => {
                               </v-chip>
                             </div>
                             <div class="adv-card__sub">
-                              {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                              <span>{{ getOabExibida(adv).texto }}</span>
+                              <v-chip
+                                v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
+                                class="ml-1"
+                                color="warning"
+                                size="x-small"
+                                variant="tonal"
+                              >
+                                fallback
+                              </v-chip>
                             </div>
                           </div>
                           <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
@@ -3218,7 +3227,16 @@ onMounted(async () => {
                               </v-chip>
                             </div>
                             <div class="adv-card__sub">
-                              {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                              <span>{{ getOabExibida(adv).texto }}</span>
+                              <v-chip
+                                v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
+                                class="ml-1"
+                                color="warning"
+                                size="x-small"
+                                variant="tonal"
+                              >
+                                fallback
+                              </v-chip>
                             </div>
                           </div>
                           <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
