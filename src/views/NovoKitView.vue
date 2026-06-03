@@ -15,6 +15,7 @@ import {
   getSugeridos as getAdvogadosSugeridos,
   saveSnapshot as saveAdvogadosSnapshot,
 } from '@/services/kitAdvogados'
+import draggable from 'vuedraggable'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
@@ -882,7 +883,11 @@ const advogadosStore = useAdvogadosStore()
 // ──────────────────────────────────────────────────────────────────────────
 // Etapa: Advogados (kanban Disponíveis ↔ Selecionados + snapshot no kit)
 // ──────────────────────────────────────────────────────────────────────────
-const advogadosSelecionadosIds = ref<number[]>([])
+// As listas abaixo são fontes de verdade reais (não computed): o
+// vuedraggable precisa mutá-las diretamente ao arrastar.
+type AdvForKanban = Advogado | AdvogadoSnapshot
+const advogadosSelecionados = ref<AdvForKanban[]>([])
+const advogadosDisponiveis = ref<AdvForKanban[]>([])
 const advogadosSnapshot = ref<AdvogadoSnapshot[]>([])
 const advogadosWarnings = ref<string[]>([])
 const advogadosBusca = ref('')
@@ -896,34 +901,29 @@ const { smAndDown: advsKanbanMobile } = useDisplay()
 
 const advogadosTodos = computed(() => advogadosStore.items)
 
-const advogadosSelecionados = computed(() => {
-  const ids = new Set(advogadosSelecionadosIds.value)
-  return advogadosTodos.value
-    .filter(a => ids.has(a.id))
-    .sort((a, b) => {
-      if (a.is_socio !== b.is_socio) return a.is_socio ? -1 : 1
-      return a.nome_completo.localeCompare(b.nome_completo)
-    })
-})
+function ordenarAdvs<T extends { is_socio: boolean; nome_completo: string }> (arr: T[]): T[] {
+  return [...arr].sort((a, b) => {
+    if (a.is_socio !== b.is_socio) return a.is_socio ? -1 : 1
+    return a.nome_completo.localeCompare(b.nome_completo)
+  })
+}
 
-const advogadosDisponiveis = computed(() => {
-  const ids = new Set(advogadosSelecionadosIds.value)
-  const q = advogadosBusca.value.trim().toLowerCase()
-  return advogadosTodos.value
-    .filter(a => !ids.has(a.id))
-    .filter(a => {
-      if (!q) return true
-      return (
-        a.nome_completo.toLowerCase().includes(q)
-        || (a.escritorio_nome || '').toLowerCase().includes(q)
-        || (a.oabs || []).some(o => `${o.uf} ${o.numero_oab}`.toLowerCase().includes(q))
-      )
-    })
-    .sort((a, b) => {
-      if (a.is_socio !== b.is_socio) return a.is_socio ? -1 : 1
-      return a.nome_completo.localeCompare(b.nome_completo)
-    })
-})
+function advMatchesBusca (adv: AdvForKanban, q: string): boolean {
+  if (!q) return true
+  const nome = (adv.nome_completo || '').toLowerCase()
+  const escr = (adv.escritorio_nome || '').toLowerCase()
+  if (nome.includes(q) || escr.includes(q)) return true
+  const oabs = (adv as any).oabs as Array<{ uf: string; numero_oab: string }> | undefined
+  if (oabs && oabs.some(o => `${o.uf} ${o.numero_oab}`.toLowerCase().includes(q))) return true
+  const numeroOab = (adv as AdvogadoSnapshot).numero_oab
+  const uf = (adv as AdvogadoSnapshot).oab_uf
+  if (numeroOab && `${uf || ''} ${numeroOab}`.toLowerCase().includes(q)) return true
+  return false
+}
+
+function advCardVisivel (adv: AdvForKanban): boolean {
+  return advMatchesBusca(adv, advogadosBusca.value.trim().toLowerCase())
+}
 
 async function hidratarEtapaAdvogados () {
   advogadosLoading.value = true
@@ -933,7 +933,8 @@ async function hidratarEtapaAdvogados () {
     }
 
     if (!kitId.value) {
-      advogadosSelecionadosIds.value = []
+      advogadosSelecionados.value = []
+      advogadosDisponiveis.value = ordenarAdvs(advogadosTodos.value)
       advogadosSnapshot.value = []
       return
     }
@@ -941,15 +942,25 @@ async function hidratarEtapaAdvogados () {
     // 1) Já tem snapshot salvo? usa ele.
     const snapResp = await getAdvogadosSnapshot(kitId.value)
     if (snapResp.advogados_snapshot.length > 0) {
+      const idsSel = new Set(snapResp.advogados_snapshot.map(a => a.id))
       advogadosSnapshot.value = snapResp.advogados_snapshot
-      advogadosSelecionadosIds.value = snapResp.advogados_snapshot.map(a => a.id)
+      advogadosSelecionados.value = ordenarAdvs(snapResp.advogados_snapshot)
+      advogadosDisponiveis.value = ordenarAdvs(
+        advogadosTodos.value.filter(a => !idsSel.has(a.id)),
+      )
       advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
       return
     }
 
     // 2) Sem snapshot → pré-seleção pelo backend.
     const sug = await getAdvogadosSugeridos(kitId.value)
-    advogadosSelecionadosIds.value = sug.advogados_ids
+    const idsSel = new Set(sug.advogados_ids)
+    advogadosSelecionados.value = ordenarAdvs(
+      advogadosTodos.value.filter(a => idsSel.has(a.id)),
+    )
+    advogadosDisponiveis.value = ordenarAdvs(
+      advogadosTodos.value.filter(a => !idsSel.has(a.id)),
+    )
     advogadosSnapshot.value = []
     advogadosUfNoUltimoLoad.value = sug.uf_cliente || (cad.value.estado || '').toUpperCase()
   } catch (e: any) {
@@ -960,14 +971,25 @@ async function hidratarEtapaAdvogados () {
   }
 }
 
+// Move um advogado entre as colunas (usado pelos botões +/−).
 function adicionarAdvogado (id: number) {
-  if (!advogadosSelecionadosIds.value.includes(id)) {
-    advogadosSelecionadosIds.value = [...advogadosSelecionadosIds.value, id]
-  }
+  const idx = advogadosDisponiveis.value.findIndex(a => a.id === id)
+  if (idx < 0) return
+  const [adv] = advogadosDisponiveis.value.splice(idx, 1)
+  advogadosSelecionados.value = ordenarAdvs([...advogadosSelecionados.value, adv])
 }
 
 function removerAdvogado (id: number) {
-  advogadosSelecionadosIds.value = advogadosSelecionadosIds.value.filter(x => x !== id)
+  const idx = advogadosSelecionados.value.findIndex(a => a.id === id)
+  if (idx < 0) return
+  const [adv] = advogadosSelecionados.value.splice(idx, 1)
+  advogadosDisponiveis.value = ordenarAdvs([...advogadosDisponiveis.value, adv])
+}
+
+// Após cada drag, reordena as duas colunas (sócios primeiro, alfabético).
+function onAdvDragEnd () {
+  advogadosSelecionados.value = ordenarAdvs(advogadosSelecionados.value)
+  advogadosDisponiveis.value = ordenarAdvs(advogadosDisponiveis.value)
 }
 
 async function salvarAdvogadosESeguir () {
@@ -977,7 +999,8 @@ async function salvarAdvogadosESeguir () {
   }
   advogadosSavingNext.value = true
   try {
-    const res = await saveAdvogadosSnapshot(kitId.value, advogadosSelecionadosIds.value)
+    const ids = advogadosSelecionados.value.map(a => a.id)
+    const res = await saveAdvogadosSnapshot(kitId.value, ids)
     advogadosSnapshot.value = res.advogados_snapshot
     advogadosWarnings.value = res.warnings || []
     advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
@@ -3055,10 +3078,11 @@ onMounted(async () => {
                 </v-window>
               </template>
 
-              <!-- Desktop: kanban duas colunas -->
+              <!-- Desktop: kanban duas colunas com drag-and-drop -->
               <div v-else class="adv-kanban">
                 <div class="adv-coluna">
                   <div class="adv-coluna__header">
+                    <v-icon icon="mdi-drag-vertical" size="18" />
                     Disponíveis
                     <v-chip size="small" variant="tonal">{{ advogadosDisponiveis.length }}</v-chip>
                   </div>
@@ -3075,66 +3099,87 @@ onMounted(async () => {
                     <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
                       Nenhum advogado disponível.
                     </div>
-                    <div
-                      v-for="adv in advogadosDisponiveis"
-                      :key="adv.id"
-                      class="adv-card"
+                    <draggable
+                      :list="advogadosDisponiveis"
+                      class="adv-dropzone"
+                      group="advogados"
+                      item-key="id"
+                      :animation="180"
+                      ghost-class="adv-card--ghost"
+                      drag-class="adv-card--dragging"
+                      @end="onAdvDragEnd"
                     >
-                      <div class="adv-card__info">
-                        <div class="adv-card__nome">
-                          {{ adv.nome_completo }}
-                          <v-chip
-                            v-if="adv.is_socio"
-                            class="ml-1"
-                            color="secondary"
-                            size="x-small"
-                            variant="tonal"
-                          >
-                            Sócio
-                          </v-chip>
+                      <template #item="{ element: adv }">
+                        <div v-show="advCardVisivel(adv)" class="adv-card adv-card--draggable">
+                          <v-icon class="adv-card__handle" icon="mdi-drag" size="16" />
+                          <div class="adv-card__info">
+                            <div class="adv-card__nome">
+                              {{ adv.nome_completo }}
+                              <v-chip
+                                v-if="adv.is_socio"
+                                class="ml-1"
+                                color="secondary"
+                                size="x-small"
+                                variant="tonal"
+                              >
+                                Sócio
+                              </v-chip>
+                            </div>
+                            <div class="adv-card__sub">
+                              {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                            </div>
+                          </div>
+                          <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
                         </div>
-                        <div class="adv-card__sub">
-                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
-                        </div>
-                      </div>
-                      <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
-                    </div>
+                      </template>
+                    </draggable>
                   </div>
                 </div>
 
                 <div class="adv-coluna">
                   <div class="adv-coluna__header">
+                    <v-icon icon="mdi-check-circle-outline" size="18" />
                     Selecionados
                     <v-chip color="primary" size="small" variant="tonal">{{ advogadosSelecionados.length }}</v-chip>
                   </div>
                   <div class="adv-coluna__body">
                     <div v-if="!advogadosSelecionados.length" class="empty-coluna">
-                      Nenhum advogado selecionado.
+                      Arraste um advogado pra cá ou use o botão "+".
                     </div>
-                    <div
-                      v-for="adv in advogadosSelecionados"
-                      :key="adv.id"
-                      class="adv-card adv-card--selecionado"
+                    <draggable
+                      :list="advogadosSelecionados"
+                      class="adv-dropzone"
+                      group="advogados"
+                      item-key="id"
+                      :animation="180"
+                      ghost-class="adv-card--ghost"
+                      drag-class="adv-card--dragging"
+                      @end="onAdvDragEnd"
                     >
-                      <div class="adv-card__info">
-                        <div class="adv-card__nome">
-                          {{ adv.nome_completo }}
-                          <v-chip
-                            v-if="adv.is_socio"
-                            class="ml-1"
-                            color="secondary"
-                            size="x-small"
-                            variant="tonal"
-                          >
-                            Sócio
-                          </v-chip>
+                      <template #item="{ element: adv }">
+                        <div class="adv-card adv-card--selecionado adv-card--draggable">
+                          <v-icon class="adv-card__handle" icon="mdi-drag" size="16" />
+                          <div class="adv-card__info">
+                            <div class="adv-card__nome">
+                              {{ adv.nome_completo }}
+                              <v-chip
+                                v-if="adv.is_socio"
+                                class="ml-1"
+                                color="secondary"
+                                size="x-small"
+                                variant="tonal"
+                              >
+                                Sócio
+                              </v-chip>
+                            </div>
+                            <div class="adv-card__sub">
+                              {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                            </div>
+                          </div>
+                          <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
                         </div>
-                        <div class="adv-card__sub">
-                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
-                        </div>
-                      </div>
-                      <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
-                    </div>
+                      </template>
+                    </draggable>
                   </div>
                 </div>
               </div>
@@ -3983,6 +4028,45 @@ onMounted(async () => {
   color: #8a94a6;
   font-size: 0.85rem;
   padding: 24px 8px;
+  border: 1.5px dashed #d4d8e0;
+  border-radius: 8px;
+}
+
+.adv-dropzone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.adv-card--draggable {
+  cursor: grab;
+}
+
+.adv-card--draggable:active {
+  cursor: grabbing;
+}
+
+.adv-card__handle {
+  color: #8a94a6;
+  flex-shrink: 0;
+}
+
+.adv-card--draggable:hover .adv-card__handle {
+  color: #0F2B46;
+}
+
+/* Item "fantasma" no destino enquanto arrasta. */
+.adv-card--ghost {
+  opacity: 0.4;
+  background: rgba(205, 166, 96, 0.12) !important;
+  border-style: dashed !important;
+}
+
+/* Item sendo arrastado (acompanha o cursor). */
+.adv-card--dragging {
+  transform: rotate(2deg);
+  box-shadow: 0 8px 16px rgba(15, 43, 70, 0.2);
 }
 </style>
 
