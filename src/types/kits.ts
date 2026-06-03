@@ -2,7 +2,7 @@ export type KitTipo = 'bancario' | 'previdenciario' | 'marketing'
 
 export type KitStatus = 'rascunho' | 'acoes' | 'finalizado' | 'assinado'
 
-export type KitEtapa = 'cliente' | 'acoes' | 'kit-final'
+export type KitEtapa = 'cliente' | 'acoes' | 'advogados' | 'kit-final'
 
 export type TipoAcao =
   | 'cartao_credito_consignado'

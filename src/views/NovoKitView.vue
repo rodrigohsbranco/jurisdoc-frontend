@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { useKitsStore, clienteToCadastro } from '@/stores/kits'
 import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
@@ -8,6 +9,12 @@ import { useAdvogadosStore } from '@/stores/advogados'
 import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import { snapshotKit } from '@/services/clausulas'
+import {
+  type AdvogadoSnapshot,
+  getSnapshot as getAdvogadosSnapshot,
+  getSugeridos as getAdvogadosSugeridos,
+  saveSnapshot as saveAdvogadosSnapshot,
+} from '@/services/kitAdvogados'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
@@ -35,8 +42,8 @@ import {
 const etapaAtual = ref<KitEtapa>('cliente')
 const etapas = computed<KitEtapa[]>(() =>
   tipoKit.value === 'previdenciario'
-    ? ['cliente', 'kit-final']
-    : ['cliente', 'acoes', 'kit-final'],
+    ? ['cliente', 'advogados', 'kit-final']
+    : ['cliente', 'acoes', 'advogados', 'kit-final'],
 )
 const etapaIndex = computed(() => etapas.value.indexOf(etapaAtual.value))
 const route = useRoute()
@@ -872,6 +879,155 @@ const docxContainers = ref<Record<string, HTMLElement | null>>({})
 
 const advogadosStore = useAdvogadosStore()
 
+// ──────────────────────────────────────────────────────────────────────────
+// Etapa: Advogados (kanban Disponíveis ↔ Selecionados + snapshot no kit)
+// ──────────────────────────────────────────────────────────────────────────
+const advogadosSelecionadosIds = ref<number[]>([])
+const advogadosSnapshot = ref<AdvogadoSnapshot[]>([])
+const advogadosWarnings = ref<string[]>([])
+const advogadosBusca = ref('')
+const advogadosLoading = ref(false)
+const advogadosSavingNext = ref(false)
+const advogadosUfNoUltimoLoad = ref<string>('')
+const trocaUfDialog = ref(false)
+const advogadosTabMobile = ref<'selecionados' | 'disponiveis'>('selecionados')
+
+const { smAndDown: advsKanbanMobile } = useDisplay()
+
+const advogadosTodos = computed(() => advogadosStore.items)
+
+const advogadosSelecionados = computed(() => {
+  const ids = new Set(advogadosSelecionadosIds.value)
+  return advogadosTodos.value
+    .filter(a => ids.has(a.id))
+    .sort((a, b) => {
+      if (a.is_socio !== b.is_socio) return a.is_socio ? -1 : 1
+      return a.nome_completo.localeCompare(b.nome_completo)
+    })
+})
+
+const advogadosDisponiveis = computed(() => {
+  const ids = new Set(advogadosSelecionadosIds.value)
+  const q = advogadosBusca.value.trim().toLowerCase()
+  return advogadosTodos.value
+    .filter(a => !ids.has(a.id))
+    .filter(a => {
+      if (!q) return true
+      return (
+        a.nome_completo.toLowerCase().includes(q)
+        || (a.escritorio_nome || '').toLowerCase().includes(q)
+        || (a.oabs || []).some(o => `${o.uf} ${o.numero_oab}`.toLowerCase().includes(q))
+      )
+    })
+    .sort((a, b) => {
+      if (a.is_socio !== b.is_socio) return a.is_socio ? -1 : 1
+      return a.nome_completo.localeCompare(b.nome_completo)
+    })
+})
+
+async function hidratarEtapaAdvogados () {
+  advogadosLoading.value = true
+  try {
+    if (advogadosTodos.value.length === 0) {
+      await advogadosStore.fetchList()
+    }
+
+    if (!kitId.value) {
+      advogadosSelecionadosIds.value = []
+      advogadosSnapshot.value = []
+      return
+    }
+
+    // 1) Já tem snapshot salvo? usa ele.
+    const snapResp = await getAdvogadosSnapshot(kitId.value)
+    if (snapResp.advogados_snapshot.length > 0) {
+      advogadosSnapshot.value = snapResp.advogados_snapshot
+      advogadosSelecionadosIds.value = snapResp.advogados_snapshot.map(a => a.id)
+      advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
+      return
+    }
+
+    // 2) Sem snapshot → pré-seleção pelo backend.
+    const sug = await getAdvogadosSugeridos(kitId.value)
+    advogadosSelecionadosIds.value = sug.advogados_ids
+    advogadosSnapshot.value = []
+    advogadosUfNoUltimoLoad.value = sug.uf_cliente || (cad.value.estado || '').toUpperCase()
+  } catch (e: any) {
+    showError('Não foi possível carregar advogados.')
+    console.error(e)
+  } finally {
+    advogadosLoading.value = false
+  }
+}
+
+function adicionarAdvogado (id: number) {
+  if (!advogadosSelecionadosIds.value.includes(id)) {
+    advogadosSelecionadosIds.value = [...advogadosSelecionadosIds.value, id]
+  }
+}
+
+function removerAdvogado (id: number) {
+  advogadosSelecionadosIds.value = advogadosSelecionadosIds.value.filter(x => x !== id)
+}
+
+async function salvarAdvogadosESeguir () {
+  if (!kitId.value) {
+    showError('Salve o cliente primeiro para definir os advogados.')
+    return
+  }
+  advogadosSavingNext.value = true
+  try {
+    const res = await saveAdvogadosSnapshot(kitId.value, advogadosSelecionadosIds.value)
+    advogadosSnapshot.value = res.advogados_snapshot
+    advogadosWarnings.value = res.warnings || []
+    advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
+    if (advogadosWarnings.value.length === 0) {
+      showSuccess('Advogados salvos.')
+    }
+    irParaEtapa('kit-final')
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'update'))
+  } finally {
+    advogadosSavingNext.value = false
+  }
+}
+
+// Reset do snapshot (volta pra cálculo automático) quando o operador
+// confirma o recálculo após mudança de UF.
+async function recalcularAdvogadosPorMudancaUf () {
+  trocaUfDialog.value = false
+  if (!kitId.value) return
+  try {
+    await saveAdvogadosSnapshot(kitId.value, [])
+    advogadosSnapshot.value = []
+    await hidratarEtapaAdvogados()
+    showSuccess('Advogados recalculados pela nova UF.')
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'update'))
+  }
+}
+
+// Hidrata a etapa de Advogados sempre que o operador entra nela.
+watch(etapaAtual, novaEtapa => {
+  if (novaEtapa === 'advogados') {
+    hidratarEtapaAdvogados()
+  }
+})
+
+// Detecta mudança de UF e abre modal se já existir snapshot.
+watch(() => cad.value.estado, async (novaUf, ufAnterior) => {
+  if (!novaUf || !ufAnterior) return
+  if (novaUf.toUpperCase() === ufAnterior.toUpperCase()) return
+  if (!kitId.value || !advogadosSnapshot.value.length) return
+  trocaUfDialog.value = true
+})
+
+// Helpers de etapa (ir para próxima/anterior)
+function irParaEtapa (e: KitEtapa) {
+  etapaAtual.value = e
+  if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 // Formatadores para documentos
 function fmtCPF (v: string): string {
   const d = (v || '').replace(/\D/g, '').slice(0, 11)
@@ -998,7 +1154,10 @@ async function montarContexto (): Promise<Record<string, any>> {
     ? (tarifasQuestionadasList[0] || '')
     : tarifasQuestionadasList.slice(0, -1).join(', ') + ' e ' + tarifasQuestionadasList[tarifasQuestionadasList.length - 1]
 
-  // ── Advogados por UF ──
+  // ── Advogados ──
+  // Se o kit tem snapshot da etapa de Advogados, usa ele.
+  // Senão (kit antigo, ou operador não passou pela etapa), fallback automático
+  // por UF como antes.
   let oab_estado = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
   let advogados_estado = ''
   let contratados_socios = ''
@@ -1009,42 +1168,75 @@ async function montarContexto (): Promise<Record<string, any>> {
   let oab_eduardo = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
 
   const uf = c.estado?.toUpperCase()
-  if (uf) {
+
+  // Tenta snapshot do kit primeiro.
+  let snapshotAdvs: AdvogadoSnapshot[] = []
+  if (kitId.value && advogadosSnapshot.value.length > 0) {
+    snapshotAdvs = advogadosSnapshot.value
+  } else if (kitId.value) {
+    try {
+      const resp = await getAdvogadosSnapshot(kitId.value)
+      snapshotAdvs = resp.advogados_snapshot || []
+      if (snapshotAdvs.length) advogadosSnapshot.value = snapshotAdvs
+    } catch (err) {
+      console.warn('Falha ao buscar snapshot de advogados:', err)
+    }
+  }
+
+  type AdvForFormat = {
+    nome_completo: string
+    nacionalidade: string
+    estado_civil: string
+    genero?: string
+    is_socio: boolean
+    numero_oab: string
+    escritorio_nome?: string
+    escritorio_cnpj?: string
+    unidade_apoio_nome?: string
+    unidade_apoio_endereco?: string
+  }
+
+  let socios: AdvForFormat[] = []
+  let naoSocios: AdvForFormat[] = []
+  let advsTodos: AdvForFormat[] = []
+
+  if (snapshotAdvs.length > 0) {
+    advsTodos = snapshotAdvs
+    socios = snapshotAdvs.filter(a => a.is_socio)
+    naoSocios = snapshotAdvs.filter(a => !a.is_socio)
+  } else if (uf) {
     try {
       const advs = await advogadosStore.fetchPorUf(uf)
-
-      // OABs dos sócios — sócio entra sempre, sem filtro de tipos_acao
-      const socios = advs
+      advsTodos = advs as AdvForFormat[]
+      socios = (advs as AdvForFormat[])
         .filter(a => a.is_socio)
         .sort((a, b) => a.nome_completo.localeCompare(b.nome_completo))
-      if (socios.length > 0) {
-        oab_estado = socios.map(s => s.numero_oab).join(' e ')
-        contratados_socios = socios.map(qualificarAdvogado).join(' e ')
-        socio1_oab = socios[0]?.numero_oab || socio1_oab
-        socio2_oab = socios[1]?.numero_oab || socio2_oab
-
-        const tiago = socios.find(s => normalize(s.nome_completo).includes('tiago'))
-        const eduardo = socios.find(s => normalize(s.nome_completo).includes('eduardo'))
-        if (tiago?.numero_oab) oab_tiago = tiago.numero_oab
-        if (eduardo?.numero_oab) oab_eduardo = eduardo.numero_oab
-      }
-
-      // Advogados adicionais (não-sócios) — mesma regra de tipos_acao
-      const adicionais = advs.filter(a =>
-        !a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados),
-      )
-      if (adicionais.length > 0) {
-        advogados_estado = adicionais.map(qualificarAdvogado).join('; e ')
-      }
-
-      // Unidade de apoio (pega a primeira que tiver)
-      const comUnidade = advs.find(a => a.unidade_apoio_nome && a.unidade_apoio_endereco)
-      if (comUnidade) {
-        unidade_apoio = `, unidade de apoio administrativo na ${comUnidade.unidade_apoio_endereco}`
-      }
+      naoSocios = (advs as any[])
+        .filter(a => !a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados))
     } catch (err) {
       console.warn('Falha ao buscar advogados para UF', uf, err)
     }
+  }
+
+  if (socios.length > 0) {
+    oab_estado = socios.map(s => s.numero_oab).filter(Boolean).join(' e ') || oab_estado
+    contratados_socios = socios.map(qualificarAdvogado).join(' e ')
+    socio1_oab = socios[0]?.numero_oab || socio1_oab
+    socio2_oab = socios[1]?.numero_oab || socio2_oab
+
+    const tiago = socios.find(s => normalize(s.nome_completo).includes('tiago'))
+    const eduardo = socios.find(s => normalize(s.nome_completo).includes('eduardo'))
+    if (tiago?.numero_oab) oab_tiago = tiago.numero_oab
+    if (eduardo?.numero_oab) oab_eduardo = eduardo.numero_oab
+  }
+
+  if (naoSocios.length > 0) {
+    advogados_estado = naoSocios.map(qualificarAdvogado).join('; e ')
+  }
+
+  const comUnidade = advsTodos.find(a => a.unidade_apoio_nome && a.unidade_apoio_endereco)
+  if (comUnidade) {
+    unidade_apoio = `, unidade de apoio administrativo na ${comUnidade.unidade_apoio_endereco}`
   }
 
   // Bloco assinatura
@@ -1646,14 +1838,14 @@ async function avancarComPersistencia () {
       if (!isEditMode.value) {
         savingMessage.value = 'Salvando rascunho do kit...'
         const created = await kitsStore.createDraft(clienteId.value, tipoKit.value)
-        const proximaEtapa = tipoKit.value === 'previdenciario' ? 'kit-final' : 'acoes'
+        const proximaEtapa = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
         await router.replace({
           name: 'producao-kits-editar',
           params: { id: created.id },
           query: { etapa: proximaEtapa },
         })
       } else {
-        etapaAtual.value = tipoKit.value === 'previdenciario' ? 'kit-final' : 'acoes'
+        etapaAtual.value = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
       }
     } finally {
       saving.value = false
@@ -1673,7 +1865,19 @@ async function avancarComPersistencia () {
       const savedAcoes = await kitsStore.saveAcoes(kitId.value, acoes.value, acoesExistentes.value)
       acoesExistentes.value = savedAcoes
       acoes.value = savedAcoes.map(a => acaoFromAPI(a))
-      etapaAtual.value = 'kit-final'
+      etapaAtual.value = 'advogados'
+    } finally {
+      saving.value = false
+      savingMessage.value = ''
+    }
+    return
+  }
+
+  if (etapaAtual.value === 'advogados') {
+    saving.value = true
+    try {
+      savingMessage.value = 'Salvando advogados...'
+      await salvarAdvogadosESeguir()
     } finally {
       saving.value = false
       savingMessage.value = ''
@@ -1751,6 +1955,8 @@ onMounted(async () => {
   const isPrevid = tipoKit.value === 'previdenciario'
   if (etapaQuery === 'kit-final') {
     etapaAtual.value = 'kit-final'
+  } else if (etapaQuery === 'advogados') {
+    etapaAtual.value = 'advogados'
   } else if (etapaQuery === 'acoes' && !isPrevid) {
     etapaAtual.value = 'acoes'
   } else if (kit.status === 'acoes' && !isPrevid) {
@@ -1794,7 +2000,14 @@ onMounted(async () => {
             <span class="step-label">Ações</span>
           </div>
         </template>
-        <div :class="['step-line', etapaAtual === 'kit-final' ? 'step-line--done' : (etapaIndex > 0 && tipoKit === 'previdenciario' ? 'step-line--done' : '')]" />
+        <div :class="['step-line', etapaIndex >= etapas.indexOf('advogados') ? 'step-line--done' : '']" />
+        <div class="step">
+          <v-avatar :class="['step-icon', etapaAtual === 'advogados' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('advogados') ? 'step-icon--done' : '')]" size="44">
+            <v-icon :icon="etapaIndex > etapas.indexOf('advogados') ? 'mdi-check' : 'mdi-account-tie-outline'" />
+          </v-avatar>
+          <span class="step-label">Advogados</span>
+        </div>
+        <div :class="['step-line', etapaAtual === 'kit-final' ? 'step-line--done' : '']" />
         <div class="step">
           <v-avatar :class="['step-icon', etapaAtual === 'kit-final' ? 'step-icon--active' : '']" size="44">
             <v-icon icon="mdi-eye-outline" />
@@ -2735,6 +2948,198 @@ onMounted(async () => {
               <v-btn v-if="acoes.length > 0" class="add-acao-link" variant="tonal" prepend-icon="mdi-plus" @click="addAcao">Adicionar ação</v-btn>
             </v-window-item>
 
+            <!-- ═══════════════ STEP: ADVOGADOS ═══════════════ -->
+            <v-window-item value="advogados">
+              <h2 class="section-title">Advogados do Kit</h2>
+              <v-divider class="mb-3" />
+              <p class="text-body-2 text-medium-emphasis mb-4">
+                Selecione os advogados que vão constar no contrato e procuração.
+                A pré-seleção segue a regra padrão (sócios da UF + não-sócios que atuam
+                no tipo de ação). Você pode remover ou adicionar livremente.
+              </p>
+
+              <v-alert
+                v-if="advogadosWarnings.length"
+                class="mb-3"
+                closable
+                type="warning"
+                variant="tonal"
+                @click:close="advogadosWarnings = []"
+              >
+                <div v-for="(w, i) in advogadosWarnings" :key="i">{{ w }}</div>
+              </v-alert>
+
+              <div v-if="advogadosLoading" class="text-center py-8">
+                <v-progress-circular color="primary" indeterminate size="36" />
+                <div class="mt-2 text-body-2 text-medium-emphasis">Carregando advogados...</div>
+              </div>
+
+              <!-- Mobile: tabs -->
+              <template v-else-if="advsKanbanMobile">
+                <v-tabs v-model="advogadosTabMobile" color="primary" grow>
+                  <v-tab value="selecionados">
+                    Selecionados ({{ advogadosSelecionados.length }})
+                  </v-tab>
+                  <v-tab value="disponiveis">
+                    Disponíveis ({{ advogadosDisponiveis.length }})
+                  </v-tab>
+                </v-tabs>
+                <v-window v-model="advogadosTabMobile" class="mt-3">
+                  <v-window-item value="selecionados">
+                    <div v-if="!advogadosSelecionados.length" class="empty-coluna">
+                      Nenhum advogado selecionado.
+                    </div>
+                    <div
+                      v-for="adv in advogadosSelecionados"
+                      :key="adv.id"
+                      class="adv-card adv-card--selecionado"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
+                    </div>
+                  </v-window-item>
+                  <v-window-item value="disponiveis">
+                    <v-text-field
+                      v-model="advogadosBusca"
+                      class="mb-2"
+                      clearable
+                      density="compact"
+                      hide-details
+                      placeholder="Buscar por nome, escritório ou OAB..."
+                      prepend-inner-icon="mdi-magnify"
+                    />
+                    <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
+                      Nenhum advogado disponível.
+                    </div>
+                    <div
+                      v-for="adv in advogadosDisponiveis"
+                      :key="adv.id"
+                      class="adv-card"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
+                    </div>
+                  </v-window-item>
+                </v-window>
+              </template>
+
+              <!-- Desktop: kanban duas colunas -->
+              <div v-else class="adv-kanban">
+                <div class="adv-coluna">
+                  <div class="adv-coluna__header">
+                    Selecionados
+                    <v-chip color="primary" size="small" variant="tonal">{{ advogadosSelecionados.length }}</v-chip>
+                  </div>
+                  <div class="adv-coluna__body">
+                    <div v-if="!advogadosSelecionados.length" class="empty-coluna">
+                      Nenhum advogado selecionado.
+                    </div>
+                    <div
+                      v-for="adv in advogadosSelecionados"
+                      :key="adv.id"
+                      class="adv-card adv-card--selecionado"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="adv-coluna">
+                  <div class="adv-coluna__header">
+                    Disponíveis
+                    <v-chip size="small" variant="tonal">{{ advogadosDisponiveis.length }}</v-chip>
+                  </div>
+                  <div class="adv-coluna__body">
+                    <v-text-field
+                      v-model="advogadosBusca"
+                      class="mb-2"
+                      clearable
+                      density="compact"
+                      hide-details
+                      placeholder="Buscar por nome, escritório ou OAB..."
+                      prepend-inner-icon="mdi-magnify"
+                    />
+                    <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
+                      Nenhum advogado disponível.
+                    </div>
+                    <div
+                      v-for="adv in advogadosDisponiveis"
+                      :key="adv.id"
+                      class="adv-card"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </v-window-item>
+
             <!-- ═══════════════ STEP 3: KIT FINAL ═══════════════ -->
             <v-window-item value="kit-final">
               <div class="d-flex align-center justify-space-between mb-2">
@@ -2988,6 +3393,27 @@ onMounted(async () => {
         <v-btn color="primary" prepend-icon="mdi-check" @click="salvarClienteDrawer">Salvar</v-btn>
       </template>
     </SidePanel>
+
+    <!-- Modal: UF do cliente mudou após selecionar advogados -->
+    <v-dialog v-model="trocaUfDialog" max-width="500" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center ga-2">
+          <v-icon color="warning" icon="mdi-alert-circle-outline" />
+          UF do cliente foi alterada
+        </v-card-title>
+        <v-card-text>
+          Você alterou a UF do cliente após ter escolhido os advogados deste kit.
+          Deseja recalcular a seleção com base na nova UF, ou manter a seleção atual?
+        </v-card-text>
+        <v-card-actions class="pa-4">
+          <v-spacer />
+          <v-btn variant="text" @click="trocaUfDialog = false">Manter seleção atual</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-refresh" variant="elevated" @click="recalcularAdvogadosPorMudancaUf">
+            Recalcular
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -3471,6 +3897,92 @@ onMounted(async () => {
   .conditions-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Etapa de Advogados (kanban) ─────────────────────────── */
+.adv-kanban {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.adv-coluna {
+  border: 1px solid #e8e8ef;
+  border-radius: 10px;
+  background: #fafbfd;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+}
+
+.adv-coluna__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e8e8ef;
+  font-weight: 700;
+  color: #0F2B46;
+  font-size: 0.95rem;
+}
+
+.adv-coluna__body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.adv-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e8e8ef;
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.adv-card:hover {
+  border-color: #cda660;
+}
+
+.adv-card--selecionado {
+  background: rgba(205, 166, 96, 0.08);
+  border-color: rgba(205, 166, 96, 0.35);
+}
+
+.adv-card__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.adv-card__nome {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #2a2f3a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adv-card__sub {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-coluna {
+  text-align: center;
+  color: #8a94a6;
+  font-size: 0.85rem;
+  padding: 24px 8px;
 }
 </style>
 
