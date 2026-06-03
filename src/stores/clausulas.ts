@@ -22,6 +22,10 @@ interface State {
 }
 
 export const useClausulasStore = defineStore('clausulas', {
+  // Não persistir: cláusulas mudam raramente e o shape pode evoluir.
+  // Persist global do plugin restaurava itens antigos do localStorage e
+  // dava form vazio na edição (campo texto chegava undefined).
+  persist: false,
   state: (): State => ({
     padrao: null,
     ufs: [],
