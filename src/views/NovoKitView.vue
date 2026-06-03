@@ -926,6 +926,32 @@ function advCardVisivel (adv: AdvForKanban): boolean {
   return advMatchesBusca(adv, advogadosBusca.value.trim().toLowerCase())
 }
 
+/** Texto da OAB a exibir no card. Cascata: UF do cliente → SC → primeira → vazio. */
+function getOabExibida (adv: AdvForKanban): { texto: string; fallback: boolean } {
+  const uf = (cad.value.estado || '').toUpperCase()
+
+  // Snapshot já vem com OAB resolvida pelo backend.
+  const snap = adv as AdvogadoSnapshot
+  if (snap.numero_oab) {
+    return {
+      texto: `${snap.oab_uf || '—'}: ${snap.numero_oab}`,
+      fallback: snap.oab_fonte !== 'uf_cliente',
+    }
+  }
+
+  // Advogado da store: aplica cascata local pra exibição.
+  const oabs = (adv as any).oabs as Array<{ uf: string; numero_oab: string }> | undefined
+  if (!oabs || oabs.length === 0) {
+    return { texto: 'Sem OAB cadastrada', fallback: false }
+  }
+  const naUf = uf ? oabs.find(o => o.uf.toUpperCase() === uf) : null
+  if (naUf) return { texto: `${naUf.uf}: ${naUf.numero_oab}`, fallback: false }
+  const sc = oabs.find(o => o.uf.toUpperCase() === 'SC')
+  if (sc) return { texto: `${sc.uf}: ${sc.numero_oab}`, fallback: true }
+  const primeira = oabs[0]
+  return { texto: `${primeira.uf}: ${primeira.numero_oab}`, fallback: true }
+}
+
 async function hidratarEtapaAdvogados () {
   advogadosLoading.value = true
   try {
@@ -3041,7 +3067,16 @@ onMounted(async () => {
                           </v-chip>
                         </div>
                         <div class="adv-card__sub">
-                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                          <span>{{ getOabExibida(adv).texto }}</span>
+                          <v-chip
+                            v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
+                            class="ml-1"
+                            color="warning"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            fallback
+                          </v-chip>
                         </div>
                       </div>
                       <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
@@ -3070,7 +3105,16 @@ onMounted(async () => {
                           </v-chip>
                         </div>
                         <div class="adv-card__sub">
-                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                          <span>{{ getOabExibida(adv).texto }}</span>
+                          <v-chip
+                            v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
+                            class="ml-1"
+                            color="warning"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            fallback
+                          </v-chip>
                         </div>
                       </div>
                       <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
