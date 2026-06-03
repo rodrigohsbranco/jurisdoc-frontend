@@ -890,7 +890,7 @@ const advogadosLoading = ref(false)
 const advogadosSavingNext = ref(false)
 const advogadosUfNoUltimoLoad = ref<string>('')
 const trocaUfDialog = ref(false)
-const advogadosTabMobile = ref<'selecionados' | 'disponiveis'>('selecionados')
+const advogadosTabMobile = ref<'selecionados' | 'disponiveis'>('disponiveis')
 
 const { smAndDown: advsKanbanMobile } = useDisplay()
 
@@ -2977,43 +2977,14 @@ onMounted(async () => {
               <!-- Mobile: tabs -->
               <template v-else-if="advsKanbanMobile">
                 <v-tabs v-model="advogadosTabMobile" color="primary" grow>
-                  <v-tab value="selecionados">
-                    Selecionados ({{ advogadosSelecionados.length }})
-                  </v-tab>
                   <v-tab value="disponiveis">
                     Disponíveis ({{ advogadosDisponiveis.length }})
                   </v-tab>
+                  <v-tab value="selecionados">
+                    Selecionados ({{ advogadosSelecionados.length }})
+                  </v-tab>
                 </v-tabs>
                 <v-window v-model="advogadosTabMobile" class="mt-3">
-                  <v-window-item value="selecionados">
-                    <div v-if="!advogadosSelecionados.length" class="empty-coluna">
-                      Nenhum advogado selecionado.
-                    </div>
-                    <div
-                      v-for="adv in advogadosSelecionados"
-                      :key="adv.id"
-                      class="adv-card adv-card--selecionado"
-                    >
-                      <div class="adv-card__info">
-                        <div class="adv-card__nome">
-                          {{ adv.nome_completo }}
-                          <v-chip
-                            v-if="adv.is_socio"
-                            class="ml-1"
-                            color="secondary"
-                            size="x-small"
-                            variant="tonal"
-                          >
-                            Sócio
-                          </v-chip>
-                        </div>
-                        <div class="adv-card__sub">
-                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
-                        </div>
-                      </div>
-                      <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
-                    </div>
-                  </v-window-item>
                   <v-window-item value="disponiveis">
                     <v-text-field
                       v-model="advogadosBusca"
@@ -3052,17 +3023,7 @@ onMounted(async () => {
                       <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
                     </div>
                   </v-window-item>
-                </v-window>
-              </template>
-
-              <!-- Desktop: kanban duas colunas -->
-              <div v-else class="adv-kanban">
-                <div class="adv-coluna">
-                  <div class="adv-coluna__header">
-                    Selecionados
-                    <v-chip color="primary" size="small" variant="tonal">{{ advogadosSelecionados.length }}</v-chip>
-                  </div>
-                  <div class="adv-coluna__body">
+                  <v-window-item value="selecionados">
                     <div v-if="!advogadosSelecionados.length" class="empty-coluna">
                       Nenhum advogado selecionado.
                     </div>
@@ -3090,9 +3051,12 @@ onMounted(async () => {
                       </div>
                       <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
                     </div>
-                  </div>
-                </div>
+                  </v-window-item>
+                </v-window>
+              </template>
 
+              <!-- Desktop: kanban duas colunas -->
+              <div v-else class="adv-kanban">
                 <div class="adv-coluna">
                   <div class="adv-coluna__header">
                     Disponíveis
@@ -3134,6 +3098,42 @@ onMounted(async () => {
                         </div>
                       </div>
                       <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="adv-coluna">
+                  <div class="adv-coluna__header">
+                    Selecionados
+                    <v-chip color="primary" size="small" variant="tonal">{{ advogadosSelecionados.length }}</v-chip>
+                  </div>
+                  <div class="adv-coluna__body">
+                    <div v-if="!advogadosSelecionados.length" class="empty-coluna">
+                      Nenhum advogado selecionado.
+                    </div>
+                    <div
+                      v-for="adv in advogadosSelecionados"
+                      :key="adv.id"
+                      class="adv-card adv-card--selecionado"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          {{ (adv.oabs && adv.oabs.length > 0) ? adv.oabs.map(o => `${o.uf}: ${o.numero_oab}`).join(' · ') : 'Sem OAB cadastrada' }}
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
                     </div>
                   </div>
                 </div>
