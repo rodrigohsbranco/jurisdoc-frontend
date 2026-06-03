@@ -3068,15 +3068,6 @@ onMounted(async () => {
                         </div>
                         <div class="adv-card__sub">
                           <span>{{ getOabExibida(adv).texto }}</span>
-                          <v-chip
-                            v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
-                            class="ml-1"
-                            color="warning"
-                            size="x-small"
-                            variant="tonal"
-                          >
-                            fallback
-                          </v-chip>
                         </div>
                       </div>
                       <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
@@ -3106,15 +3097,6 @@ onMounted(async () => {
                         </div>
                         <div class="adv-card__sub">
                           <span>{{ getOabExibida(adv).texto }}</span>
-                          <v-chip
-                            v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
-                            class="ml-1"
-                            color="warning"
-                            size="x-small"
-                            variant="tonal"
-                          >
-                            fallback
-                          </v-chip>
                         </div>
                       </div>
                       <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
@@ -3172,15 +3154,6 @@ onMounted(async () => {
                             </div>
                             <div class="adv-card__sub">
                               <span>{{ getOabExibida(adv).texto }}</span>
-                              <v-chip
-                                v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
-                                class="ml-1"
-                                color="warning"
-                                size="x-small"
-                                variant="tonal"
-                              >
-                                fallback
-                              </v-chip>
                             </div>
                           </div>
                           <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
@@ -3228,15 +3201,6 @@ onMounted(async () => {
                             </div>
                             <div class="adv-card__sub">
                               <span>{{ getOabExibida(adv).texto }}</span>
-                              <v-chip
-                                v-if="getOabExibida(adv).fallback && getOabExibida(adv).texto !== 'Sem OAB cadastrada'"
-                                class="ml-1"
-                                color="warning"
-                                size="x-small"
-                                variant="tonal"
-                              >
-                                fallback
-                              </v-chip>
                             </div>
                           </div>
                           <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
