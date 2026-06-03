@@ -272,7 +272,6 @@ onMounted(() => {
           <v-spacer />
           <v-btn
             color="primary"
-            :disabled="!ufOptionsParaNovo.length"
             prepend-icon="mdi-plus"
             @click="abrirNovo"
           >
