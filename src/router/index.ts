@@ -102,6 +102,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/PermissoesView.vue'),
         meta: { title: 'Permissões', requiresCapability: 'pagina.permissoes' },
       },
+      {
+        path: 'clausula-porcentagem',
+        name: 'clausula-porcentagem',
+        component: () => import('../views/ClausulaPorcentagemView.vue'),
+        meta: { title: 'Cláusula por UF', requiresAdmin: true },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -140,6 +146,11 @@ router.beforeEach(async to => {
   // demais rotas exigem login
   if (!auth.isAuthenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
+  }
+
+  // rotas que exigem is_admin estrito (sem capacidades)
+  if (to.meta?.requiresAdmin && !auth.isAdmin) {
+    return { path: '/' }
   }
 
   // rotas gateadas por capacidade (admin sempre passa via auth.can())

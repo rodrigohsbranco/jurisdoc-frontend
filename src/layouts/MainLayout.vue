@@ -24,7 +24,13 @@
     if (mobile.value) drawer.value = false
   })
 
-  type NavItem = { title: string; icon: string; to: { name: string }; requires?: string }
+  type NavItem = {
+    title: string
+    icon: string
+    to: { name: string }
+    requires?: string
+    requiresAdmin?: boolean
+  }
   type NavSection = { title: string; items: NavItem[] }
 
   const allNavSections: NavSection[] = [
@@ -53,16 +59,22 @@
         { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' }, requires: 'pagina.relatorios' },
         { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' }, requires: 'pagina.usuarios' },
         { title: 'Permissões', icon: 'mdi-shield-key-outline', to: { name: 'permissoes' }, requires: 'pagina.permissoes' },
+        { title: 'Cláusula por UF', icon: 'mdi-text-box-multiple-outline', to: { name: 'clausula-porcentagem' }, requiresAdmin: true },
       ],
     },
   ]
 
   // Gate por capacidade item-a-item; oculta a seção se todos os itens forem ocultos.
+  // Itens com requiresAdmin só aparecem para usuários is_admin.
   const navSections = computed(() =>
     allNavSections
       .map(s => ({
         ...s,
-        items: s.items.filter(i => !i.requires || auth.can(i.requires)),
+        items: s.items.filter(i => {
+          if (i.requiresAdmin && !auth.isAdmin) return false
+          if (i.requires && !auth.can(i.requires)) return false
+          return true
+        }),
       }))
       .filter(s => s.items.length > 0),
   )

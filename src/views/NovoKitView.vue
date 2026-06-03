@@ -7,6 +7,7 @@ import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
 import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
+import { snapshotKit } from '@/services/clausulas'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
@@ -1150,6 +1151,22 @@ async function montarContexto (): Promise<Record<string, any>> {
     testemunha2_cpf: fmtCPF(c.testemunha2Cpf),
     responsavel_legal_nome: c.responsavelLegalNome,
     responsavel_legal_cpf: fmtCPF(c.responsavelLegalCpf),
+    // Cláusula de porcentagem com snapshot no kit. Resolve no backend
+    // (variação por UF do cliente ou cai no padrão). Vazio se kit ainda
+    // não foi salvo — fluxo só renderiza depois que o kit tem id.
+    clausula_porcentagem: await resolverClausulaPorcentagem(),
+  }
+}
+
+/** Congela e retorna o texto da cláusula de porcentagem para este kit. */
+async function resolverClausulaPorcentagem (): Promise<string> {
+  if (!kitId.value) return ''
+  try {
+    const res = await snapshotKit(kitId.value, true)
+    return res.texto || ''
+  } catch (err) {
+    console.warn('Falha ao resolver cláusula de porcentagem:', err)
+    return ''
   }
 }
 
