@@ -504,14 +504,12 @@ onMounted(() => {
 
       <v-autocomplete
         v-model="form.uf"
-        :disabled="!!editing"
         :items="ufOptionsParaForm"
         label="UF"
       />
       <v-select
         v-model="form.tipo_acao"
         class="mt-3"
-        :disabled="!!editing"
         hint="Selecione um tipo específico, ou deixe em 'Todas' para criar uma variação genérica da UF."
         :items="TIPO_ACAO_OPTIONS"
         label="Tipo de ação"
