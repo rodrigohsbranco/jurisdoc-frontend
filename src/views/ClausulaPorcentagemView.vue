@@ -5,6 +5,7 @@ import { useClausulasStore } from '@/stores/clausulas'
 import type { ClausulaUF, ClausulaResolved } from '@/services/clausulas'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { friendlyError } from '@/utils/errorMessages'
+import { TIPOS_ACAO } from '@/types/kits'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SidePanel from '@/components/SidePanel.vue'
 
@@ -13,6 +14,16 @@ const UF_LIST = [
   'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ]
+
+const TIPO_ACAO_OPTIONS = [
+  { title: 'Todas as ações (genérica da UF)', value: '' },
+  ...TIPOS_ACAO.map(t => ({ title: t.label, value: t.value })),
+]
+
+function labelTipoAcao (tipo: string): string {
+  if (!tipo) return 'Todas as ações'
+  return TIPOS_ACAO.find(t => t.value === tipo)?.label || tipo
+}
 
 const store = useClausulasStore()
 const { showSuccess } = useSnackbar()
@@ -43,28 +54,24 @@ async function salvarPadrao () {
 // ── Exceções (CRUD) ────────────────────────────────────────
 const sidePanelOpen = ref(false)
 const editing = ref<ClausulaUF | null>(null)
-const form = ref<{ uf: string; texto: string }>({ uf: '', texto: '' })
+const form = ref<{ uf: string; tipo_acao: string; texto: string }>({
+  uf: '', tipo_acao: '', texto: '',
+})
 const formError = ref('')
 
-const ufOptionsParaNovo = computed(() => {
-  const usadas = new Set(store.ufsCadastradas)
-  return UF_LIST.filter(uf => !usadas.has(uf))
-})
-
-const ufOptionsParaForm = computed(() =>
-  editing.value ? UF_LIST : ufOptionsParaNovo.value,
-)
+// Todas as UFs sempre disponíveis (uma UF pode ter genérica + várias específicas).
+const ufOptionsParaForm = computed(() => UF_LIST)
 
 function abrirNovo () {
   editing.value = null
-  form.value = { uf: '', texto: '' }
+  form.value = { uf: '', tipo_acao: '', texto: '' }
   formError.value = ''
   sidePanelOpen.value = true
 }
 
 function abrirEdicao (item: ClausulaUF) {
   editing.value = item
-  form.value = { uf: item.uf, texto: item.texto }
+  form.value = { uf: item.uf, tipo_acao: item.tipo_acao || '', texto: item.texto }
   formError.value = ''
   sidePanelOpen.value = true
 }
@@ -72,6 +79,7 @@ function abrirEdicao (item: ClausulaUF) {
 async function salvarExcecao () {
   formError.value = ''
   const uf = (form.value.uf || '').trim().toUpperCase()
+  const tipo_acao = (form.value.tipo_acao || '').trim()
   const texto = form.value.texto?.trim() || ''
   if (!uf) {
     formError.value = 'Selecione uma UF.'
@@ -83,10 +91,10 @@ async function salvarExcecao () {
   }
   try {
     if (editing.value) {
-      await store.updateUf(editing.value.id, { uf, texto })
+      await store.updateUf(editing.value.id, { uf, tipo_acao, texto })
       showSuccess('Variação atualizada!')
     } else {
-      await store.createUf({ uf, texto })
+      await store.createUf({ uf, tipo_acao, texto })
       showSuccess('Variação criada!')
     }
     sidePanelOpen.value = false
@@ -101,7 +109,8 @@ const confirmMessage = ref('')
 const confirmAction = ref<(() => void) | null>(null)
 
 function removerExcecao (item: ClausulaUF) {
-  confirmMessage.value = `Excluir a variação da UF "${item.uf}"? A UF voltará a usar o texto padrão.`
+  const detalhe = item.tipo_acao ? `${item.uf} / ${labelTipoAcao(item.tipo_acao)}` : `${item.uf} (genérica)`
+  confirmMessage.value = `Excluir a variação "${detalhe}"? Os contratos passarão a usar a próxima na cascata (genérica da UF ou padrão).`
   confirmAction.value = async () => {
     try {
       await store.removeUf(item.id)
@@ -115,6 +124,7 @@ function removerExcecao (item: ClausulaUF) {
 
 // ── Preview de resolução ───────────────────────────────────
 const previewUf = ref('')
+const previewTipos = ref<string[]>([])
 const previewResult = ref<ClausulaResolved | null>(null)
 const previewLoading = ref(false)
 
@@ -123,15 +133,33 @@ async function fazerPreview () {
   if (!uf) return
   previewLoading.value = true
   try {
-    previewResult.value = await store.resolve(uf)
+    previewResult.value = await store.resolve(uf, previewTipos.value)
   } finally {
     previewLoading.value = false
   }
 }
 
+function previewFonteLabel (fonte: ClausulaResolved['fonte']): string {
+  if (fonte === 'uf_tipo') return 'Variação (UF + tipo)'
+  if (fonte === 'uf') return 'Variação (UF — genérica)'
+  if (fonte === 'snapshot') return 'Snapshot do kit'
+  return 'Texto padrão'
+}
+
+function previewFonteColor (fonte: ClausulaResolved['fonte']): string {
+  if (fonte === 'uf_tipo') return 'success'
+  if (fonte === 'uf') return 'primary'
+  if (fonte === 'snapshot') return 'info'
+  return 'warning'
+}
+
+// Tipos de ação como itens do v-select para o preview e tabela.
+const TIPOS_ACAO_ITENS = TIPOS_ACAO.map(t => ({ title: t.label, value: t.value }))
+
 // ── Tabela / mobile cards ──────────────────────────────────
 const headers = [
   { title: 'UF', key: 'uf', width: 80 },
+  { title: 'Tipo de ação', key: 'tipo_acao', width: 220 },
   { title: 'Texto', key: 'texto' },
   { title: 'Última alteração', key: 'atualizado_em', width: 220 },
   { title: '', key: 'actions', sortable: false, width: '48px' },
@@ -286,7 +314,19 @@ onMounted(() => {
                 <span class="font-weight-bold">{{ item.uf }}</span>
               </v-avatar>
               <div class="mobile-card__header-text">
-                <div class="mobile-card__title">UF {{ item.uf }}</div>
+                <div class="mobile-card__title">
+                  UF {{ item.uf }}
+                  <v-chip
+                    v-if="item.tipo_acao"
+                    class="ml-2"
+                    color="secondary"
+                    size="x-small"
+                    variant="tonal"
+                  >
+                    {{ labelTipoAcao(item.tipo_acao) }}
+                  </v-chip>
+                  <v-chip v-else class="ml-2" size="x-small" variant="outlined">Todas</v-chip>
+                </div>
                 <div class="mobile-card__subtitle">{{ truncate(item.texto, 120) }}</div>
               </div>
             </div>
@@ -325,6 +365,20 @@ onMounted(() => {
         >
           <template #item.uf="{ item }">
             <v-chip color="primary" size="small" variant="tonal">{{ item.uf }}</v-chip>
+          </template>
+
+          <template #item.tipo_acao="{ item }">
+            <v-chip
+              v-if="item.tipo_acao"
+              color="secondary"
+              size="small"
+              variant="tonal"
+            >
+              {{ labelTipoAcao(item.tipo_acao) }}
+            </v-chip>
+            <v-chip v-else size="small" variant="outlined">
+              Todas
+            </v-chip>
           </template>
 
           <template #item.texto="{ item }">
@@ -374,7 +428,7 @@ onMounted(() => {
           <div class="text-subtitle-1 font-weight-bold">Pré-visualizar resolução</div>
         </div>
         <div class="text-caption text-medium-emphasis mb-3">
-          Simula qual texto seria injetado para uma UF (sem afetar nenhum kit).
+          Simula qual texto seria injetado para uma UF + tipos de ação (sem afetar nenhum kit).
         </div>
 
         <div class="d-flex align-center flex-wrap ga-3">
@@ -383,6 +437,15 @@ onMounted(() => {
             :items="UF_LIST"
             label="UF"
             style="max-width: 180px"
+          />
+          <v-select
+            v-model="previewTipos"
+            chips
+            closable-chips
+            :items="TIPOS_ACAO_ITENS"
+            label="Tipos de ação no kit"
+            multiple
+            style="min-width: 320px; flex: 1"
           />
           <v-btn
             color="primary"
@@ -396,14 +459,19 @@ onMounted(() => {
         </div>
 
         <div v-if="previewResult" class="mt-4">
-          <div class="d-flex align-center ga-2 mb-2">
+          <div class="d-flex align-center ga-2 mb-2 flex-wrap">
             <v-chip color="primary" size="small" variant="tonal">{{ previewResult.uf || '—' }}</v-chip>
             <v-chip
-              :color="previewResult.fonte === 'uf' ? 'success' : 'warning'"
+              v-for="t in (previewResult.tipos_acao || [])"
+              :key="t"
+              color="secondary"
               size="small"
               variant="tonal"
             >
-              Fonte: {{ previewResult.fonte === 'uf' ? 'Variação UF' : 'Texto padrão' }}
+              {{ labelTipoAcao(t) }}
+            </v-chip>
+            <v-chip :color="previewFonteColor(previewResult.fonte)" size="small" variant="tonal">
+              Fonte: {{ previewFonteLabel(previewResult.fonte) }}
             </v-chip>
           </div>
           <v-sheet class="pa-3 text-body-2" rounded color="grey-lighten-4" style="white-space: pre-wrap">
@@ -421,7 +489,12 @@ onMounted(() => {
         </v-avatar>
         <div>
           <div class="text-body-1 font-weight-bold">
-            {{ editing ? `Editar variação ${editing.uf}` : 'Nova variação por UF' }}
+            <template v-if="editing">
+              Editar variação {{ editing.uf }}
+              <span v-if="editing.tipo_acao"> / {{ labelTipoAcao(editing.tipo_acao) }}</span>
+              <span v-else> (genérica)</span>
+            </template>
+            <template v-else>Nova variação</template>
           </div>
         </div>
       </template>
@@ -435,6 +508,15 @@ onMounted(() => {
         :disabled="!!editing"
         :items="ufOptionsParaForm"
         label="UF"
+      />
+      <v-select
+        v-model="form.tipo_acao"
+        class="mt-3"
+        :disabled="!!editing"
+        hint="Selecione um tipo específico, ou deixe em 'Todas' para criar uma variação genérica da UF."
+        :items="TIPO_ACAO_OPTIONS"
+        label="Tipo de ação"
+        persistent-hint
       />
       <v-textarea
         v-model="form.texto"

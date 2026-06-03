@@ -63,7 +63,7 @@ export const useClausulasStore = defineStore('clausulas', {
       }
     },
 
-    async createUf (payload: { uf: string; texto: string }) {
+    async createUf (payload: { uf: string; tipo_acao?: string; texto: string }) {
       this.loadingMutation = true
       this.error = ''
       try {
@@ -78,7 +78,7 @@ export const useClausulasStore = defineStore('clausulas', {
       }
     },
 
-    async updateUf (id: number, payload: Partial<{ uf: string; texto: string }>) {
+    async updateUf (id: number, payload: Partial<{ uf: string; tipo_acao: string; texto: string }>) {
       this.loadingMutation = true
       this.error = ''
       try {
@@ -107,8 +107,8 @@ export const useClausulasStore = defineStore('clausulas', {
       }
     },
 
-    async resolve (uf: string): Promise<ClausulaResolved> {
-      return await resolveApi(uf)
+    async resolve (uf: string, tiposAcao: string[] = []): Promise<ClausulaResolved> {
+      return await resolveApi(uf, tiposAcao)
     },
   },
 })
