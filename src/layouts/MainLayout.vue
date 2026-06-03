@@ -125,9 +125,14 @@
           v-show="!rail"
           alt="Azevedo Lima & Rebonatto"
           class="brand-logo"
-          src="@/assets/logo-alr.jpg"
+          src="@/assets/logo-alr-white.png"
         >
-        <span v-show="rail" class="brand-initials">AL&R</span>
+        <img
+          v-show="rail"
+          alt="Azevedo Lima & Rebonatto"
+          class="w-100 h-100"
+          src="@/assets/logo_light.png"
+        >
       </div>
 
       <v-divider class="mx-3 mb-2" color="white" opacity="0.12" />
@@ -281,10 +286,10 @@
 }
 
 .brand-logo {
-  max-width: 160px;
+  max-width: 180px;
   max-height: 48px;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: 2px;
 }
