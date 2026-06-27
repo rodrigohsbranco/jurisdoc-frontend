@@ -2,7 +2,7 @@ export type KitTipo = 'bancario' | 'previdenciario' | 'marketing'
 
 export type KitStatus = 'rascunho' | 'acoes' | 'finalizado' | 'assinado'
 
-export type KitEtapa = 'cliente' | 'acoes' | 'advogados' | 'kit-final'
+export type KitEtapa = 'cliente' | 'localizacao' | 'acoes' | 'advogados' | 'kit-final'
 
 export type TipoAcao =
   | 'cartao_credito_consignado'
@@ -62,6 +62,11 @@ export type KitCadastro = {
   responsavelImovelNome: string    // quando comprovanteNomeCliente='nao'
   responsavelImovelCpf: string     // quando comprovanteNomeCliente='nao'
   responsavelImovelDocs: UploadedDoc[]  // quando comprovanteNomeCliente='nao'
+
+  // Geolocalização da residência
+  latitude: number | null
+  longitude: number | null
+  fotosResidencia: UploadedDoc[]
 
   // Declaração de Hipossuficiência
   possuiImoveis: boolean | null
@@ -228,6 +233,10 @@ export const emptyCadastro = (): KitCadastro => ({
   responsavelImovelNome: '',
   responsavelImovelCpf: '',
   responsavelImovelDocs: [],
+
+  latitude: null,
+  longitude: null,
+  fotosResidencia: [],
 
   possuiImoveis: null,
   possuiMoveis: null,

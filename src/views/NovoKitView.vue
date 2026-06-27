@@ -43,8 +43,8 @@ import {
 const etapaAtual = ref<KitEtapa>('cliente')
 const etapas = computed<KitEtapa[]>(() =>
   tipoKit.value === 'previdenciario'
-    ? ['cliente', 'advogados', 'kit-final']
-    : ['cliente', 'acoes', 'advogados', 'kit-final'],
+    ? ['cliente', 'localizacao', 'advogados', 'kit-final']
+    : ['cliente', 'localizacao', 'acoes', 'advogados', 'kit-final'],
 )
 const etapaIndex = computed(() => etapas.value.indexOf(etapaAtual.value))
 const route = useRoute()
@@ -470,6 +470,56 @@ async function removeComprovante (doc: DocPessoal) {
   }
 }
 
+// ── Fotos da residência (geolocalização) ──
+const MAX_FOTOS_RESIDENCIA = 10
+const fotosResidenciaUploading = ref(false)
+
+async function onSelectFotosResidencia (e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (files?.length) await uploadFotosResidencia(Array.from(files))
+  input.value = ''
+}
+async function onDropFotosResidencia (e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (files?.length) await uploadFotosResidencia(Array.from(files))
+}
+async function uploadFotosResidencia (files: File[]) {
+  if (!clienteId.value || !files.length) return
+  const atuais = cad.value.fotosResidencia?.length || 0
+  if (atuais + files.length > MAX_FOTOS_RESIDENCIA) {
+    showError(`Limite de ${MAX_FOTOS_RESIDENCIA} fotos por residência.`)
+    return
+  }
+  fotosResidenciaUploading.value = true
+  try {
+    const fd = new FormData()
+    files.forEach(f => fd.append('files', f))
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/fotos-residencia/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    cad.value.fotosResidencia = data.fotos_residencia || []
+  } catch (e: any) {
+    showError(friendlyError(e))
+  } finally {
+    fotosResidenciaUploading.value = false
+  }
+}
+async function removeFotoResidencia (doc: DocPessoal) {
+  if (!clienteId.value) return
+  try {
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/fotos-residencia/remove/`,
+      { path: doc.path },
+    )
+    cad.value.fotosResidencia = data.fotos_residencia || []
+  } catch (e: any) {
+    console.error('Erro ao remover foto da residência:', e)
+  }
+}
+
 async function onSelectResponsavelDocs (e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files
@@ -752,6 +802,7 @@ const podeAvancar = computed(() => {
     if (!clienteEncontrado.value && !isEditMode.value) return false
     return validateCadastroSilent()
   }
+  if (etapaAtual.value === 'localizacao') return true
   if (etapaAtual.value === 'acoes') return acoes.value.length > 0
   if (etapaAtual.value === 'advogados') return !advogadosLoading.value
   return false
@@ -1888,15 +1939,29 @@ async function avancarComPersistencia () {
       if (!isEditMode.value) {
         savingMessage.value = 'Salvando rascunho do kit...'
         const created = await kitsStore.createDraft(clienteId.value, tipoKit.value)
-        const proximaEtapa = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
         await router.replace({
           name: 'producao-kits-editar',
           params: { id: created.id },
-          query: { etapa: proximaEtapa },
+          query: { etapa: 'localizacao' },
         })
       } else {
-        etapaAtual.value = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
+        etapaAtual.value = 'localizacao'
       }
+    } finally {
+      saving.value = false
+      savingMessage.value = ''
+    }
+    return
+  }
+
+  if (etapaAtual.value === 'localizacao') {
+    saving.value = true
+    try {
+      savingMessage.value = 'Salvando localização...'
+      if (clienteId.value) {
+        await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
+      }
+      etapaAtual.value = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
     } finally {
       saving.value = false
       savingMessage.value = ''
@@ -2005,6 +2070,8 @@ onMounted(async () => {
   const isPrevid = tipoKit.value === 'previdenciario'
   if (etapaQuery === 'kit-final') {
     etapaAtual.value = 'kit-final'
+  } else if (etapaQuery === 'localizacao') {
+    etapaAtual.value = 'localizacao'
   } else if (etapaQuery === 'advogados') {
     etapaAtual.value = 'advogados'
   } else if (etapaQuery === 'acoes' && !isPrevid) {
@@ -2041,11 +2108,18 @@ onMounted(async () => {
           </v-avatar>
           <span class="step-label">Cliente</span>
         </div>
+        <div :class="['step-line', etapaIndex >= etapas.indexOf('localizacao') ? 'step-line--done' : '']" />
+        <div class="step">
+          <v-avatar :class="['step-icon', etapaAtual === 'localizacao' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('localizacao') ? 'step-icon--done' : '')]" size="44">
+            <v-icon :icon="etapaIndex > etapas.indexOf('localizacao') ? 'mdi-check' : 'mdi-map-marker-radius-outline'" />
+          </v-avatar>
+          <span class="step-label">Localização</span>
+        </div>
         <template v-if="tipoKit !== 'previdenciario'">
-          <div :class="['step-line', etapaIndex > 0 ? 'step-line--done' : '']" />
+          <div :class="['step-line', etapaIndex >= etapas.indexOf('acoes') ? 'step-line--done' : '']" />
           <div class="step">
-            <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > 1 ? 'step-icon--done' : '')]" size="44">
-              <v-icon :icon="etapaIndex > 1 ? 'mdi-check' : 'mdi-scale-balance'" />
+            <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('acoes') ? 'step-icon--done' : '')]" size="44">
+              <v-icon :icon="etapaIndex > etapas.indexOf('acoes') ? 'mdi-check' : 'mdi-scale-balance'" />
             </v-avatar>
             <span class="step-label">Ações</span>
           </div>
@@ -2775,6 +2849,54 @@ onMounted(async () => {
 
               </template><!-- /clienteEncontrado || isEditMode -->
 
+            </v-window-item>
+
+            <!-- ═══════════════ STEP: LOCALIZAÇÃO ═══════════════ -->
+            <v-window-item value="localizacao">
+              <h2 class="section-title">Geolocalização da Residência</h2>
+              <v-divider class="mb-5" />
+              <p class="text-medium-emphasis mb-4" style="font-size: .875rem;">
+                Marque onde o cliente mora — use o botão de localização atual ou clique/arraste o pino no mapa. (Opcional)
+              </p>
+
+              <MapaLocalCliente
+                v-model:latitude="cad.latitude"
+                v-model:longitude="cad.longitude"
+              />
+
+              <!-- Fotos da residência -->
+              <h2 class="section-title mt-8">Fotos da Residência</h2>
+              <v-divider class="mb-5" />
+              <label class="field-label">Fotos da rua e da casa (opcional, múltiplas — máx. {{ MAX_FOTOS_RESIDENCIA }})</label>
+              <div v-if="cad.fotosResidencia.length" class="docs-list mb-3">
+                <div v-for="doc in cad.fotosResidencia" :key="doc.path" class="docs-list__item">
+                  <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                    <img v-if="isImage(doc.name)" :src="doc.url" :alt="doc.name" class="docs-list__img">
+                    <v-icon v-else color="primary" :icon="docIcon(doc.name)" size="28" />
+                  </a>
+                  <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                  <v-spacer />
+                  <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeFotoResidencia(doc)" />
+                </div>
+              </div>
+              <div
+                class="upload-zone mb-4"
+                :class="{ 'upload-zone--uploading': fotosResidenciaUploading }"
+                @click="($refs.fotosResidenciaInput as HTMLInputElement)?.click()"
+                @dragover.prevent
+                @drop.prevent="onDropFotosResidencia"
+              >
+                <input ref="fotosResidenciaInput" accept="image/jpeg,image/png,image/webp" hidden multiple type="file" @change="onSelectFotosResidencia">
+                <template v-if="fotosResidenciaUploading">
+                  <v-progress-circular color="primary" indeterminate size="24" width="2" />
+                  <span class="upload-zone__title mt-2">Enviando...</span>
+                </template>
+                <template v-else>
+                  <v-icon class="upload-zone__icon" icon="mdi-camera-outline" />
+                  <span class="upload-zone__title">Clique ou arraste para enviar</span>
+                  <span class="upload-zone__hint">JPG, PNG ou WEBP — múltiplas fotos (máx. {{ MAX_FOTOS_RESIDENCIA }})</span>
+                </template>
+              </div>
             </v-window-item>
 
             <!-- ═══════════════ STEP 2: AÇÕES ═══════════════ -->
