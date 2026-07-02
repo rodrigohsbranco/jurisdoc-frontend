@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { useKitsStore, clienteToCadastro } from '@/stores/kits'
 import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
 import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
+import { snapshotKit } from '@/services/clausulas'
+import {
+  type AdvogadoSnapshot,
+  getSnapshot as getAdvogadosSnapshot,
+  getSugeridos as getAdvogadosSugeridos,
+  saveSnapshot as saveAdvogadosSnapshot,
+} from '@/services/kitAdvogados'
+import draggable from 'vuedraggable'
 import api from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
@@ -34,8 +43,8 @@ import {
 const etapaAtual = ref<KitEtapa>('cliente')
 const etapas = computed<KitEtapa[]>(() =>
   tipoKit.value === 'previdenciario'
-    ? ['cliente', 'kit-final']
-    : ['cliente', 'acoes', 'kit-final'],
+    ? ['cliente', 'localizacao', 'advogados', 'kit-final']
+    : ['cliente', 'localizacao', 'acoes', 'advogados', 'kit-final'],
 )
 const etapaIndex = computed(() => etapas.value.indexOf(etapaAtual.value))
 const route = useRoute()
@@ -461,6 +470,56 @@ async function removeComprovante (doc: DocPessoal) {
   }
 }
 
+// ── Fotos da residência (geolocalização) ──
+const MAX_FOTOS_RESIDENCIA = 10
+const fotosResidenciaUploading = ref(false)
+
+async function onSelectFotosResidencia (e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (files?.length) await uploadFotosResidencia(Array.from(files))
+  input.value = ''
+}
+async function onDropFotosResidencia (e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (files?.length) await uploadFotosResidencia(Array.from(files))
+}
+async function uploadFotosResidencia (files: File[]) {
+  if (!clienteId.value || !files.length) return
+  const atuais = cad.value.fotosResidencia?.length || 0
+  if (atuais + files.length > MAX_FOTOS_RESIDENCIA) {
+    showError(`Limite de ${MAX_FOTOS_RESIDENCIA} fotos por residência.`)
+    return
+  }
+  fotosResidenciaUploading.value = true
+  try {
+    const fd = new FormData()
+    files.forEach(f => fd.append('files', f))
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/fotos-residencia/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    cad.value.fotosResidencia = data.fotos_residencia || []
+  } catch (e: any) {
+    showError(friendlyError(e))
+  } finally {
+    fotosResidenciaUploading.value = false
+  }
+}
+async function removeFotoResidencia (doc: DocPessoal) {
+  if (!clienteId.value) return
+  try {
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/fotos-residencia/remove/`,
+      { path: doc.path },
+    )
+    cad.value.fotosResidencia = data.fotos_residencia || []
+  } catch (e: any) {
+    console.error('Erro ao remover foto da residência:', e)
+  }
+}
+
 async function onSelectResponsavelDocs (e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files
@@ -743,7 +802,9 @@ const podeAvancar = computed(() => {
     if (!clienteEncontrado.value && !isEditMode.value) return false
     return validateCadastroSilent()
   }
+  if (etapaAtual.value === 'localizacao') return true
   if (etapaAtual.value === 'acoes') return acoes.value.length > 0
+  if (etapaAtual.value === 'advogados') return !advogadosLoading.value
   return false
 })
 
@@ -871,6 +932,203 @@ const docxContainers = ref<Record<string, HTMLElement | null>>({})
 
 const advogadosStore = useAdvogadosStore()
 
+// ──────────────────────────────────────────────────────────────────────────
+// Etapa: Advogados (kanban Disponíveis ↔ Selecionados + snapshot no kit)
+// ──────────────────────────────────────────────────────────────────────────
+// As listas abaixo são fontes de verdade reais (não computed): o
+// vuedraggable precisa mutá-las diretamente ao arrastar.
+type AdvForKanban = Advogado | AdvogadoSnapshot
+const advogadosSelecionados = ref<AdvForKanban[]>([])
+const advogadosDisponiveis = ref<AdvForKanban[]>([])
+const advogadosSnapshot = ref<AdvogadoSnapshot[]>([])
+const advogadosWarnings = ref<string[]>([])
+const advogadosBusca = ref('')
+const advogadosLoading = ref(false)
+const advogadosSavingNext = ref(false)
+const advogadosUfNoUltimoLoad = ref<string>('')
+const trocaUfDialog = ref(false)
+const advogadosTabMobile = ref<'selecionados' | 'disponiveis'>('disponiveis')
+
+const { smAndDown: advsKanbanMobile } = useDisplay()
+
+const advogadosTodos = computed(() => advogadosStore.items)
+
+function ordenarAdvs<T extends { is_socio: boolean; nome_completo: string }> (arr: T[]): T[] {
+  return [...arr].sort((a, b) => {
+    if (a.is_socio !== b.is_socio) return a.is_socio ? -1 : 1
+    return a.nome_completo.localeCompare(b.nome_completo)
+  })
+}
+
+function advMatchesBusca (adv: AdvForKanban, q: string): boolean {
+  if (!q) return true
+  const nome = (adv.nome_completo || '').toLowerCase()
+  const escr = (adv.escritorio_nome || '').toLowerCase()
+  if (nome.includes(q) || escr.includes(q)) return true
+  const oabs = (adv as any).oabs as Array<{ uf: string; numero_oab: string }> | undefined
+  if (oabs && oabs.some(o => `${o.uf} ${o.numero_oab}`.toLowerCase().includes(q))) return true
+  const numeroOab = (adv as AdvogadoSnapshot).numero_oab
+  const uf = (adv as AdvogadoSnapshot).oab_uf
+  if (numeroOab && `${uf || ''} ${numeroOab}`.toLowerCase().includes(q)) return true
+  return false
+}
+
+function advCardVisivel (adv: AdvForKanban): boolean {
+  return advMatchesBusca(adv, advogadosBusca.value.trim().toLowerCase())
+}
+
+/** Texto da OAB a exibir no card. Cascata: UF do cliente → SC → primeira → vazio. */
+function getOabExibida (adv: AdvForKanban): { texto: string; fallback: boolean } {
+  const uf = (cad.value.estado || '').toUpperCase()
+
+  // Snapshot já vem com OAB resolvida pelo backend.
+  const snap = adv as AdvogadoSnapshot
+  if (snap.numero_oab) {
+    return {
+      texto: `${snap.oab_uf || '—'}: ${snap.numero_oab}`,
+      fallback: snap.oab_fonte !== 'uf_cliente',
+    }
+  }
+
+  // Advogado da store: aplica cascata local pra exibição.
+  const oabs = (adv as any).oabs as Array<{ uf: string; numero_oab: string }> | undefined
+  if (!oabs || oabs.length === 0) {
+    return { texto: 'Sem OAB cadastrada', fallback: false }
+  }
+  const naUf = uf ? oabs.find(o => o.uf.toUpperCase() === uf) : null
+  if (naUf) return { texto: `${naUf.uf}: ${naUf.numero_oab}`, fallback: false }
+  const sc = oabs.find(o => o.uf.toUpperCase() === 'SC')
+  if (sc) return { texto: `${sc.uf}: ${sc.numero_oab}`, fallback: true }
+  const primeira = oabs[0]
+  return { texto: `${primeira.uf}: ${primeira.numero_oab}`, fallback: true }
+}
+
+async function hidratarEtapaAdvogados () {
+  advogadosLoading.value = true
+  try {
+    // Sempre força refresh — a store é persistida em localStorage e pode
+    // estar com dados velhos (ex.: sem oabs[] de versões antigas do backend).
+    await advogadosStore.fetchList()
+
+    if (!kitId.value) {
+      advogadosSelecionados.value = []
+      advogadosDisponiveis.value = ordenarAdvs(advogadosTodos.value)
+      advogadosSnapshot.value = []
+      return
+    }
+
+    // 1) Já tem snapshot salvo? usa ele.
+    const snapResp = await getAdvogadosSnapshot(kitId.value)
+    if (snapResp.advogados_snapshot.length > 0) {
+      const idsSel = new Set(snapResp.advogados_snapshot.map(a => a.id))
+      advogadosSnapshot.value = snapResp.advogados_snapshot
+      advogadosSelecionados.value = ordenarAdvs(snapResp.advogados_snapshot)
+      advogadosDisponiveis.value = ordenarAdvs(
+        advogadosTodos.value.filter(a => !idsSel.has(a.id)),
+      )
+      advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
+      return
+    }
+
+    // 2) Sem snapshot → pré-seleção pelo backend.
+    const sug = await getAdvogadosSugeridos(kitId.value)
+    const idsSel = new Set(sug.advogados_ids)
+    advogadosSelecionados.value = ordenarAdvs(
+      advogadosTodos.value.filter(a => idsSel.has(a.id)),
+    )
+    advogadosDisponiveis.value = ordenarAdvs(
+      advogadosTodos.value.filter(a => !idsSel.has(a.id)),
+    )
+    advogadosSnapshot.value = []
+    advogadosUfNoUltimoLoad.value = sug.uf_cliente || (cad.value.estado || '').toUpperCase()
+  } catch (e: any) {
+    showError('Não foi possível carregar advogados.')
+    console.error(e)
+  } finally {
+    advogadosLoading.value = false
+  }
+}
+
+// Move um advogado entre as colunas (usado pelos botões +/−).
+function adicionarAdvogado (id: number) {
+  const idx = advogadosDisponiveis.value.findIndex(a => a.id === id)
+  if (idx < 0) return
+  const [adv] = advogadosDisponiveis.value.splice(idx, 1)
+  advogadosSelecionados.value = ordenarAdvs([...advogadosSelecionados.value, adv])
+}
+
+function removerAdvogado (id: number) {
+  const idx = advogadosSelecionados.value.findIndex(a => a.id === id)
+  if (idx < 0) return
+  const [adv] = advogadosSelecionados.value.splice(idx, 1)
+  advogadosDisponiveis.value = ordenarAdvs([...advogadosDisponiveis.value, adv])
+}
+
+// Após cada drag, reordena as duas colunas (sócios primeiro, alfabético).
+function onAdvDragEnd () {
+  advogadosSelecionados.value = ordenarAdvs(advogadosSelecionados.value)
+  advogadosDisponiveis.value = ordenarAdvs(advogadosDisponiveis.value)
+}
+
+async function salvarAdvogadosESeguir () {
+  if (!kitId.value) {
+    showError('Salve o cliente primeiro para definir os advogados.')
+    return
+  }
+  advogadosSavingNext.value = true
+  try {
+    const ids = advogadosSelecionados.value.map(a => a.id)
+    const res = await saveAdvogadosSnapshot(kitId.value, ids)
+    advogadosSnapshot.value = res.advogados_snapshot
+    advogadosWarnings.value = res.warnings || []
+    advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
+    if (advogadosWarnings.value.length === 0) {
+      showSuccess('Advogados salvos.')
+    }
+    irParaEtapa('kit-final')
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'update'))
+  } finally {
+    advogadosSavingNext.value = false
+  }
+}
+
+// Reset do snapshot (volta pra cálculo automático) quando o operador
+// confirma o recálculo após mudança de UF.
+async function recalcularAdvogadosPorMudancaUf () {
+  trocaUfDialog.value = false
+  if (!kitId.value) return
+  try {
+    await saveAdvogadosSnapshot(kitId.value, [])
+    advogadosSnapshot.value = []
+    await hidratarEtapaAdvogados()
+    showSuccess('Advogados recalculados pela nova UF.')
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'update'))
+  }
+}
+
+// Hidrata a etapa de Advogados sempre que o operador entra nela.
+watch(etapaAtual, novaEtapa => {
+  if (novaEtapa === 'advogados') {
+    hidratarEtapaAdvogados()
+  }
+})
+
+// Detecta mudança de UF e abre modal se já existir snapshot.
+watch(() => cad.value.estado, async (novaUf, ufAnterior) => {
+  if (!novaUf || !ufAnterior) return
+  if (novaUf.toUpperCase() === ufAnterior.toUpperCase()) return
+  if (!kitId.value || !advogadosSnapshot.value.length) return
+  trocaUfDialog.value = true
+})
+
+// Helpers de etapa (ir para próxima/anterior)
+function irParaEtapa (e: KitEtapa) {
+  etapaAtual.value = e
+  if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 // Formatadores para documentos
 function fmtCPF (v: string): string {
   const d = (v || '').replace(/\D/g, '').slice(0, 11)
@@ -997,7 +1255,10 @@ async function montarContexto (): Promise<Record<string, any>> {
     ? (tarifasQuestionadasList[0] || '')
     : tarifasQuestionadasList.slice(0, -1).join(', ') + ' e ' + tarifasQuestionadasList[tarifasQuestionadasList.length - 1]
 
-  // ── Advogados por UF ──
+  // ── Advogados ──
+  // Se o kit tem snapshot da etapa de Advogados, usa ele.
+  // Senão (kit antigo, ou operador não passou pela etapa), fallback automático
+  // por UF como antes.
   let oab_estado = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
   let advogados_estado = ''
   let contratados_socios = ''
@@ -1008,42 +1269,75 @@ async function montarContexto (): Promise<Record<string, any>> {
   let oab_eduardo = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
 
   const uf = c.estado?.toUpperCase()
-  if (uf) {
+
+  // Tenta snapshot do kit primeiro.
+  let snapshotAdvs: AdvogadoSnapshot[] = []
+  if (kitId.value && advogadosSnapshot.value.length > 0) {
+    snapshotAdvs = advogadosSnapshot.value
+  } else if (kitId.value) {
+    try {
+      const resp = await getAdvogadosSnapshot(kitId.value)
+      snapshotAdvs = resp.advogados_snapshot || []
+      if (snapshotAdvs.length) advogadosSnapshot.value = snapshotAdvs
+    } catch (err) {
+      console.warn('Falha ao buscar snapshot de advogados:', err)
+    }
+  }
+
+  type AdvForFormat = {
+    nome_completo: string
+    nacionalidade: string
+    estado_civil: string
+    genero?: string
+    is_socio: boolean
+    numero_oab: string
+    escritorio_nome?: string
+    escritorio_cnpj?: string
+    unidade_apoio_nome?: string
+    unidade_apoio_endereco?: string
+  }
+
+  let socios: AdvForFormat[] = []
+  let naoSocios: AdvForFormat[] = []
+  let advsTodos: AdvForFormat[] = []
+
+  if (snapshotAdvs.length > 0) {
+    advsTodos = snapshotAdvs
+    socios = snapshotAdvs.filter(a => a.is_socio)
+    naoSocios = snapshotAdvs.filter(a => !a.is_socio)
+  } else if (uf) {
     try {
       const advs = await advogadosStore.fetchPorUf(uf)
-
-      // OABs dos sócios — sócio entra sempre, sem filtro de tipos_acao
-      const socios = advs
+      advsTodos = advs as AdvForFormat[]
+      socios = (advs as AdvForFormat[])
         .filter(a => a.is_socio)
         .sort((a, b) => a.nome_completo.localeCompare(b.nome_completo))
-      if (socios.length > 0) {
-        oab_estado = socios.map(s => s.numero_oab).join(' e ')
-        contratados_socios = socios.map(qualificarAdvogado).join(' e ')
-        socio1_oab = socios[0]?.numero_oab || socio1_oab
-        socio2_oab = socios[1]?.numero_oab || socio2_oab
-
-        const tiago = socios.find(s => normalize(s.nome_completo).includes('tiago'))
-        const eduardo = socios.find(s => normalize(s.nome_completo).includes('eduardo'))
-        if (tiago?.numero_oab) oab_tiago = tiago.numero_oab
-        if (eduardo?.numero_oab) oab_eduardo = eduardo.numero_oab
-      }
-
-      // Advogados adicionais (não-sócios) — mesma regra de tipos_acao
-      const adicionais = advs.filter(a =>
-        !a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados),
-      )
-      if (adicionais.length > 0) {
-        advogados_estado = adicionais.map(qualificarAdvogado).join('; e ')
-      }
-
-      // Unidade de apoio (pega a primeira que tiver)
-      const comUnidade = advs.find(a => a.unidade_apoio_nome && a.unidade_apoio_endereco)
-      if (comUnidade) {
-        unidade_apoio = `, unidade de apoio administrativo na ${comUnidade.unidade_apoio_endereco}`
-      }
+      naoSocios = (advs as any[])
+        .filter(a => !a.is_socio && advogadoAtuaNoKit(a.tipos_acao, tiposAcaoSelecionados))
     } catch (err) {
       console.warn('Falha ao buscar advogados para UF', uf, err)
     }
+  }
+
+  if (socios.length > 0) {
+    oab_estado = socios.map(s => s.numero_oab).filter(Boolean).join(' e ') || oab_estado
+    contratados_socios = socios.map(qualificarAdvogado).join(' e ')
+    socio1_oab = socios[0]?.numero_oab || socio1_oab
+    socio2_oab = socios[1]?.numero_oab || socio2_oab
+
+    const tiago = socios.find(s => normalize(s.nome_completo).includes('tiago'))
+    const eduardo = socios.find(s => normalize(s.nome_completo).includes('eduardo'))
+    if (tiago?.numero_oab) oab_tiago = tiago.numero_oab
+    if (eduardo?.numero_oab) oab_eduardo = eduardo.numero_oab
+  }
+
+  if (naoSocios.length > 0) {
+    advogados_estado = naoSocios.map(qualificarAdvogado).join('; e ')
+  }
+
+  const comUnidade = advsTodos.find(a => a.unidade_apoio_nome && a.unidade_apoio_endereco)
+  if (comUnidade) {
+    unidade_apoio = `, unidade de apoio administrativo na ${comUnidade.unidade_apoio_endereco}`
   }
 
   // Bloco assinatura
@@ -1150,6 +1444,22 @@ async function montarContexto (): Promise<Record<string, any>> {
     testemunha2_cpf: fmtCPF(c.testemunha2Cpf),
     responsavel_legal_nome: c.responsavelLegalNome,
     responsavel_legal_cpf: fmtCPF(c.responsavelLegalCpf),
+    // Cláusula de porcentagem com snapshot no kit. Resolve no backend
+    // (variação por UF do cliente ou cai no padrão). Vazio se kit ainda
+    // não foi salvo — fluxo só renderiza depois que o kit tem id.
+    clausula_porcentagem: await resolverClausulaPorcentagem(),
+  }
+}
+
+/** Congela e retorna o texto da cláusula de porcentagem para este kit. */
+async function resolverClausulaPorcentagem (): Promise<string> {
+  if (!kitId.value) return ''
+  try {
+    const res = await snapshotKit(kitId.value, true)
+    return res.texto || ''
+  } catch (err) {
+    console.warn('Falha ao resolver cláusula de porcentagem:', err)
+    return ''
   }
 }
 
@@ -1629,15 +1939,29 @@ async function avancarComPersistencia () {
       if (!isEditMode.value) {
         savingMessage.value = 'Salvando rascunho do kit...'
         const created = await kitsStore.createDraft(clienteId.value, tipoKit.value)
-        const proximaEtapa = tipoKit.value === 'previdenciario' ? 'kit-final' : 'acoes'
         await router.replace({
           name: 'producao-kits-editar',
           params: { id: created.id },
-          query: { etapa: proximaEtapa },
+          query: { etapa: 'localizacao' },
         })
       } else {
-        etapaAtual.value = tipoKit.value === 'previdenciario' ? 'kit-final' : 'acoes'
+        etapaAtual.value = 'localizacao'
       }
+    } finally {
+      saving.value = false
+      savingMessage.value = ''
+    }
+    return
+  }
+
+  if (etapaAtual.value === 'localizacao') {
+    saving.value = true
+    try {
+      savingMessage.value = 'Salvando localização...'
+      if (clienteId.value) {
+        await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
+      }
+      etapaAtual.value = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
     } finally {
       saving.value = false
       savingMessage.value = ''
@@ -1656,7 +1980,19 @@ async function avancarComPersistencia () {
       const savedAcoes = await kitsStore.saveAcoes(kitId.value, acoes.value, acoesExistentes.value)
       acoesExistentes.value = savedAcoes
       acoes.value = savedAcoes.map(a => acaoFromAPI(a))
-      etapaAtual.value = 'kit-final'
+      etapaAtual.value = 'advogados'
+    } finally {
+      saving.value = false
+      savingMessage.value = ''
+    }
+    return
+  }
+
+  if (etapaAtual.value === 'advogados') {
+    saving.value = true
+    try {
+      savingMessage.value = 'Salvando advogados...'
+      await salvarAdvogadosESeguir()
     } finally {
       saving.value = false
       savingMessage.value = ''
@@ -1734,6 +2070,10 @@ onMounted(async () => {
   const isPrevid = tipoKit.value === 'previdenciario'
   if (etapaQuery === 'kit-final') {
     etapaAtual.value = 'kit-final'
+  } else if (etapaQuery === 'localizacao') {
+    etapaAtual.value = 'localizacao'
+  } else if (etapaQuery === 'advogados') {
+    etapaAtual.value = 'advogados'
   } else if (etapaQuery === 'acoes' && !isPrevid) {
     etapaAtual.value = 'acoes'
   } else if (kit.status === 'acoes' && !isPrevid) {
@@ -1768,16 +2108,30 @@ onMounted(async () => {
           </v-avatar>
           <span class="step-label">Cliente</span>
         </div>
+        <div :class="['step-line', etapaIndex >= etapas.indexOf('localizacao') ? 'step-line--done' : '']" />
+        <div class="step">
+          <v-avatar :class="['step-icon', etapaAtual === 'localizacao' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('localizacao') ? 'step-icon--done' : '')]" size="44">
+            <v-icon :icon="etapaIndex > etapas.indexOf('localizacao') ? 'mdi-check' : 'mdi-map-marker-radius-outline'" />
+          </v-avatar>
+          <span class="step-label">Localização</span>
+        </div>
         <template v-if="tipoKit !== 'previdenciario'">
-          <div :class="['step-line', etapaIndex > 0 ? 'step-line--done' : '']" />
+          <div :class="['step-line', etapaIndex >= etapas.indexOf('acoes') ? 'step-line--done' : '']" />
           <div class="step">
-            <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > 1 ? 'step-icon--done' : '')]" size="44">
-              <v-icon :icon="etapaIndex > 1 ? 'mdi-check' : 'mdi-scale-balance'" />
+            <v-avatar :class="['step-icon', etapaAtual === 'acoes' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('acoes') ? 'step-icon--done' : '')]" size="44">
+              <v-icon :icon="etapaIndex > etapas.indexOf('acoes') ? 'mdi-check' : 'mdi-scale-balance'" />
             </v-avatar>
             <span class="step-label">Ações</span>
           </div>
         </template>
-        <div :class="['step-line', etapaAtual === 'kit-final' ? 'step-line--done' : (etapaIndex > 0 && tipoKit === 'previdenciario' ? 'step-line--done' : '')]" />
+        <div :class="['step-line', etapaIndex >= etapas.indexOf('advogados') ? 'step-line--done' : '']" />
+        <div class="step">
+          <v-avatar :class="['step-icon', etapaAtual === 'advogados' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('advogados') ? 'step-icon--done' : '')]" size="44">
+            <v-icon :icon="etapaIndex > etapas.indexOf('advogados') ? 'mdi-check' : 'mdi-account-tie-outline'" />
+          </v-avatar>
+          <span class="step-label">Advogados</span>
+        </div>
+        <div :class="['step-line', etapaAtual === 'kit-final' ? 'step-line--done' : '']" />
         <div class="step">
           <v-avatar :class="['step-icon', etapaAtual === 'kit-final' ? 'step-icon--active' : '']" size="44">
             <v-icon icon="mdi-eye-outline" />
@@ -2497,6 +2851,54 @@ onMounted(async () => {
 
             </v-window-item>
 
+            <!-- ═══════════════ STEP: LOCALIZAÇÃO ═══════════════ -->
+            <v-window-item value="localizacao">
+              <h2 class="section-title">Geolocalização da Residência</h2>
+              <v-divider class="mb-5" />
+              <p class="text-medium-emphasis mb-4" style="font-size: .875rem;">
+                Marque onde o cliente mora — use o botão de localização atual ou clique/arraste o pino no mapa. (Opcional)
+              </p>
+
+              <MapaLocalCliente
+                v-model:latitude="cad.latitude"
+                v-model:longitude="cad.longitude"
+              />
+
+              <!-- Fotos da residência -->
+              <h2 class="section-title mt-8">Fotos da Residência</h2>
+              <v-divider class="mb-5" />
+              <label class="field-label">Fotos da rua e da casa (opcional, múltiplas — máx. {{ MAX_FOTOS_RESIDENCIA }})</label>
+              <div v-if="cad.fotosResidencia.length" class="docs-list mb-3">
+                <div v-for="doc in cad.fotosResidencia" :key="doc.path" class="docs-list__item">
+                  <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                    <img v-if="isImage(doc.name)" :src="doc.url" :alt="doc.name" class="docs-list__img">
+                    <v-icon v-else color="primary" :icon="docIcon(doc.name)" size="28" />
+                  </a>
+                  <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                  <v-spacer />
+                  <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeFotoResidencia(doc)" />
+                </div>
+              </div>
+              <div
+                class="upload-zone mb-4"
+                :class="{ 'upload-zone--uploading': fotosResidenciaUploading }"
+                @click="($refs.fotosResidenciaInput as HTMLInputElement)?.click()"
+                @dragover.prevent
+                @drop.prevent="onDropFotosResidencia"
+              >
+                <input ref="fotosResidenciaInput" accept="image/jpeg,image/png,image/webp" hidden multiple type="file" @change="onSelectFotosResidencia">
+                <template v-if="fotosResidenciaUploading">
+                  <v-progress-circular color="primary" indeterminate size="24" width="2" />
+                  <span class="upload-zone__title mt-2">Enviando...</span>
+                </template>
+                <template v-else>
+                  <v-icon class="upload-zone__icon" icon="mdi-camera-outline" />
+                  <span class="upload-zone__title">Clique ou arraste para enviar</span>
+                  <span class="upload-zone__hint">JPG, PNG ou WEBP — múltiplas fotos (máx. {{ MAX_FOTOS_RESIDENCIA }})</span>
+                </template>
+              </div>
+            </v-window-item>
+
             <!-- ═══════════════ STEP 2: AÇÕES ═══════════════ -->
             <v-window-item value="acoes">
               <div class="d-flex align-center justify-space-between mb-2">
@@ -2716,6 +3118,220 @@ onMounted(async () => {
               </div>
 
               <v-btn v-if="acoes.length > 0" class="add-acao-link" variant="tonal" prepend-icon="mdi-plus" @click="addAcao">Adicionar ação</v-btn>
+            </v-window-item>
+
+            <!-- ═══════════════ STEP: ADVOGADOS ═══════════════ -->
+            <v-window-item value="advogados">
+              <h2 class="section-title">Advogados do Kit</h2>
+              <v-divider class="mb-3" />
+              <p class="text-body-2 text-medium-emphasis mb-4">
+                Selecione os advogados que vão constar no contrato e procuração.
+                A pré-seleção segue a regra padrão (sócios da UF + não-sócios que atuam
+                no tipo de ação). Você pode remover ou adicionar livremente.
+              </p>
+
+              <v-alert
+                v-if="advogadosWarnings.length"
+                class="mb-3"
+                closable
+                type="warning"
+                variant="tonal"
+                @click:close="advogadosWarnings = []"
+              >
+                <div v-for="(w, i) in advogadosWarnings" :key="i">{{ w }}</div>
+              </v-alert>
+
+              <div v-if="advogadosLoading" class="text-center py-8">
+                <v-progress-circular color="primary" indeterminate size="36" />
+                <div class="mt-2 text-body-2 text-medium-emphasis">Carregando advogados...</div>
+              </div>
+
+              <!-- Mobile: tabs -->
+              <template v-else-if="advsKanbanMobile">
+                <v-tabs v-model="advogadosTabMobile" color="primary" grow>
+                  <v-tab value="disponiveis">
+                    Disponíveis ({{ advogadosDisponiveis.length }})
+                  </v-tab>
+                  <v-tab value="selecionados">
+                    Selecionados ({{ advogadosSelecionados.length }})
+                  </v-tab>
+                </v-tabs>
+                <v-window v-model="advogadosTabMobile" class="mt-3">
+                  <v-window-item value="disponiveis">
+                    <v-text-field
+                      v-model="advogadosBusca"
+                      class="mb-2"
+                      clearable
+                      density="compact"
+                      hide-details
+                      placeholder="Buscar por nome, escritório ou OAB..."
+                      prepend-inner-icon="mdi-magnify"
+                    />
+                    <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
+                      Nenhum advogado disponível.
+                    </div>
+                    <div
+                      v-for="adv in advogadosDisponiveis"
+                      :key="adv.id"
+                      class="adv-card"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          <span>{{ getOabExibida(adv).texto }}</span>
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
+                    </div>
+                  </v-window-item>
+                  <v-window-item value="selecionados">
+                    <div v-if="!advogadosSelecionados.length" class="empty-coluna">
+                      Nenhum advogado selecionado.
+                    </div>
+                    <div
+                      v-for="adv in advogadosSelecionados"
+                      :key="adv.id"
+                      class="adv-card adv-card--selecionado"
+                    >
+                      <div class="adv-card__info">
+                        <div class="adv-card__nome">
+                          {{ adv.nome_completo }}
+                          <v-chip
+                            v-if="adv.is_socio"
+                            class="ml-1"
+                            color="secondary"
+                            size="x-small"
+                            variant="tonal"
+                          >
+                            Sócio
+                          </v-chip>
+                        </div>
+                        <div class="adv-card__sub">
+                          <span>{{ getOabExibida(adv).texto }}</span>
+                        </div>
+                      </div>
+                      <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
+                    </div>
+                  </v-window-item>
+                </v-window>
+              </template>
+
+              <!-- Desktop: kanban duas colunas com drag-and-drop -->
+              <div v-else class="adv-kanban">
+                <div class="adv-coluna">
+                  <div class="adv-coluna__header">
+                    <v-icon icon="mdi-drag-vertical" size="18" />
+                    Disponíveis
+                    <v-chip size="small" variant="tonal">{{ advogadosDisponiveis.length }}</v-chip>
+                  </div>
+                  <div class="adv-coluna__body">
+                    <v-text-field
+                      v-model="advogadosBusca"
+                      class="mb-2"
+                      clearable
+                      density="compact"
+                      hide-details
+                      placeholder="Buscar por nome, escritório ou OAB..."
+                      prepend-inner-icon="mdi-magnify"
+                    />
+                    <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
+                      Nenhum advogado disponível.
+                    </div>
+                    <draggable
+                      :list="advogadosDisponiveis"
+                      class="adv-dropzone"
+                      group="advogados"
+                      item-key="id"
+                      :animation="180"
+                      ghost-class="adv-card--ghost"
+                      drag-class="adv-card--dragging"
+                      @end="onAdvDragEnd"
+                    >
+                      <template #item="{ element: adv }">
+                        <div v-show="advCardVisivel(adv)" class="adv-card adv-card--draggable">
+                          <v-icon class="adv-card__handle" icon="mdi-drag" size="16" />
+                          <div class="adv-card__info">
+                            <div class="adv-card__nome">
+                              {{ adv.nome_completo }}
+                              <v-chip
+                                v-if="adv.is_socio"
+                                class="ml-1"
+                                color="secondary"
+                                size="x-small"
+                                variant="tonal"
+                              >
+                                Sócio
+                              </v-chip>
+                            </div>
+                            <div class="adv-card__sub">
+                              <span>{{ getOabExibida(adv).texto }}</span>
+                            </div>
+                          </div>
+                          <v-btn icon="mdi-plus" size="small" variant="text" color="primary" @click="adicionarAdvogado(adv.id)" />
+                        </div>
+                      </template>
+                    </draggable>
+                  </div>
+                </div>
+
+                <div class="adv-coluna">
+                  <div class="adv-coluna__header">
+                    <v-icon icon="mdi-check-circle-outline" size="18" />
+                    Selecionados
+                    <v-chip color="primary" size="small" variant="tonal">{{ advogadosSelecionados.length }}</v-chip>
+                  </div>
+                  <div class="adv-coluna__body">
+                    <div v-if="!advogadosSelecionados.length" class="empty-coluna">
+                      Arraste um advogado pra cá ou use o botão "+".
+                    </div>
+                    <draggable
+                      :list="advogadosSelecionados"
+                      class="adv-dropzone"
+                      group="advogados"
+                      item-key="id"
+                      :animation="180"
+                      ghost-class="adv-card--ghost"
+                      drag-class="adv-card--dragging"
+                      @end="onAdvDragEnd"
+                    >
+                      <template #item="{ element: adv }">
+                        <div class="adv-card adv-card--selecionado adv-card--draggable">
+                          <v-icon class="adv-card__handle" icon="mdi-drag" size="16" />
+                          <div class="adv-card__info">
+                            <div class="adv-card__nome">
+                              {{ adv.nome_completo }}
+                              <v-chip
+                                v-if="adv.is_socio"
+                                class="ml-1"
+                                color="secondary"
+                                size="x-small"
+                                variant="tonal"
+                              >
+                                Sócio
+                              </v-chip>
+                            </div>
+                            <div class="adv-card__sub">
+                              <span>{{ getOabExibida(adv).texto }}</span>
+                            </div>
+                          </div>
+                          <v-btn icon="mdi-minus" size="small" variant="text" color="error" @click="removerAdvogado(adv.id)" />
+                        </div>
+                      </template>
+                    </draggable>
+                  </div>
+                </div>
+              </div>
             </v-window-item>
 
             <!-- ═══════════════ STEP 3: KIT FINAL ═══════════════ -->
@@ -2971,6 +3587,27 @@ onMounted(async () => {
         <v-btn color="primary" prepend-icon="mdi-check" @click="salvarClienteDrawer">Salvar</v-btn>
       </template>
     </SidePanel>
+
+    <!-- Modal: UF do cliente mudou após selecionar advogados -->
+    <v-dialog v-model="trocaUfDialog" max-width="500" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center ga-2">
+          <v-icon color="warning" icon="mdi-alert-circle-outline" />
+          UF do cliente foi alterada
+        </v-card-title>
+        <v-card-text>
+          Você alterou a UF do cliente após ter escolhido os advogados deste kit.
+          Deseja recalcular a seleção com base na nova UF, ou manter a seleção atual?
+        </v-card-text>
+        <v-card-actions class="pa-4">
+          <v-spacer />
+          <v-btn variant="text" @click="trocaUfDialog = false">Manter seleção atual</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-refresh" variant="elevated" @click="recalcularAdvogadosPorMudancaUf">
+            Recalcular
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -3073,6 +3710,19 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+/* Garante que cada botão respeite a célula do grid e não estoure horizontal. */
+.conditions-grid > .v-btn {
+  min-width: 0;
+  width: 100%;
+}
+
+.conditions-grid > .v-btn :deep(.v-btn__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .sticky-actions {
@@ -3380,6 +4030,192 @@ onMounted(async () => {
   .conditions-grid {
     grid-template-columns: 1fr 1fr;
   }
+}
+
+/* xs: phones — apertar paddings laterais e enxugar steps. */
+@media (max-width: 599.98px) {
+  /* O wrapper externo (v-container do MainLayout) já está px-1; aqui
+     anulamos os px-6 utilitários internos pra ganhar largura. */
+  .topbar.px-6 {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    height: 56px;
+  }
+
+  .content-wrap.px-6 {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+  }
+
+  /* Form card respira menos no mobile — derruba o pa-6/pa-md-7. */
+  .form-card :deep(.v-card-text) {
+    padding: 12px !important;
+  }
+
+  /* Pessoa-card e demais cards aninhados também ficam menores. */
+  .pessoa-card :deep(.v-card-text) {
+    padding: 12px !important;
+  }
+
+  .topbar-title {
+    font-size: 1.05rem;
+  }
+
+  /* Steps mais compactos: avatar menor, label menor, sem min-width gigante. */
+  .steps {
+    gap: 4px;
+  }
+
+  .step {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .step-icon {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  .step-icon :deep(.v-icon) {
+    font-size: 18px;
+  }
+
+  .step-label {
+    font-size: 0.78rem;
+    text-align: center;
+    line-height: 1.15;
+  }
+
+  .conditions-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Etapa de Advogados (kanban) ─────────────────────────── */
+.adv-kanban {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.adv-coluna {
+  border: 1px solid #e8e8ef;
+  border-radius: 10px;
+  background: #fafbfd;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+}
+
+.adv-coluna__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e8e8ef;
+  font-weight: 700;
+  color: #0F2B46;
+  font-size: 0.95rem;
+}
+
+.adv-coluna__body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.adv-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e8e8ef;
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.adv-card:hover {
+  border-color: #cda660;
+}
+
+.adv-card--selecionado {
+  background: rgba(205, 166, 96, 0.08);
+  border-color: rgba(205, 166, 96, 0.35);
+}
+
+.adv-card__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.adv-card__nome {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #2a2f3a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adv-card__sub {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-coluna {
+  text-align: center;
+  color: #8a94a6;
+  font-size: 0.85rem;
+  padding: 24px 8px;
+  border: 1.5px dashed #d4d8e0;
+  border-radius: 8px;
+}
+
+.adv-dropzone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.adv-card--draggable {
+  cursor: grab;
+}
+
+.adv-card--draggable:active {
+  cursor: grabbing;
+}
+
+.adv-card__handle {
+  color: #8a94a6;
+  flex-shrink: 0;
+}
+
+.adv-card--draggable:hover .adv-card__handle {
+  color: #0F2B46;
+}
+
+/* Item "fantasma" no destino enquanto arrasta. */
+.adv-card--ghost {
+  opacity: 0.4;
+  background: rgba(205, 166, 96, 0.12) !important;
+  border-style: dashed !important;
+}
+
+/* Item sendo arrastado (acompanha o cursor). */
+.adv-card--dragging {
+  transform: rotate(2deg);
+  box-shadow: 0 8px 16px rgba(15, 43, 70, 0.2);
 }
 </style>
 

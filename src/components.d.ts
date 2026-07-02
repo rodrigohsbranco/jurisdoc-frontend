@@ -10,6 +10,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AppSnackbar: typeof import('./components/AppSnackbar.vue')['default']
     ConfirmDialog: typeof import('./components/ConfirmDialog.vue')['default']
+    MapaLocalCliente: typeof import('./components/mapa/MapaLocalCliente.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SidePanel: typeof import('./components/SidePanel.vue')['default']

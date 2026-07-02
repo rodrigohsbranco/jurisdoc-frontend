@@ -82,7 +82,7 @@
           <img
             alt="ALR"
             class="brand-logo mb-6"
-            src="@/assets/logo-alr.jpg"
+            src="@/assets/logo-alr-white.png"
           >
 
           <h1 class="brand-title">Azevedo Lima<br>& Rebonatto</h1>
@@ -221,7 +221,6 @@
   height: auto;
   object-fit: contain;
   border-radius: 2px;
-  box-shadow: 0 0 16px 8px rgba(255, 255, 255, 0.2), 0 0 48px 16px rgba(255, 255, 255, 0.08);
 }
 
 .brand-title {

@@ -1,15 +1,36 @@
 <script setup lang="ts">
-  import { computed, ref } from 'vue'
+  import { computed, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
+  import { useDisplay } from 'vuetify'
   import { useAuthStore } from '@/stores/auth'
 
-  const drawer = ref(true)
-  const rail = ref(false)
   const router = useRouter()
   const route = useRoute()
   const auth = useAuthStore()
+  const { mobile } = useDisplay()
 
-  type NavItem = { title: string; icon: string; to: { name: string }; requires?: string }
+  // No mobile o drawer começa fechado (temporary/overlay); no desktop, aberto.
+  const drawer = ref(!mobile.value)
+  const rail = ref(false)
+
+  // Ao trocar de breakpoint, ajusta defaults sãos.
+  watch(mobile, isMobile => {
+    drawer.value = !isMobile
+    if (isMobile) rail.value = false
+  })
+
+  // Fecha o drawer ao navegar no mobile (UX padrão de side-drawer).
+  watch(() => route.fullPath, () => {
+    if (mobile.value) drawer.value = false
+  })
+
+  type NavItem = {
+    title: string
+    icon: string
+    to: { name: string }
+    requires?: string
+    requiresAdmin?: boolean
+  }
   type NavSection = { title: string; items: NavItem[] }
 
   const allNavSections: NavSection[] = [
@@ -17,37 +38,43 @@
       title: 'Gestão',
       items: [
         { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: { name: 'dashboard' } },
-        { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' }, requires: 'clientes.visualizar' },
-        { title: 'Bancos Réus', icon: 'mdi-bank-outline', to: { name: 'conta-reu' }, requires: 'conta_reu.visualizar' },
+        { title: 'Clientes', icon: 'mdi-account-group-outline', to: { name: 'clientes' }, requires: 'pagina.clientes' },
+        { title: 'Bancos Réus', icon: 'mdi-bank-outline', to: { name: 'conta-reu' }, requires: 'pagina.conta_reu' },
       ],
     },
     {
       title: 'Documentos',
       items: [
-        { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' }, requires: 'templates.visualizar' },
-        { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' }, requires: 'contratos.visualizar' },
-        { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' }, requires: 'peticoes.visualizar' },
-        { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' }, requires: 'kits.visualizar' },
+        { title: 'Templates', icon: 'mdi-file-word-outline', to: { name: 'templates' }, requires: 'pagina.templates' },
+        { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' }, requires: 'pagina.contratos' },
+        { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' }, requires: 'pagina.peticoes' },
+        { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' }, requires: 'pagina.kits' },
       ],
     },
     {
       title: 'Sistema',
       items: [
-        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' }, requires: 'bancos_tarifas.visualizar' },
-        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' }, requires: 'advogados.visualizar' },
-        { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' }, requires: 'relatorios.visualizar' },
-        { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' }, requires: 'usuarios.visualizar' },
-        { title: 'Permissões', icon: 'mdi-shield-key-outline', to: { name: 'permissoes' }, requires: 'permissoes.visualizar' },
+        { title: 'Bancos e Tarifas', icon: 'mdi-cash-register', to: { name: 'bancos-tarifas' }, requires: 'pagina.bancos_tarifas' },
+        { title: 'Advogados', icon: 'mdi-account-tie-outline', to: { name: 'advogados' }, requires: 'pagina.advogados' },
+        { title: 'Relatórios', icon: 'mdi-chart-bar', to: { name: 'reports' }, requires: 'pagina.relatorios' },
+        { title: 'Usuários', icon: 'mdi-account-cog-outline', to: { name: 'usuarios' }, requires: 'pagina.usuarios' },
+        { title: 'Permissões', icon: 'mdi-shield-key-outline', to: { name: 'permissoes' }, requires: 'pagina.permissoes' },
+        { title: 'Cláusula por UF', icon: 'mdi-text-box-multiple-outline', to: { name: 'clausula-porcentagem' }, requiresAdmin: true },
       ],
     },
   ]
 
   // Gate por capacidade item-a-item; oculta a seção se todos os itens forem ocultos.
+  // Itens com requiresAdmin só aparecem para usuários is_admin.
   const navSections = computed(() =>
     allNavSections
       .map(s => ({
         ...s,
-        items: s.items.filter(i => !i.requires || auth.can(i.requires)),
+        items: s.items.filter(i => {
+          if (i.requiresAdmin && !auth.isAdmin) return false
+          if (i.requires && !auth.can(i.requires)) return false
+          return true
+        }),
       }))
       .filter(s => s.items.length > 0),
   )
@@ -62,6 +89,12 @@
   }
 
   function toggleNav () {
+    // Mobile: alterna overlay (sem rail, que não faz sentido em telas pequenas).
+    if (mobile.value) {
+      drawer.value = !drawer.value
+      return
+    }
+    // Desktop: 1º clique abre se fechado; 2º clique colapsa pra rail.
     if (!drawer.value) {
       drawer.value = true
       return
@@ -81,8 +114,9 @@
       app
       class="nav-drawer"
       color="primary"
-      permanent
-      :rail="rail"
+      :permanent="!mobile"
+      :temporary="mobile"
+      :rail="!mobile && rail"
       :width="260"
     >
       <!-- Brand -->
@@ -91,9 +125,14 @@
           v-show="!rail"
           alt="Azevedo Lima & Rebonatto"
           class="brand-logo"
-          src="@/assets/logo-alr.jpg"
+          src="@/assets/logo-alr-white.png"
         >
-        <span v-show="rail" class="brand-initials">AL&R</span>
+        <img
+          v-show="rail"
+          alt="Azevedo Lima & Rebonatto"
+          class="w-100 h-100"
+          src="@/assets/logo_light.png"
+        >
       </div>
 
       <v-divider class="mx-3 mb-2" color="white" opacity="0.12" />
@@ -154,30 +193,36 @@
     </v-navigation-drawer>
 
     <!-- App bar -->
-    <v-app-bar app color="surface" elevation="0" flat>
+    <v-app-bar app color="surface" elevation="0" flat :density="mobile ? 'compact' : 'default'">
       <v-app-bar-nav-icon @click="toggleNav" />
-      <v-toolbar-title class="font-weight-medium">{{ pageTitle }}</v-toolbar-title>
+      <v-toolbar-title
+        :class="['font-weight-medium', 'page-title', mobile && 'page-title--mobile']"
+      >
+        {{ pageTitle }}
+      </v-toolbar-title>
       <v-spacer />
-      <v-btn icon variant="text" size="small">
-        <v-icon icon="mdi-bell-outline" size="22" />
-      </v-btn>
-      <v-btn icon variant="text" size="small">
-        <v-icon icon="mdi-help-circle-outline" size="22" />
-      </v-btn>
-      <v-divider class="mx-2" vertical length="24" />
+      <template v-if="!mobile">
+        <v-btn icon variant="text" size="small">
+          <v-icon icon="mdi-bell-outline" size="22" />
+        </v-btn>
+        <v-btn icon variant="text" size="small">
+          <v-icon icon="mdi-help-circle-outline" size="22" />
+        </v-btn>
+        <v-divider class="mx-2" vertical length="24" />
+      </template>
       <v-avatar class="mr-2" color="primary" size="32">
         <span class="text-caption text-white font-weight-bold">{{ userInitials }}</span>
       </v-avatar>
     </v-app-bar>
 
     <v-main>
-      <v-container class="py-6" fluid>
+      <v-container :class="mobile ? 'py-3 px-1' : 'py-6'" fluid>
         <router-view />
       </v-container>
     </v-main>
 
     <v-footer app color="transparent" elevation="0">
-      <v-container class="py-2 text-caption text-medium-emphasis text-center">
+      <v-container :class="['text-caption text-medium-emphasis text-center', mobile ? 'py-1' : 'py-2']">
         &copy; {{ new Date().getFullYear() }} Azevedo Lima & Rebonatto &mdash; JurisDoc
       </v-container>
     </v-footer>
@@ -192,9 +237,27 @@
     #0a1f33 100%
   ) !important;
   border-right: none !important;
-  height: 100vh !important;
-  top: 0 !important;
-  position: fixed !important;
+}
+
+/* Em desktop o drawer fica fixo encostado no topo;
+   no mobile deixa o Vuetify posicionar como overlay temporário. */
+@media (min-width: 1280px) {
+  .nav-drawer {
+    height: 100vh !important;
+    top: 0 !important;
+    position: fixed !important;
+  }
+}
+
+.page-title {
+  min-width: 0;
+}
+
+.page-title--mobile {
+  font-size: 1rem !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-active {
@@ -223,10 +286,10 @@
 }
 
 .brand-logo {
-  max-width: 160px;
+  max-width: 180px;
   max-height: 48px;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: 2px;
 }

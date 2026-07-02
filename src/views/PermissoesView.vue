@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { usePermissoesStore } from '@/stores/permissoes'
 import type { Permissao } from '@/services/permissoes'
 import { useSnackbar } from '@/composables/useSnackbar'
@@ -39,6 +40,17 @@ const headers = [
 
 const totalCapacidadesCatalogo = computed(() => store.capacidades.length)
 const selecionadasCount = computed(() => form.capacidades.size)
+
+// Cards mobile (< md). Paginação 10 por página (lista não tem busca dedicada).
+const { smAndDown: mobile } = useDisplay()
+const mobilePage = ref(1)
+const mobilePageSize = 10
+const mobileTotalPages = computed(() => Math.max(1, Math.ceil(store.items.length / mobilePageSize)))
+const paginatedItems = computed(() => {
+  const start = (mobilePage.value - 1) * mobilePageSize
+  return store.items.slice(start, start + mobilePageSize)
+})
+watch(() => store.items.length, () => { mobilePage.value = 1 })
 
 const filteredAgrupadas = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -197,7 +209,71 @@ function remove (p: Permissao) {
           {{ store.error }}
         </v-alert>
 
+        <!-- Lista de cards em mobile -->
+        <div v-if="mobile" class="mobile-list">
+          <div v-if="store.loading" class="text-center py-8 text-medium-emphasis">
+            <v-progress-circular color="primary" indeterminate size="28" />
+            <div class="mt-2 text-body-2">Carregando...</div>
+          </div>
+          <div v-else-if="!store.items.length" class="text-center py-8 text-medium-emphasis">
+            <v-icon class="mb-2" icon="mdi-shield-off-outline" size="36" />
+            <div class="text-body-2">Nenhuma permissão cadastrada</div>
+            <v-btn class="mt-3" color="primary" size="small" variant="tonal" @click="openCreate">
+              Criar a primeira
+            </v-btn>
+          </div>
+          <article v-for="item in paginatedItems" :key="item.id" class="mobile-card">
+            <div class="mobile-card__actions">
+              <v-menu location="bottom end">
+                <template #activator="{ props }">
+                  <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" />
+                </template>
+                <v-list density="compact" min-width="200">
+                  <v-list-item prepend-icon="mdi-pencil-outline" title="Editar" @click="openEdit(item)" />
+                  <v-divider class="my-1" />
+                  <v-list-item class="text-error" prepend-icon="mdi-delete-outline" title="Excluir" @click="remove(item)" />
+                </v-list>
+              </v-menu>
+            </div>
+
+            <div class="mobile-card__header" style="padding-right: 36px">
+              <v-avatar color="primary" size="40" variant="tonal">
+                <v-icon icon="mdi-shield-check-outline" size="20" />
+              </v-avatar>
+              <div class="mobile-card__header-text">
+                <div class="mobile-card__title">{{ item.nome }}</div>
+                <div v-if="item.descricao" class="mobile-card__subtitle">{{ item.descricao }}</div>
+              </div>
+            </div>
+
+            <div class="mobile-card__divider" />
+
+            <div class="mobile-card__grid">
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">Capacidades</span>
+                <span class="mobile-card__value">
+                  {{ (item.capacidades || []).length }} / {{ totalCapacidadesCatalogo }}
+                </span>
+              </div>
+              <div class="mobile-card__field">
+                <span class="mobile-card__label">Usuários</span>
+                <span class="mobile-card__value">{{ item.usuarios_count || 0 }}</span>
+              </div>
+            </div>
+          </article>
+
+          <div v-if="store.items.length > mobilePageSize" class="mobile-pagination">
+            <div class="mobile-pagination__info">
+              {{ (mobilePage - 1) * mobilePageSize + 1 }}–{{
+                Math.min(mobilePage * mobilePageSize, store.items.length)
+              }} de {{ store.items.length }}
+            </div>
+            <v-pagination v-model="mobilePage" density="comfortable" :length="mobileTotalPages" :total-visible="4" />
+          </div>
+        </div>
+
         <v-data-table
+          v-else
           :headers="headers"
           item-key="id"
           :items="store.items"

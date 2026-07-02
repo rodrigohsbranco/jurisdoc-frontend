@@ -223,6 +223,9 @@ function cadastroToAPI (c: Partial<KitCadastro>): Record<string, any> {
     comprovante_nome_cliente: c.comprovanteNomeCliente || '',
     responsavel_imovel_nome: c.responsavelImovelNome || '',
     responsavel_imovel_cpf: c.responsavelImovelCpf ? c.responsavelImovelCpf.replace(/\D/g, '') : '',
+    // Geolocalização da residência
+    latitude: c.latitude ?? null,
+    longitude: c.longitude ?? null,
     // Hipossuficiência
     ...(c.possuiImoveis !== null && c.possuiImoveis !== undefined ? { possui_imoveis: c.possuiImoveis } : {}),
     ...(c.possuiMoveis !== null && c.possuiMoveis !== undefined ? { possui_moveis: c.possuiMoveis } : {}),
@@ -301,6 +304,11 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   cad.responsavelImovelCpf = formatCPF(c.responsavel_imovel_cpf || '')
   cad.comprovantesResidencia = Array.isArray(c.comprovantes_residencia) ? c.comprovantes_residencia : []
   cad.responsavelImovelDocs = Array.isArray(c.responsavel_imovel_docs) ? c.responsavel_imovel_docs : []
+
+  // Geolocalização da residência
+  cad.latitude = c.latitude ?? null
+  cad.longitude = c.longitude ?? null
+  cad.fotosResidencia = Array.isArray(c.fotos_residencia) ? c.fotos_residencia : []
 
   // Contato — reconstrói telefones[] a partir do primário (campos legacy)
   // + adicionais em telefones_extras

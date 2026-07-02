@@ -18,6 +18,7 @@ import App from './App.vue'
 
 // Styles
 import 'unfonts.css'
+import '@/styles/mobile.css'
 
 const app = createApp(App)
 
