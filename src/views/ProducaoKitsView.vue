@@ -14,6 +14,8 @@ type KitItem = {
   cpf: string
   status: StatusKit
   criadoPorNome: string
+  origem: 'jurisdoc' | 'app'
+  appCriadoPorNome: string
 }
 
 const busca = ref('')
@@ -123,6 +125,8 @@ const kitsFormatted = computed(() =>
           ? 'assinado'
           : 'rascunho',
     criadoPorNome: k.criado_por_nome || '',
+    origem: k.origem || 'jurisdoc',
+    appCriadoPorNome: k.app_criado_por_nome || '',
   })) as KitItem[],
 )
 
@@ -304,7 +308,17 @@ onUnmounted(() => {
           {{ labelsTipo[kit.tipo] }}
         </v-chip>
         <v-chip
-          v-if="authStore.isAdmin && kit.criadoPorNome"
+          v-if="kit.origem === 'app' && kit.appCriadoPorNome"
+          class="mr-2"
+          color="deep-orange"
+          prepend-icon="mdi-cellphone"
+          size="small"
+          variant="tonal"
+        >
+          {{ kit.appCriadoPorNome }}
+        </v-chip>
+        <v-chip
+          v-if="authStore.isAdmin && kit.criadoPorNome && kit.origem !== 'app'"
           class="mr-2"
           color="info"
           prepend-icon="mdi-account-outline"

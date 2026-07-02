@@ -11,6 +11,8 @@ export interface KitListItem {
   criado_por_nome: string
   status: KitStatus
   total_acoes: number
+  origem: 'jurisdoc' | 'app'
+  app_criado_por_nome: string
   criado_em: string
   atualizado_em: string
 }
