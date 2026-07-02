@@ -15,7 +15,6 @@ type KitItem = {
   status: StatusKit
   criadoPorNome: string
   origem: 'jurisdoc' | 'app'
-  appCriadoPorNome: string
 }
 
 const busca = ref('')
@@ -124,9 +123,10 @@ const kitsFormatted = computed(() =>
         : k.status === 'assinado'
           ? 'assinado'
           : 'rascunho',
-    criadoPorNome: k.criado_por_nome || '',
     origem: k.origem || 'jurisdoc',
-    appCriadoPorNome: k.app_criado_por_nome || '',
+    criadoPorNome: k.origem === 'app' && k.app_criado_por_nome
+      ? `${k.criado_por_nome || 'app_flowalr'} / ${k.app_criado_por_nome}`
+      : (k.criado_por_nome || ''),
   })) as KitItem[],
 )
 
@@ -308,20 +308,10 @@ onUnmounted(() => {
           {{ labelsTipo[kit.tipo] }}
         </v-chip>
         <v-chip
-          v-if="kit.origem === 'app' && kit.appCriadoPorNome"
-          class="mr-2"
-          color="deep-orange"
-          prepend-icon="mdi-cellphone"
-          size="small"
-          variant="tonal"
-        >
-          {{ kit.appCriadoPorNome }}
-        </v-chip>
-        <v-chip
-          v-if="authStore.isAdmin && kit.criadoPorNome && kit.origem !== 'app'"
+          v-if="authStore.isAdmin && kit.criadoPorNome"
           class="mr-2"
           color="info"
-          prepend-icon="mdi-account-outline"
+          :prepend-icon="kit.origem === 'app' ? 'mdi-cellphone' : 'mdi-account-outline'"
           size="small"
           variant="tonal"
         >
