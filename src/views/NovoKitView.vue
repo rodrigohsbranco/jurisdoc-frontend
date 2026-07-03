@@ -1670,6 +1670,43 @@ async function ensureVisibleDocxBlobs (): Promise<boolean> {
   return true
 }
 
+/**
+ * Monta a lista ordenada de .docx (SEM rodapé de paginação) para o PDF
+ * completo. A procuração bancária/marketing é expandida: cada ação vira um
+ * arquivo próprio, para que cada procuração reinicie sua própria paginação.
+ * O backend (per_document_numbering) numera cada arquivo isoladamente.
+ */
+async function buildDocxFilesForCompletePdf (): Promise<{ blob: Blob; filename: string }[]> {
+  const arquivos: { blob: Blob; filename: string }[] = []
+  for (const template of kitTemplatesVisiveis.value) {
+    const key = template.key
+    // Procuração bancária/marketing: uma ação = um documento independente.
+    if (key === 'procuracao' && tipoKit.value !== 'previdenciario') {
+      if (!procuracaoTemplateId.value) continue
+      let i = 0
+      for (const acao of acoes.value) {
+        const ctx = await montarContextoProcuracao(acao)
+        const result = await templatesStore.render(procuracaoTemplateId.value, {
+          context: ctx,
+          filename: baseNomeDownloadDoc('procuracao'),
+          skipPageNumbering: true,
+        })
+        i += 1
+        arquivos.push({ blob: result.blob, filename: `procuracao_${i}.docx` })
+      }
+      continue
+    }
+    const ctx = await montarContexto()
+    const result = await templatesStore.render(template.id, {
+      context: ctx,
+      filename: baseNomeDownloadDoc(key),
+      skipPageNumbering: true,
+    })
+    arquivos.push({ blob: result.blob, filename: `${baseNomeDownloadDoc(key)}.docx` })
+  }
+  return arquivos
+}
+
 async function downloadAllPdf () {
   if (kitTemplatesVisiveis.value.length < 2) {
     const [template] = kitTemplatesVisiveis.value
@@ -1681,19 +1718,21 @@ async function downloadAllPdf () {
 
   downloadAllPdfLoading.value = true
   try {
-    const ready = await ensureVisibleDocxBlobs()
-    if (!ready) {
+    // Paginação por documento: cada doc (e cada ação da procuração) vai como
+    // arquivo próprio, sem rodapé injetado. O backend numera cada um
+    // isoladamente ('Página X de Y' ou nada se 1 página) e concatena os PDFs.
+    const arquivos = await buildDocxFilesForCompletePdf()
+    if (arquivos.length < 2) {
       showError('Não foi possível gerar todos os documentos para montar o PDF único.')
       return
     }
 
     const fd = new FormData()
-    for (const template of kitTemplatesVisiveis.value) {
-      const blob = docxBlobs.value[template.key]
-      if (!blob) continue
-      fd.append('files', blob, `${baseNomeDownloadDoc(template.key)}.docx`)
+    for (const { blob, filename } of arquivos) {
+      fd.append('files', blob, filename)
     }
     fd.append('filename', baseNomeKitCompleto())
+    fd.append('per_document_numbering', 'true')
 
     const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
       responseType: 'blob',
