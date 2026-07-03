@@ -1291,6 +1291,7 @@ async function montarContexto (): Promise<Record<string, any>> {
     genero?: string
     is_socio: boolean
     numero_oab: string
+    oab_fonte?: string
     escritorio_nome?: string
     escritorio_cnpj?: string
     unidade_apoio_nome?: string
@@ -1335,7 +1336,12 @@ async function montarContexto (): Promise<Record<string, any>> {
     advogados_estado = naoSocios.map(qualificarAdvogado).join('; e ')
   }
 
-  const comUnidade = advsTodos.find(a => a.unidade_apoio_nome && a.unidade_apoio_endereco)
+  // A unidade de apoio deve corresponder ao estado da ação (UF do cliente):
+  // só usa a unidade de um advogado cuja OAB foi resolvida pela UF do cliente
+  // (oab_fonte === 'uf_cliente'), nunca por fallback (SC ou 1ª cadastrada).
+  const comUnidade = advsTodos.find(
+    a => a.oab_fonte === 'uf_cliente' && a.unidade_apoio_nome && a.unidade_apoio_endereco,
+  )
   if (comUnidade) {
     unidade_apoio = `, unidade de apoio administrativo na ${comUnidade.unidade_apoio_endereco}`
   }

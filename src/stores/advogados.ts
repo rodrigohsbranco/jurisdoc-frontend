@@ -40,6 +40,7 @@ export interface AdvogadoPorUf {
   escritorio_cnpj: string
   tipos_acao: string[]
   numero_oab: string
+  oab_fonte: 'uf_cliente' | 'fallback_sc' | 'fallback_primeira' | 'pendente' | ''
   unidade_apoio_nome: string
   unidade_apoio_endereco: string
 }
