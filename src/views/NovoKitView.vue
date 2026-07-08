@@ -1692,6 +1692,7 @@ async function downloadAllPdf () {
     const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
     })
 
     triggerBlobDownload(data as Blob, `${baseNomeKitCompleto()}.pdf`)
@@ -1866,6 +1867,7 @@ async function fetchProcuracaoMultipla () {
     const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
     })
     pdfBlobs.value[key] = data as Blob
   } catch (e: any) {

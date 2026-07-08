@@ -264,6 +264,7 @@ export const useTemplatesStore = defineStore('templates', {
         const res = await api.post(url, body, {
           responseType: 'blob',
           validateStatus: (status) => status < 500, // aceita 400 para extrair detail
+          ...(format === 'pdf' ? { timeout: 120000 } : {}),
         })
         if (res.status === 400) {
           const errorText = await (res.data as Blob).text()
