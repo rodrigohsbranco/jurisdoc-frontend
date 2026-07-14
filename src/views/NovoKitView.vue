@@ -43,8 +43,8 @@ import {
 const etapaAtual = ref<KitEtapa>('cliente')
 const etapas = computed<KitEtapa[]>(() =>
   tipoKit.value === 'previdenciario'
-    ? ['cliente', 'localizacao', 'advogados', 'kit-final']
-    : ['cliente', 'localizacao', 'acoes', 'advogados', 'kit-final'],
+    ? ['cliente', 'advogados', 'kit-final']
+    : ['cliente', 'acoes', 'advogados', 'kit-final'],
 )
 const etapaIndex = computed(() => etapas.value.indexOf(etapaAtual.value))
 const route = useRoute()
@@ -520,6 +520,43 @@ async function removeFotoResidencia (doc: DocPessoal) {
   }
 }
 
+// ── Foto 3x4 do cliente (única) ──
+const fotoClienteUploading = ref(false)
+
+async function onSelectFotoCliente (e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) await uploadFotoCliente(file)
+  input.value = ''
+}
+async function uploadFotoCliente (file: File) {
+  if (!clienteId.value) return
+  fotoClienteUploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const { data } = await api.post(
+      `/api/cadastro/clientes/${clienteId.value}/foto-cliente/upload/`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    cad.value.fotoCliente = data.foto_cliente || null
+  } catch (e: any) {
+    showError(friendlyError(e))
+  } finally {
+    fotoClienteUploading.value = false
+  }
+}
+async function removeFotoCliente () {
+  if (!clienteId.value) return
+  try {
+    await api.post(`/api/cadastro/clientes/${clienteId.value}/foto-cliente/remove/`)
+    cad.value.fotoCliente = null
+  } catch (e: any) {
+    console.error('Erro ao remover foto do cliente:', e)
+  }
+}
+
 async function onSelectResponsavelDocs (e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files
@@ -802,7 +839,6 @@ const podeAvancar = computed(() => {
     if (!clienteEncontrado.value && !isEditMode.value) return false
     return validateCadastroSilent()
   }
-  if (etapaAtual.value === 'localizacao') return true
   if (etapaAtual.value === 'acoes') return acoes.value.length > 0
   if (etapaAtual.value === 'advogados') return !advogadosLoading.value
   return false
@@ -1983,32 +2019,18 @@ async function avancarComPersistencia () {
       savingMessage.value = 'Salvando dados do cliente...'
       await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
 
+      const proxima = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
       if (!isEditMode.value) {
         savingMessage.value = 'Salvando rascunho do kit...'
         const created = await kitsStore.createDraft(clienteId.value, tipoKit.value)
         await router.replace({
           name: 'producao-kits-editar',
           params: { id: created.id },
-          query: { etapa: 'localizacao' },
+          query: { etapa: proxima },
         })
       } else {
-        etapaAtual.value = 'localizacao'
+        etapaAtual.value = proxima
       }
-    } finally {
-      saving.value = false
-      savingMessage.value = ''
-    }
-    return
-  }
-
-  if (etapaAtual.value === 'localizacao') {
-    saving.value = true
-    try {
-      savingMessage.value = 'Salvando localização...'
-      if (clienteId.value) {
-        await kitsStore.saveCadastro(kitId.value, clienteId.value, cad.value)
-      }
-      etapaAtual.value = tipoKit.value === 'previdenciario' ? 'advogados' : 'acoes'
     } finally {
       saving.value = false
       savingMessage.value = ''
@@ -2117,8 +2139,6 @@ onMounted(async () => {
   const isPrevid = tipoKit.value === 'previdenciario'
   if (etapaQuery === 'kit-final') {
     etapaAtual.value = 'kit-final'
-  } else if (etapaQuery === 'localizacao') {
-    etapaAtual.value = 'localizacao'
   } else if (etapaQuery === 'advogados') {
     etapaAtual.value = 'advogados'
   } else if (etapaQuery === 'acoes' && !isPrevid) {
@@ -2154,13 +2174,6 @@ onMounted(async () => {
             <v-icon :icon="etapaIndex > 0 ? 'mdi-check' : 'mdi-account-outline'" />
           </v-avatar>
           <span class="step-label">Cliente</span>
-        </div>
-        <div :class="['step-line', etapaIndex >= etapas.indexOf('localizacao') ? 'step-line--done' : '']" />
-        <div class="step">
-          <v-avatar :class="['step-icon', etapaAtual === 'localizacao' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('localizacao') ? 'step-icon--done' : '')]" size="44">
-            <v-icon :icon="etapaIndex > etapas.indexOf('localizacao') ? 'mdi-check' : 'mdi-map-marker-radius-outline'" />
-          </v-avatar>
-          <span class="step-label">Localização</span>
         </div>
         <template v-if="tipoKit !== 'previdenciario'">
           <div :class="['step-line', etapaIndex >= etapas.indexOf('acoes') ? 'step-line--done' : '']" />
@@ -2198,7 +2211,7 @@ onMounted(async () => {
               <!-- Tipo do Kit -->
               <h2 class="section-title">Tipo do Kit</h2>
               <v-divider class="mb-5" />
-              <v-row dense class="mb-6">
+              <v-row dense class="mb-6" align="center" justify="space-between">
                 <v-col cols="12" md="4">
                   <v-select
                     v-model="tipoKit"
@@ -2212,6 +2225,35 @@ onMounted(async () => {
                     prepend-inner-icon="mdi-tag-outline"
                     variant="outlined"
                   />
+                </v-col>
+                <v-col cols="auto">
+                  <label class="field-label">Foto do cliente</label>
+                  <div class="foto-cliente-wrap">
+                    <template v-if="cad.fotoCliente">
+                      <img :src="cad.fotoCliente.url" alt="Foto do cliente" class="foto-cliente-img">
+                      <v-btn
+                        class="foto-cliente-remove"
+                        color="error"
+                        icon="mdi-close"
+                        size="x-small"
+                        variant="flat"
+                        @click="removeFotoCliente"
+                      />
+                    </template>
+                    <div
+                      v-else
+                      class="foto-cliente-drop"
+                      :class="{ 'foto-cliente-drop--disabled': !clienteId, 'foto-cliente-drop--uploading': fotoClienteUploading }"
+                      @click="clienteId && ($refs.fotoClienteInput as HTMLInputElement)?.click()"
+                    >
+                      <input ref="fotoClienteInput" accept="image/jpeg,image/png,image/webp" hidden type="file" @change="onSelectFotoCliente">
+                      <v-progress-circular v-if="fotoClienteUploading" color="primary" indeterminate size="20" width="2" />
+                      <template v-else>
+                        <v-icon icon="mdi-camera-outline" size="26" />
+                        <span class="foto-cliente-hint">{{ clienteId ? 'Adicionar' : 'Busque o cliente' }}</span>
+                      </template>
+                    </div>
+                  </div>
                 </v-col>
               </v-row>
 
@@ -2691,6 +2733,52 @@ onMounted(async () => {
                 </v-col>
               </v-row>
 
+              <!-- Geolocalização da residência (antes era uma step própria) -->
+              <h2 class="section-title mt-8">Geolocalização da Residência</h2>
+              <v-divider class="mb-5" />
+              <p class="text-medium-emphasis mb-4" style="font-size: .875rem;">
+                Marque onde o cliente mora — use o botão de localização atual ou clique/arraste o pino no mapa. (Opcional)
+              </p>
+
+              <MapaLocalCliente
+                v-model:latitude="cad.latitude"
+                v-model:longitude="cad.longitude"
+              />
+
+              <!-- Fotos da residência -->
+              <h2 class="section-title mt-8">Fotos da Residência</h2>
+              <v-divider class="mb-5" />
+              <label class="field-label">Fotos da rua e da casa (opcional, múltiplas — máx. {{ MAX_FOTOS_RESIDENCIA }})</label>
+              <div v-if="cad.fotosResidencia.length" class="docs-list mb-3">
+                <div v-for="doc in cad.fotosResidencia" :key="doc.path" class="docs-list__item">
+                  <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
+                    <img v-if="isImage(doc.name)" :src="doc.url" :alt="doc.name" class="docs-list__img">
+                    <v-icon v-else color="primary" :icon="docIcon(doc.name)" size="28" />
+                  </a>
+                  <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
+                  <v-spacer />
+                  <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeFotoResidencia(doc)" />
+                </div>
+              </div>
+              <div
+                class="upload-zone mb-4"
+                :class="{ 'upload-zone--uploading': fotosResidenciaUploading }"
+                @click="($refs.fotosResidenciaInput as HTMLInputElement)?.click()"
+                @dragover.prevent
+                @drop.prevent="onDropFotosResidencia"
+              >
+                <input ref="fotosResidenciaInput" accept="image/jpeg,image/png,image/webp" hidden multiple type="file" @change="onSelectFotosResidencia">
+                <template v-if="fotosResidenciaUploading">
+                  <v-progress-circular color="primary" indeterminate size="24" width="2" />
+                  <span class="upload-zone__title mt-2">Enviando...</span>
+                </template>
+                <template v-else>
+                  <v-icon class="upload-zone__icon" icon="mdi-camera-outline" />
+                  <span class="upload-zone__title">Clique ou arraste para enviar</span>
+                  <span class="upload-zone__hint">JPG, PNG ou WEBP — múltiplas fotos (máx. {{ MAX_FOTOS_RESIDENCIA }})</span>
+                </template>
+              </div>
+
               <!-- Comprovante de Residência -->
               <h2 class="section-title mt-8">Comprovante de Residência</h2>
               <v-divider class="mb-5" />
@@ -2896,54 +2984,6 @@ onMounted(async () => {
 
               </template><!-- /clienteEncontrado || isEditMode -->
 
-            </v-window-item>
-
-            <!-- ═══════════════ STEP: LOCALIZAÇÃO ═══════════════ -->
-            <v-window-item value="localizacao">
-              <h2 class="section-title">Geolocalização da Residência</h2>
-              <v-divider class="mb-5" />
-              <p class="text-medium-emphasis mb-4" style="font-size: .875rem;">
-                Marque onde o cliente mora — use o botão de localização atual ou clique/arraste o pino no mapa. (Opcional)
-              </p>
-
-              <MapaLocalCliente
-                v-model:latitude="cad.latitude"
-                v-model:longitude="cad.longitude"
-              />
-
-              <!-- Fotos da residência -->
-              <h2 class="section-title mt-8">Fotos da Residência</h2>
-              <v-divider class="mb-5" />
-              <label class="field-label">Fotos da rua e da casa (opcional, múltiplas — máx. {{ MAX_FOTOS_RESIDENCIA }})</label>
-              <div v-if="cad.fotosResidencia.length" class="docs-list mb-3">
-                <div v-for="doc in cad.fotosResidencia" :key="doc.path" class="docs-list__item">
-                  <a :href="doc.url" class="docs-list__thumb" target="_blank" @click.stop>
-                    <img v-if="isImage(doc.name)" :src="doc.url" :alt="doc.name" class="docs-list__img">
-                    <v-icon v-else color="primary" :icon="docIcon(doc.name)" size="28" />
-                  </a>
-                  <a :href="doc.url" class="docs-list__name" target="_blank" @click.stop>{{ doc.name }}</a>
-                  <v-spacer />
-                  <v-btn color="error" icon="mdi-close" size="x-small" variant="text" @click="removeFotoResidencia(doc)" />
-                </div>
-              </div>
-              <div
-                class="upload-zone mb-4"
-                :class="{ 'upload-zone--uploading': fotosResidenciaUploading }"
-                @click="($refs.fotosResidenciaInput as HTMLInputElement)?.click()"
-                @dragover.prevent
-                @drop.prevent="onDropFotosResidencia"
-              >
-                <input ref="fotosResidenciaInput" accept="image/jpeg,image/png,image/webp" hidden multiple type="file" @change="onSelectFotosResidencia">
-                <template v-if="fotosResidenciaUploading">
-                  <v-progress-circular color="primary" indeterminate size="24" width="2" />
-                  <span class="upload-zone__title mt-2">Enviando...</span>
-                </template>
-                <template v-else>
-                  <v-icon class="upload-zone__icon" icon="mdi-camera-outline" />
-                  <span class="upload-zone__title">Clique ou arraste para enviar</span>
-                  <span class="upload-zone__hint">JPG, PNG ou WEBP — múltiplas fotos (máx. {{ MAX_FOTOS_RESIDENCIA }})</span>
-                </template>
-              </div>
             </v-window-item>
 
             <!-- ═══════════════ STEP 2: AÇÕES ═══════════════ -->
@@ -3751,6 +3791,59 @@ onMounted(async () => {
   font-weight: 600;
   color: #2a2f3a;
   margin-bottom: 4px;
+}
+
+/* Foto 3x4 do cliente */
+.foto-cliente-wrap {
+  position: relative;
+  width: 96px;
+}
+.foto-cliente-img {
+  width: 96px;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  display: block;
+}
+.foto-cliente-remove {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+}
+.foto-cliente-drop {
+  width: 96px;
+  aspect-ratio: 3 / 4;
+  border: 2px dashed rgba(0, 0, 0, 0.22);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  color: #6b7280;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.foto-cliente-drop:hover {
+  border-color: #0F2B46;
+  background-color: rgba(15, 43, 70, 0.04);
+}
+.foto-cliente-drop--disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.foto-cliente-drop--disabled:hover {
+  border-color: rgba(0, 0, 0, 0.22);
+  background-color: transparent;
+}
+.foto-cliente-drop--uploading {
+  cursor: progress;
+}
+.foto-cliente-hint {
+  font-size: 0.72rem;
+  text-align: center;
+  line-height: 1.1;
 }
 
 .conditions-grid {
