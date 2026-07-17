@@ -139,7 +139,8 @@ watch(panelTab, id => {
 })
 
 function docLabel (d: NotificacaoDoc): string {
-  return d.banco ? `${d.tipo_acao_display} — ${d.banco}` : d.tipo_acao_display
+  const base = d.banco ? `${d.tipo_acao_display} — ${d.banco}` : d.tipo_acao_display
+  return d.qtd_contratos > 1 ? `${base} (${d.qtd_contratos} contratos)` : base
 }
 
 function baixarDoPanel () {

@@ -174,6 +174,7 @@ export interface NotificacaoDoc {
   tipo_acao: string
   tipo_acao_display: string
   banco: string
+  qtd_contratos: number
   tipo_notificacao: string
 }
 
