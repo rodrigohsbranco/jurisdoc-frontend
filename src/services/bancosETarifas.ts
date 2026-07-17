@@ -3,6 +3,9 @@ import api from '@/services/api'
 export interface BancoKit {
   id: number
   nome: string
+  cnpj: string
+  endereco: string
+  email: string
   ativo: boolean
   ordem: number
 }

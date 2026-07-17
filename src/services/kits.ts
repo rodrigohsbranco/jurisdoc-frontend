@@ -13,6 +13,8 @@ export interface KitListItem {
   total_acoes: number
   origem: 'jurisdoc' | 'app'
   app_criado_por_nome: string
+  notificacao_enviada: boolean
+  notificacao_enviada_em: string | null
   criado_em: string
   atualizado_em: string
 }
@@ -157,6 +159,28 @@ export async function assinarKit (id: number): Promise<KitDetail> {
 export async function mudarStatus (id: number, status: KitStatus): Promise<KitDetail> {
   const { data } = await api.post<KitDetail>(`${BASE}${id}/mudar-status/`, { status })
   return data
+}
+
+// ── Notificações Extrajudiciais ──
+export interface NotificacaoResult {
+  id: number
+  notificacao_enviada: boolean
+  notificacao_enviada_em: string | null
+}
+
+/** Marca/desmarca a notificação como enviada ao banco. */
+export async function marcarNotificacaoEnviada (id: number, enviada: boolean): Promise<NotificacaoResult> {
+  const { data } = await api.post<NotificacaoResult>(`${BASE}${id}/notificacao-enviada/`, { enviada })
+  return data
+}
+
+/** Baixa/visualiza o PDF da notificação extrajudicial (template_notificacao_extrajudicial). */
+export async function getNotificacaoPdf (id: number, download = false): Promise<Blob> {
+  const { data } = await api.get(`${BASE}${id}/notificacao-extrajudicial/pdf/`, {
+    params: download ? { download: 1 } : {},
+    responseType: 'blob',
+  })
+  return data as Blob
 }
 
 export async function enviarParaAssinatura (
