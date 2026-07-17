@@ -20,7 +20,7 @@ const pageSizeOptions = [8, 10, 25, 50]
 const bancos = ref<BancoKit[]>([])
 const bancoDialog = ref(false)
 const bancoEditing = ref<BancoKit | null>(null)
-const bancoForm = ref({ nome: '', ativo: true, ordem: 0 })
+const bancoForm = ref({ nome: '', cnpj: '', endereco: '', email: '', ativo: true, ordem: 0 })
 const bancoConfirmDelete = ref(false)
 const bancoToDelete = ref<BancoKit | null>(null)
 const bancoPage = ref(1)
@@ -58,10 +58,17 @@ async function fetchBancos () {
 function openBancoDialog (banco?: BancoKit) {
   if (banco) {
     bancoEditing.value = banco
-    bancoForm.value = { nome: banco.nome, ativo: banco.ativo, ordem: banco.ordem }
+    bancoForm.value = {
+      nome: banco.nome,
+      cnpj: banco.cnpj || '',
+      endereco: banco.endereco || '',
+      email: banco.email || '',
+      ativo: banco.ativo,
+      ordem: banco.ordem,
+    }
   } else {
     bancoEditing.value = null
-    bancoForm.value = { nome: '', ativo: true, ordem: 0 }
+    bancoForm.value = { nome: '', cnpj: '', endereco: '', email: '', ativo: true, ordem: 0 }
   }
   bancoDialog.value = true
 }
@@ -530,6 +537,9 @@ onMounted(async () => {
         <v-card-title class="text-h6 pa-5">{{ bancoEditing ? 'Editar Banco' : 'Novo Banco' }}</v-card-title>
         <v-card-text class="px-5 pb-2">
           <v-text-field v-model="bancoForm.nome" density="compact" hide-details="auto" label="Nome do banco" variant="outlined" class="mb-3" />
+          <v-text-field v-model="bancoForm.cnpj" density="compact" hide-details="auto" label="CNPJ" placeholder="00.000.000/0000-00" variant="outlined" class="mb-3" />
+          <v-text-field v-model="bancoForm.endereco" density="compact" hide-details="auto" label="Endereço" variant="outlined" class="mb-3" />
+          <v-text-field v-model="bancoForm.email" density="compact" hide-details="auto" label="E-mail" type="email" variant="outlined" class="mb-3" />
           <v-text-field v-model.number="bancoForm.ordem" density="compact" hide-details="auto" label="Ordem" type="number" variant="outlined" class="mb-3" />
           <v-switch v-model="bancoForm.ativo" color="primary" hide-details label="Ativo" />
         </v-card-text>
