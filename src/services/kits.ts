@@ -29,6 +29,9 @@ export interface KitDetail {
   status: KitStatus
   acoes: AcaoAPI[]
   documentos: DocumentoAPI[]
+  zapsign_doc_token: string | null
+  zapsign_sign_url: string | null
+  zapsign_status: string | null
   criado_em: string
   atualizado_em: string
 }
@@ -57,8 +60,24 @@ export interface DocumentoAPI {
   id: number
   kit: number
   tipo: string
+  tipo_display: string
   arquivo: string
   gerado_em: string
+  zapsign_doc_token: string | null
+  zapsign_sign_url: string | null
+  zapsign_status: string | null
+}
+
+export interface ZapSignConfig {
+  nivel: 'basico' | 'medio' | 'avancado'
+  medio_tipo?: 'email' | 'sms'
+  rubrica?: boolean
+}
+
+export interface ZapSignDocLink {
+  tipo: string
+  tipo_display: string
+  sign_url: string
 }
 
 const BASE = '/api/kits/'
@@ -162,6 +181,17 @@ export async function getNotificacaoPdf (id: number, download = false): Promise<
     responseType: 'blob',
   })
   return data as Blob
+}
+
+export async function enviarParaAssinatura (
+  id: number,
+  config: ZapSignConfig,
+): Promise<{ status: string; documentos: ZapSignDocLink[]; reutilizado: boolean }> {
+  const { data } = await api.post<{ status: string; documentos: ZapSignDocLink[]; reutilizado: boolean }>(
+    `${BASE}${id}/enviar-para-assinatura/`,
+    config,
+  )
+  return data
 }
 
 function appendList (fd: FormData, key: string, values: string[]) {
