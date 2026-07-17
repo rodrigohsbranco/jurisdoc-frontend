@@ -27,6 +27,9 @@ export interface KitDetail {
   status: KitStatus
   acoes: AcaoAPI[]
   documentos: DocumentoAPI[]
+  zapsign_doc_token: string | null
+  zapsign_sign_url: string | null
+  zapsign_status: string | null
   criado_em: string
   atualizado_em: string
 }
@@ -137,6 +140,11 @@ export async function assinarKit (id: number): Promise<KitDetail> {
 
 export async function mudarStatus (id: number, status: KitStatus): Promise<KitDetail> {
   const { data } = await api.post<KitDetail>(`${BASE}${id}/mudar-status/`, { status })
+  return data
+}
+
+export async function enviarParaAssinatura (id: number): Promise<{ sign_url: string; reutilizado: boolean }> {
+  const { data } = await api.post<{ sign_url: string; reutilizado: boolean }>(`${BASE}${id}/enviar-para-assinatura/`)
   return data
 }
 

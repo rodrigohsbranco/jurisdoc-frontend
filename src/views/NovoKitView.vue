@@ -6,7 +6,7 @@ import { useKitsStore, clienteToCadastro } from '@/stores/kits'
 import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
-import { acaoFromAPI, type AcaoAPI } from '@/services/kits'
+import { acaoFromAPI, enviarParaAssinatura, type AcaoAPI } from '@/services/kits'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import { snapshotKit } from '@/services/clausulas'
 import {
@@ -54,6 +54,13 @@ const kitId = computed(() => Number(route.params.id || 0))
 const isEditMode = computed(() => !!kitId.value)
 const saving = ref(false)
 const tipoKit = ref<KitTipo>('bancario')
+
+// ── ZapSign ──
+const zapsignLoading = ref(false)
+const zapsignSignUrl = ref<string | null>(null)
+const zapsignStatus = ref<string | null>(null)
+const zapsignDialog = ref(false)
+const zapsignCopied = ref(false)
 const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
@@ -2086,6 +2093,38 @@ async function marcarAssinado () {
   }
 }
 
+async function enviarViaZapSign () {
+  if (!kitId.value) return
+  zapsignLoading.value = true
+  try {
+    const result = await enviarParaAssinatura(kitId.value)
+    zapsignSignUrl.value = result.sign_url
+    zapsignStatus.value = 'pending'
+    zapsignDialog.value = true
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'update'))
+  } finally {
+    zapsignLoading.value = false
+  }
+}
+
+async function copiarLinkZapSign () {
+  if (!zapsignSignUrl.value) return
+  try {
+    await navigator.clipboard.writeText(zapsignSignUrl.value)
+    zapsignCopied.value = true
+    setTimeout(() => { zapsignCopied.value = false }, 2000)
+  } catch {
+    showError('Não foi possível copiar. Copie o link manualmente.')
+  }
+}
+
+function compartilharWhatsApp () {
+  if (!zapsignSignUrl.value) return
+  const msg = encodeURIComponent(`Olá! Segue o link para você assinar o documento:\n${zapsignSignUrl.value}`)
+  window.open(`https://wa.me/?text=${msg}`, '_blank')
+}
+
 // ── Load existing kit ──
 onMounted(async () => {
   await Promise.all([resolveKitTemplates(), carregarBancosETarifas()])
@@ -2107,6 +2146,10 @@ onMounted(async () => {
     relatedDocs.value.responsavel_legal = kit.cliente_detail.responsavel_legal_documentos || []
   }
   cad.value.status = kit.status
+
+  // ZapSign
+  zapsignSignUrl.value = kit.zapsign_sign_url ?? null
+  zapsignStatus.value = kit.zapsign_status ?? null
 
   // Preencher ações
   acoesExistentes.value = kit.acoes || []
@@ -3505,12 +3548,92 @@ onMounted(async () => {
 
               </template>
 
-              <!-- Botão assinar -->
-              <div v-if="cad.status !== 'assinado'" class="d-flex justify-center mt-6">
-                <v-btn color="success" :disabled="saving" prepend-icon="mdi-pen" size="large" variant="tonal" @click="marcarAssinado">
+              <!-- Botões de assinatura -->
+              <div v-if="cad.status !== 'assinado'" class="d-flex justify-center align-center ga-3 mt-6 flex-wrap">
+                <!-- ZapSign: chip de aguardando se já enviado -->
+                <v-chip
+                  v-if="zapsignStatus === 'pending'"
+                  color="warning"
+                  prepend-icon="mdi-clock-outline"
+                  variant="tonal"
+                >
+                  Aguardando assinatura no ZapSign
+                </v-chip>
+
+                <v-btn
+                  color="primary"
+                  :disabled="saving || zapsignLoading"
+                  :loading="zapsignLoading"
+                  prepend-icon="mdi-draw"
+                  size="large"
+                  variant="tonal"
+                  @click="enviarViaZapSign"
+                >
+                  {{ zapsignStatus === 'pending' ? 'Reenviar link ZapSign' : 'Gerar Assinatura pelo ZapSign' }}
+                </v-btn>
+
+                <v-btn color="success" :disabled="saving || zapsignLoading" prepend-icon="mdi-pen" size="large" variant="tonal" @click="marcarAssinado">
                   Marcar como Assinado
                 </v-btn>
               </div>
+
+              <!-- Dialog ZapSign -->
+              <v-dialog v-model="zapsignDialog" max-width="500" persistent>
+                <v-card rounded="lg">
+                  <v-card-title class="d-flex align-center ga-2 pt-4 px-6">
+                    <v-icon color="primary" icon="mdi-draw" />
+                    Link de Assinatura ZapSign
+                  </v-card-title>
+                  <v-card-text class="px-6 pb-2">
+                    <p class="text-body-2 text-medium-emphasis mb-4">
+                      Compartilhe o link abaixo com o cliente para que ele assine o documento.
+                    </p>
+                    <v-text-field
+                      :model-value="zapsignSignUrl"
+                      density="compact"
+                      label="Link de assinatura"
+                      readonly
+                      variant="outlined"
+                    >
+                      <template #append-inner>
+                        <v-tooltip :text="zapsignCopied ? 'Copiado!' : 'Copiar link'">
+                          <template #activator="{ props }">
+                            <v-icon
+                              v-bind="props"
+                              :color="zapsignCopied ? 'success' : 'default'"
+                              :icon="zapsignCopied ? 'mdi-check' : 'mdi-content-copy'"
+                              style="cursor:pointer"
+                              @click="copiarLinkZapSign"
+                            />
+                          </template>
+                        </v-tooltip>
+                      </template>
+                    </v-text-field>
+                    <div class="d-flex ga-2 flex-wrap">
+                      <v-btn
+                        color="success"
+                        prepend-icon="mdi-whatsapp"
+                        variant="tonal"
+                        @click="compartilharWhatsApp"
+                      >
+                        Enviar via WhatsApp
+                      </v-btn>
+                      <v-btn
+                        color="primary"
+                        prepend-icon="mdi-open-in-new"
+                        variant="tonal"
+                        @click="() => window.open(zapsignSignUrl!, '_blank')"
+                      >
+                        Abrir link
+                      </v-btn>
+                    </div>
+                  </v-card-text>
+                  <v-card-actions class="px-6 pb-4">
+                    <v-spacer />
+                    <v-btn variant="text" @click="zapsignDialog = false">Fechar</v-btn>
+                  </v-card-actions>
+                </v-card>
+              </v-dialog>
 
               <!-- Sem dados -->
               <v-alert v-if="!kitTemplatesVisiveis.length && !acoes.length" color="info" icon="mdi-information-outline" variant="tonal">
