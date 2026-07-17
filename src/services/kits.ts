@@ -143,8 +143,8 @@ export async function mudarStatus (id: number, status: KitStatus): Promise<KitDe
   return data
 }
 
-export async function enviarParaAssinatura (id: number): Promise<{ sign_url: string; reutilizado: boolean }> {
-  const { data } = await api.post<{ sign_url: string; reutilizado: boolean }>(`${BASE}${id}/enviar-para-assinatura/`)
+export async function enviarParaAssinatura (id: number): Promise<{ sign_url: string; status: string; reutilizado: boolean }> {
+  const { data } = await api.post<{ sign_url: string; status: string; reutilizado: boolean }>(`${BASE}${id}/enviar-para-assinatura/`)
   return data
 }
 

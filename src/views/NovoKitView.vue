@@ -2122,6 +2122,10 @@ async function enviarViaZapSign () {
     const result = await enviarParaAssinatura(kitId.value)
     zapsignSignUrl.value = result.sign_url
     zapsignStatus.value = 'pending'
+    // Sincroniza status local caso o backend tenha auto-finalizado o kit
+    if (result.status && result.status !== cad.value.status) {
+      cad.value.status = result.status as any
+    }
     zapsignDialog.value = true
   } catch (e: any) {
     showError(friendlyError(e, 'kits', 'update'))
