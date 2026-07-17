@@ -49,6 +49,7 @@
         { title: 'Contratos', icon: 'mdi-file-sign', to: { name: 'contratos' }, requires: 'pagina.contratos' },
         { title: 'Petições', icon: 'mdi-file-document-outline', to: { name: 'peticoes' }, requires: 'pagina.peticoes' },
         { title: 'Produção de Kits', icon: 'mdi-package-variant-closed', to: { name: 'producao-kits' }, requires: 'pagina.kits' },
+        { title: 'Notificações Extrajudiciais', icon: 'mdi-email-alert-outline', to: { name: 'notificacoes-extrajudiciais' }, requires: 'pagina.notificacoes_extrajudiciais' },
       ],
     },
     {

@@ -67,6 +67,7 @@ export type KitCadastro = {
   latitude: number | null
   longitude: number | null
   fotosResidencia: UploadedDoc[]
+  fotoCliente: UploadedDoc | null
 
   // Declaração de Hipossuficiência
   possuiImoveis: boolean | null
@@ -237,6 +238,7 @@ export const emptyCadastro = (): KitCadastro => ({
   latitude: null,
   longitude: null,
   fotosResidencia: [],
+  fotoCliente: null,
 
   possuiImoveis: null,
   possuiMoveis: null,

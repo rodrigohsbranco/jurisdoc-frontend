@@ -2,6 +2,7 @@
   import { computed, onMounted, ref } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { useAuthStore } from '@/stores/auth'
+  import { friendlyError } from '@/utils/errorMessages'
 
   const username = ref('')
   const password = ref('')
@@ -21,17 +22,6 @@
   const canSubmit = computed(
     () => !!username.value.trim() && password.value.length >= 6 && !loading.value,
   )
-
-  function mapError (e: any): string {
-    const status = e?.response?.status
-    const detail = e?.response?.data?.detail
-    if (detail) return String(detail)
-    if (status === 401) return 'Usuário ou senha inválidos.'
-    if (status === 403) return 'Acesso negado.'
-    if (!e?.response)
-      return 'Não foi possível conectar à API. Verifique se o backend está no ar.'
-    return 'Falha no login. Verifique as credenciais.'
-  }
 
   async function onSubmit () {
     if (!canSubmit.value) return
@@ -58,7 +48,7 @@
       const redirect = (route.query.redirect as string) || '/'
       router.replace(redirect)
     } catch (error_: any) {
-      error.value = mapError(error_)
+      error.value = friendlyError(error_)
     } finally {
       password.value = ''
       loading.value = false

@@ -309,6 +309,7 @@ export function clienteToCadastro (c: Record<string, any>): KitCadastro {
   cad.latitude = c.latitude ?? null
   cad.longitude = c.longitude ?? null
   cad.fotosResidencia = Array.isArray(c.fotos_residencia) ? c.fotos_residencia : []
+  cad.fotoCliente = c.foto_cliente || null
 
   // Contato — reconstrói telefones[] a partir do primário (campos legacy)
   // + adicionais em telefones_extras
