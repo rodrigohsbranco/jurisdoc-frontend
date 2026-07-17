@@ -6,7 +6,7 @@ import { useKitsStore, clienteToCadastro } from '@/stores/kits'
 import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
-import { acaoFromAPI, enviarParaAssinatura, type AcaoAPI, type ZapSignDocLink } from '@/services/kits'
+import { acaoFromAPI, enviarParaAssinatura, type AcaoAPI, type DocumentoAPI, type ZapSignDocLink } from '@/services/kits'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import { snapshotKit } from '@/services/clausulas'
 import {
@@ -65,10 +65,12 @@ const zapsignMedioTipo = ref<'email' | 'sms'>('email')
 const zapsignComRubrica = ref(false)
 const zapsignDocumentos = ref<ZapSignDocLink[]>([])
 const zapsignCopiedIndex = ref<number | null>(null)
+const zapsignVerificandoStatus = ref(false)
+const documentosAssinados = ref<DocumentoAPI[]>([])
 const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
-const { showSuccess, showError } = useSnackbar()
+const { showSuccess, showError, showInfo } = useSnackbar()
 const { can } = usePermissions()
 
 // Bancos e tarifas dinâmicos (do banco de dados)
@@ -2156,6 +2158,28 @@ async function copiarLinkZapSign (url: string, index: number) {
   }
 }
 
+async function verificarStatusZapSign () {
+  if (!kitId.value) return
+  zapsignVerificandoStatus.value = true
+  try {
+    const kit = await kitsStore.getDetail(kitId.value)
+    if (!kit) return
+    cad.value.status = kit.status as any
+    zapsignStatus.value = kit.zapsign_status ?? null
+    if (kit.status === 'assinado') {
+      documentosAssinados.value = (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
+      zapsignDialog.value = false
+      showSuccess('Kit assinado com sucesso! Todos os documentos foram assinados.')
+    } else {
+      showInfo('Ainda aguardando assinatura dos documentos.')
+    }
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'fetch'))
+  } finally {
+    zapsignVerificandoStatus.value = false
+  }
+}
+
 function compartilharWhatsAppTodos () {
   if (!zapsignDocumentos.value.length) return
   const linhas = zapsignDocumentos.value
@@ -2200,6 +2224,10 @@ onMounted(async () => {
       tipo_display: d.tipo_display,
       sign_url: d.zapsign_sign_url!,
     }))
+  }
+  // Documentos assinados: carrega se kit já está assinado
+  if (kit.status === 'assinado') {
+    documentosAssinados.value = (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
   }
 
   // Preencher ações
@@ -3617,6 +3645,37 @@ onMounted(async () => {
 
               </template>
 
+              <!-- Documentos Assinados via ZapSign -->
+              <div v-if="documentosAssinados.length" class="mt-6">
+                <v-divider class="mb-4" />
+                <div class="d-flex align-center ga-2 mb-3">
+                  <v-icon color="success" icon="mdi-check-circle" />
+                  <span class="text-subtitle-1 font-weight-medium">Documentos Assinados</span>
+                </div>
+                <v-list density="compact" lines="one" rounded="lg" border>
+                  <v-list-item
+                    v-for="doc in documentosAssinados"
+                    :key="doc.id"
+                    :prepend-icon="'mdi-file-pdf-box'"
+                    :title="doc.tipo_display"
+                  >
+                    <template #append>
+                      <v-btn
+                        color="primary"
+                        density="compact"
+                        prepend-icon="mdi-download"
+                        size="small"
+                        variant="tonal"
+                        :href="doc.arquivo"
+                        target="_blank"
+                      >
+                        Baixar
+                      </v-btn>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </div>
+
               <!-- Botões de assinatura -->
               <div v-if="cad.status !== 'assinado'" class="d-flex justify-center align-center ga-3 mt-6 flex-wrap">
                 <v-chip
@@ -3806,6 +3865,15 @@ onMounted(async () => {
                           Reconfigurar
                         </v-btn>
                         <v-spacer />
+                        <v-btn
+                          color="primary"
+                          :loading="zapsignVerificandoStatus"
+                          prepend-icon="mdi-refresh"
+                          variant="tonal"
+                          @click="verificarStatusZapSign"
+                        >
+                          Verificar Status
+                        </v-btn>
                         <v-btn variant="text" @click="zapsignDialog = false">Fechar</v-btn>
                       </v-card-actions>
                     </v-window-item>
