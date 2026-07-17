@@ -79,6 +79,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Editar Kit', requiresCapability: 'pagina.kits' },
       },
       {
+        path: 'notificacoes-extrajudiciais',
+        name: 'notificacoes-extrajudiciais',
+        component: () => import('../views/NotificacoesExtrajudiciaisView.vue'),
+        meta: { title: 'Notificações Extrajudiciais', requiresCapability: 'pagina.notificacoes_extrajudiciais' },
+      },
+      {
         path: 'bancos-tarifas',
         name: 'bancos-tarifas',
         component: () => import('../views/BancosTarifasView.vue'),
