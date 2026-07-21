@@ -167,16 +167,41 @@ export interface NotificacaoResult {
   notificacao_enviada_em: string | null
 }
 
+/** Uma notificação por ação do kit (cada uma vira uma aba no drawer). */
+export interface NotificacaoDoc {
+  acao_id: number
+  tipo_acao: string
+  tipo_acao_display: string
+  banco: string
+  qtd_contratos: number
+  tipo_notificacao: string
+}
+
 /** Marca/desmarca a notificação como enviada ao banco. */
 export async function marcarNotificacaoEnviada (id: number, enviada: boolean): Promise<NotificacaoResult> {
   const { data } = await api.post<NotificacaoResult>(`${BASE}${id}/notificacao-enviada/`, { enviada })
   return data
 }
 
-/** Baixa/visualiza o PDF da notificação extrajudicial (template_notificacao_extrajudicial). */
-export async function getNotificacaoPdf (id: number, download = false): Promise<Blob> {
+/** Lista as notificações do kit (uma por ação com tipo mapeado). */
+export async function listNotificacoes (id: number): Promise<NotificacaoDoc[]> {
+  const { data } = await api.get<{ notificacoes: NotificacaoDoc[] }>(`${BASE}${id}/notificacoes/`)
+  return data.notificacoes || []
+}
+
+/**
+ * Baixa/visualiza o PDF da notificação extrajudicial.
+ * Sem acaoId: todas as ações combinadas num PDF. Com acaoId: só aquela ação.
+ */
+export async function getNotificacaoPdf (
+  id: number,
+  opts: { acaoId?: number, download?: boolean } = {},
+): Promise<Blob> {
+  const params: Record<string, any> = {}
+  if (opts.acaoId != null) params.acao_id = opts.acaoId
+  if (opts.download) params.download = 1
   const { data } = await api.get(`${BASE}${id}/notificacao-extrajudicial/pdf/`, {
-    params: download ? { download: 1 } : {},
+    params,
     responseType: 'blob',
   })
   return data as Blob
