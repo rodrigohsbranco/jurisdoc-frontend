@@ -62,7 +62,7 @@ const zapsignDialog = ref(false)
 const zapsignStep = ref(1)
 const zapsignNivel = ref<'basico' | 'medio' | 'avancado'>('basico')
 const zapsignMedioTipo = ref<'email' | 'sms'>('email')
-const zapsignComRubrica = ref(false)
+const zapsignComAssinaturaPaginas = ref(false)
 const zapsignSignUrl = ref<string | null>(null)
 const zapsignDocumentos = ref<ZapSignDocInfo[]>([])
 const zapsignCopied = ref(false)
@@ -2134,7 +2134,7 @@ async function confirmarEnvioZapSign () {
     const result = await enviarParaAssinatura(kitId.value, {
       nivel: zapsignNivel.value,
       medio_tipo: zapsignMedioTipo.value,
-      rubrica: zapsignComRubrica.value,
+      assinatura_paginas: zapsignComAssinaturaPaginas.value,
     })
     zapsignSignUrl.value = result.sign_url
     zapsignDocumentos.value = result.documentos
@@ -2170,10 +2170,9 @@ async function verificarStatusZapSign () {
     cad.value.status = kit.status as any
     zapsignStatus.value = kit.zapsign_status ?? null
     if (kit.status === 'assinado') {
-      const bundled = (kit.documentos || []).filter(d => d.tipo === 'assinado_zapsign')
-      documentosAssinados.value = bundled.length
-        ? bundled
-        : (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
+      const signed = (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
+      const legacy = (kit.documentos || []).filter(d => d.tipo === 'assinado_zapsign')
+      documentosAssinados.value = signed.length ? signed : legacy
       zapsignDialog.value = false
       showSuccess('Kit assinado com sucesso! Todos os documentos foram assinados.')
     } else {
@@ -2227,12 +2226,12 @@ onMounted(async () => {
       .map(d => ({ tipo: d.tipo, tipo_display: d.tipo_display }))
   }
   // Documentos assinados: carrega se kit já está assinado
-  // extra_docs: um único "assinado_zapsign"; fluxo antigo: cada doc substituído individualmente
+  // Fluxo extra_docs e fluxo antigo: cada doc tem seu arquivo substituído pelo PDF assinado
+  // "assinado_zapsign" é legado (bundle único — gerado antes da implementação extra_docs)
   if (kit.status === 'assinado') {
-    const bundled = (kit.documentos || []).filter(d => d.tipo === 'assinado_zapsign')
-    documentosAssinados.value = bundled.length
-      ? bundled
-      : (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
+    const signed = (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
+    const legacy = (kit.documentos || []).filter(d => d.tipo === 'assinado_zapsign')
+    documentosAssinados.value = signed.length ? signed : legacy
   }
 
   // Preencher ações
@@ -3779,13 +3778,13 @@ onMounted(async () => {
 
                         <v-divider class="mb-3" />
 
-                        <!-- Rubrica -->
+                        <!-- Assinatura posicional -->
                         <v-switch
-                          v-model="zapsignComRubrica"
+                          v-model="zapsignComAssinaturaPaginas"
                           color="primary"
                           density="compact"
                           hide-details
-                          label="Adicionar rubrica nas primeiras 2 páginas"
+                          label="Adicionar assinatura nas primeiras 2 páginas"
                         />
                       </v-card-text>
                       <v-card-actions class="px-6 pb-4">

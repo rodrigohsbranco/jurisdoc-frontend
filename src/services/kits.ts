@@ -71,7 +71,7 @@ export interface DocumentoAPI {
 export interface ZapSignConfig {
   nivel: 'basico' | 'medio' | 'avancado'
   medio_tipo?: 'email' | 'sms'
-  rubrica?: boolean
+  assinatura_paginas?: boolean
 }
 
 export interface ZapSignDocInfo {
