@@ -29,6 +29,8 @@ export interface KitDetail {
   status: KitStatus
   acoes: AcaoAPI[]
   documentos: DocumentoAPI[]
+  // Só vem na resposta se o usuário tiver a capacidade "kits.honorarios_iniciais".
+  honorarios_iniciais?: number | string | null
   zapsign_doc_token: string | null
   zapsign_sign_url: string | null
   zapsign_status: string | null

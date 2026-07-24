@@ -74,3 +74,36 @@ export async function getCapacidadesAgrupadas () {
   const { data } = await api.get<CapacidadesAgrupadas>(`${CAPS_BASE}agrupadas/`)
   return data
 }
+
+// ── Capacidades diretas por usuário (capacidades sensíveis, fora do perfil) ──
+
+export type UsuarioCapacidadeDireta = {
+  id: number
+  username: string
+  nome: string
+  is_admin: boolean
+  concedida: boolean
+}
+
+export type CapacidadeDireta = {
+  codigo: string
+  recurso: string
+  acao: string
+  descricao: string
+  usuarios: UsuarioCapacidadeDireta[]
+}
+
+const DIRETAS_BASE = '/api/permissoes/capacidades-diretas/'
+
+export async function getCapacidadesDiretas () {
+  const { data } = await api.get<CapacidadeDireta[]>(DIRETAS_BASE)
+  return Array.isArray(data) ? data : []
+}
+
+export async function setCapacidadeDireta (codigo: string, userId: number, concedida: boolean) {
+  const { data } = await api.post<{ codigo: string; user_id: number; concedida: boolean }>(
+    DIRETAS_BASE,
+    { codigo, user_id: userId, concedida },
+  )
+  return data
+}

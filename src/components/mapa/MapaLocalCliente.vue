@@ -34,6 +34,14 @@ const locating = ref(false)
 let maps: any = null
 let map: any = null
 let marker: any = null
+// Evita recentralizar/zoom quando a mudança de coords veio de clique/arraste no próprio mapa.
+let suppressRecenter = false
+
+function focarNoLocal (lat: number, lng: number) {
+  setMarker(lat, lng)
+  map?.panTo({ lat, lng })
+  if (map && map.getZoom() < MARKER_ZOOM) map.setZoom(MARKER_ZOOM)
+}
 
 const isSecure = typeof window !== 'undefined' && window.isSecureContext
 
@@ -47,6 +55,7 @@ function setMarker (lat: number, lng: number) {
     })
     if (!props.readonly) {
       marker.addListener('dragend', (ev: any) => {
+        suppressRecenter = true
         emitCoords(ev.latLng.lat(), ev.latLng.lng())
       })
     }
@@ -87,6 +96,7 @@ function usarMinhaLocalizacao () {
     setMarker(lat, lng)
     map?.setCenter({ lat, lng })
     map?.setZoom(MARKER_ZOOM)
+    suppressRecenter = true
     emitCoords(lat, lng)
   }
 
@@ -137,6 +147,7 @@ async function initMap () {
         const lat = ev.latLng.lat()
         const lng = ev.latLng.lng()
         setMarker(lat, lng)
+        suppressRecenter = true
         emitCoords(lat, lng)
       })
     }
@@ -151,7 +162,14 @@ async function initMap () {
 watch(() => [props.latitude, props.longitude], ([lat, lng]) => {
   if (!map || !maps) return
   if (lat != null && lng != null) {
-    setMarker(lat as number, lng as number)
+    if (suppressRecenter) {
+      // Mudança originada no próprio mapa (clique/arraste/localização atual): só posiciona.
+      suppressRecenter = false
+      setMarker(lat as number, lng as number)
+    } else {
+      // Mudança externa (carregar kit salvo, busca de endereço): recentra e dá zoom.
+      focarNoLocal(lat as number, lng as number)
+    }
   } else if (marker) {
     marker.setMap(null)
     marker = null
@@ -188,6 +206,11 @@ onBeforeUnmount(() => {
       >
         Limpar local
       </v-btn>
+    </div>
+
+    <!-- Conteúdo opcional logo abaixo do botão de localização (ex.: busca de endereço) -->
+    <div v-if="!readonly && $slots['apos-acoes']" class="mb-3">
+      <slot name="apos-acoes" />
     </div>
 
     <v-alert

@@ -21,6 +21,12 @@ export function usePermissions () {
     return auth.capacidades.includes(codigo)
   }
 
+  // Checagem ESTRITA: NÃO herda por admin. Para capacidades sensíveis que
+  // precisam ser concedidas explicitamente mesmo a admins.
+  function canStrict (codigo: string): boolean {
+    return auth.capacidades.includes(codigo)
+  }
+
   function canAny (codigos: string[]): boolean {
     if (auth.isAdmin) return true
     return codigos.some(c => auth.capacidades.includes(c))
@@ -31,5 +37,5 @@ export function usePermissions () {
     return codigos.every(c => auth.capacidades.includes(c))
   }
 
-  return { can, canAny, canAll, isAdmin, capacidades }
+  return { can, canStrict, canAny, canAll, isAdmin, capacidades }
 }
