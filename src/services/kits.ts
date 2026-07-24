@@ -73,13 +73,12 @@ export interface DocumentoAPI {
 export interface ZapSignConfig {
   nivel: 'basico' | 'medio' | 'avancado'
   medio_tipo?: 'email' | 'sms'
-  rubrica?: boolean
+  assinatura_paginas?: boolean
 }
 
-export interface ZapSignDocLink {
+export interface ZapSignDocInfo {
   tipo: string
   tipo_display: string
-  sign_url: string
 }
 
 const BASE = '/api/kits/'
@@ -213,8 +212,8 @@ export async function getNotificacaoPdf (
 export async function enviarParaAssinatura (
   id: number,
   config: ZapSignConfig,
-): Promise<{ status: string; documentos: ZapSignDocLink[]; reutilizado: boolean }> {
-  const { data } = await api.post<{ status: string; documentos: ZapSignDocLink[]; reutilizado: boolean }>(
+): Promise<{ status: string; sign_url: string; documentos: ZapSignDocInfo[]; reutilizado: boolean }> {
+  const { data } = await api.post<{ status: string; sign_url: string; documentos: ZapSignDocInfo[]; reutilizado: boolean }>(
     `${BASE}${id}/enviar-para-assinatura/`,
     config,
   )
