@@ -1528,13 +1528,20 @@ async function montarContexto (): Promise<Record<string, any>> {
     // não foi salvo — fluxo só renderiza depois que o kit tem id.
     clausula_porcentagem: await resolverClausulaPorcentagem(),
     honorarios_iniciais: montarTextoHonorarios(),
+    // "pelos" (minúsculo) quando há cláusula de honorários; "Pelos" quando não há.
+    honorarios_pelos: temHonorariosIniciais() ? 'pelos' : 'Pelos',
   }
+}
+
+function temHonorariosIniciais (): boolean {
+  const valor = parseCurrency(honorariosIniciais.value)
+  return !!valor && valor > 0
 }
 
 /** Cláusula de honorários iniciais para o contrato. Vazio se não houver valor. */
 function montarTextoHonorarios (): string {
-  const valor = parseCurrency(honorariosIniciais.value)
-  if (!valor || valor <= 0) return ''
+  if (!temHonorariosIniciais()) return ''
+  const valor = parseCurrency(honorariosIniciais.value)!
   const money = formatCurrency(valor)
   const extenso = numeroParaExtenso(valor)
   return `O(A) CONTRATANTE pagará honorários iniciais destinados à análise técnica, `
@@ -1542,7 +1549,7 @@ function montarTextoHonorarios (): string {
     + `judiciais e/ou extrajudiciais cabíveis relacionadas aos contratos/empréstimos `
     + `não reconhecidos, no importe de R$ ${money} (${extenso}). Ademais, O(A) CONTRATANTE `
     + `autoriza que referido valor seja compensado/descontado de eventual crédito, `
-    + `prestação de contas, acordo ou alvará existente em seu favor junto ao CONTRATADO,`
+    + `prestação de contas, acordo ou alvará existente em seu favor junto ao CONTRATADO, Também `
 }
 
 /** Congela e retorna o texto da cláusula de porcentagem para este kit. */
