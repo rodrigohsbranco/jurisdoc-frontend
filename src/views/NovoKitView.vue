@@ -1549,7 +1549,7 @@ function montarTextoHonorarios (): string {
     + `judiciais e/ou extrajudiciais cabíveis relacionadas aos contratos/empréstimos `
     + `não reconhecidos, no importe de R$ ${money} (${extenso}). Ademais, O(A) CONTRATANTE `
     + `autoriza que referido valor seja compensado/descontado de eventual crédito, `
-    + `prestação de contas, acordo ou alvará existente em seu favor junto ao CONTRATADO, `
+    + `prestação de contas, acordo ou alvará existente em seu favor junto ao CONTRATADO`
 }
 
 /** Congela e retorna o texto da cláusula de porcentagem para este kit. */
