@@ -8,6 +8,7 @@ import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
 import { acaoFromAPI, enviarParaAssinatura, updateKit, type AcaoAPI, type DocumentoAPI, type ZapSignDocInfo } from '@/services/kits'
 import { applyCurrencyMask, formatCurrency, parseCurrency } from '@/composables/useCurrencyMask'
+import { numeroParaExtenso } from '@/composables/useNumeroExtenso'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import { snapshotKit } from '@/services/clausulas'
 import {
@@ -1526,7 +1527,22 @@ async function montarContexto (): Promise<Record<string, any>> {
     // (variação por UF do cliente ou cai no padrão). Vazio se kit ainda
     // não foi salvo — fluxo só renderiza depois que o kit tem id.
     clausula_porcentagem: await resolverClausulaPorcentagem(),
+    honorarios_iniciais: montarTextoHonorarios(),
   }
+}
+
+/** Cláusula de honorários iniciais para o contrato. Vazio se não houver valor. */
+function montarTextoHonorarios (): string {
+  const valor = parseCurrency(honorariosIniciais.value)
+  if (!valor || valor <= 0) return ''
+  const money = formatCurrency(valor)
+  const extenso = numeroParaExtenso(valor)
+  return `O(A) CONTRATANTE pagará honorários iniciais destinados à análise técnica, `
+    + `Levantamento bancário, organização documental e encaminhamento das medidas `
+    + `judiciais e/ou extrajudiciais cabíveis relacionadas aos contratos/empréstimos `
+    + `não reconhecidos, no importe de R$ ${money} (${extenso}). Ademais, O(A) CONTRATANTE `
+    + `autoriza que referido valor seja compensado/descontado de eventual crédito, `
+    + `prestação de contas, acordo ou alvará existente em seu favor junto ao CONTRATADO,`
 }
 
 /** Congela e retorna o texto da cláusula de porcentagem para este kit. */
