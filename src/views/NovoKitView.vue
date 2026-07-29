@@ -1227,6 +1227,27 @@ function qualificarAdvogado (a: { nome_completo: string, nacionalidade: string, 
   return texto
 }
 
+type RichSeg = { texto: string, negrito: boolean, fonte?: string, tamanho?: number }
+
+// Mesma qualificação, em pedaços com negrito (nome/OAB/escritório/CNPJ em negrito;
+// conectivos sem negrito). Vira RichText no backend (ver common/richtext.py).
+function qualificarAdvogadoSegmentos (a: { nome_completo: string, nacionalidade: string, estado_civil: string, genero?: string, numero_oab: string, escritorio_nome?: string, escritorio_cnpj?: string }): RichSeg[] {
+  const segs: RichSeg[] = [
+    { texto: a.nome_completo, negrito: true },
+    { texto: `, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${advogadoInscrito(a.genero)} na `, negrito: false },
+    { texto: a.numero_oab, negrito: true },
+  ]
+  if (a.escritorio_nome) {
+    segs.push(
+      { texto: ', neste ato representando o escritório ', negrito: false },
+      { texto: a.escritorio_nome, negrito: true },
+      { texto: ', pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ', negrito: false },
+      { texto: a.escritorio_cnpj || '', negrito: true },
+    )
+  }
+  return segs
+}
+
 function advogadoAtuaNoKit (
   tiposAcaoAdvogado: string[] | undefined,
   tiposAcaoSelecionados: Set<string>,
@@ -1333,7 +1354,7 @@ async function montarContexto (): Promise<Record<string, any>> {
   // Senão (kit antigo, ou operador não passou pela etapa), fallback automático
   // por UF como antes.
   let oab_estado = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
-  let advogados_estado = ''
+  let advogados_estado: string | { __richtext__: RichSeg[] } = ''
   let contratados_socios = ''
   let unidade_apoio = ''
   let socio1_oab = '(OAB REFERENTE AO ESTADO DA AÇÃO)'
@@ -1406,7 +1427,15 @@ async function montarContexto (): Promise<Record<string, any>> {
   }
 
   if (naoSocios.length > 0) {
-    advogados_estado = naoSocios.map(qualificarAdvogado).join('; e ')
+    // Negrito por trecho via RichText (convertido no backend). Ver common/richtext.py.
+    const segs: RichSeg[] = []
+    naoSocios.forEach((a, i) => {
+      if (i > 0) segs.push({ texto: '; e ', negrito: false })
+      segs.push(...qualificarAdvogadoSegmentos(a))
+    })
+    // Mantém a fonte do template (Cambria 12pt) nos trechos do RichText.
+    for (const s of segs) { s.fonte = 'Cambria'; s.tamanho = 24 }
+    advogados_estado = { __richtext__: segs }
   }
 
   // A unidade de apoio deve corresponder ao estado da ação (UF do cliente):
