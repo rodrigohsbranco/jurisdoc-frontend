@@ -1227,6 +1227,21 @@ function qualificarAdvogado (a: { nome_completo: string, nacionalidade: string, 
   return texto
 }
 
+// Marcadores invisíveis (Private Use Area) para negrito por trecho. O backend
+// (common/bold_markers.py) quebra os runs nesses marcadores no render.
+const NEGRITO_INICIO = String.fromCharCode(0xE000)
+const NEGRITO_FIM = String.fromCharCode(0xE001)
+function marcarNegrito (t: string) { return `${NEGRITO_INICIO}${t}${NEGRITO_FIM}` }
+
+// Igual a qualificarAdvogado, com marcadores de negrito (nome/OAB/escritório/CNPJ).
+function qualificarAdvogadoMarcado (a: { nome_completo: string, nacionalidade: string, estado_civil: string, genero?: string, numero_oab: string, escritorio_nome?: string, escritorio_cnpj?: string }) {
+  let texto = `${marcarNegrito(a.nome_completo)}, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${advogadoInscrito(a.genero)} na ${marcarNegrito(a.numero_oab)}`
+  if (a.escritorio_nome) {
+    texto += `, neste ato representando o escritório ${marcarNegrito(a.escritorio_nome)}, pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ${marcarNegrito(a.escritorio_cnpj || '')}`
+  }
+  return texto
+}
+
 function advogadoAtuaNoKit (
   tiposAcaoAdvogado: string[] | undefined,
   tiposAcaoSelecionados: Set<string>,
@@ -1406,7 +1421,7 @@ async function montarContexto (): Promise<Record<string, any>> {
   }
 
   if (naoSocios.length > 0) {
-    advogados_estado = naoSocios.map(qualificarAdvogado).join('; e ')
+    advogados_estado = naoSocios.map(qualificarAdvogadoMarcado).join('; e ')
   }
 
   // A unidade de apoio deve corresponder ao estado da ação (UF do cliente):
