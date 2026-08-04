@@ -2217,7 +2217,7 @@ onMounted(async () => {
   }
   cad.value.status = kit.status
 
-  // ZapSign — restaura link único se já enviado (extra_docs: token no kit, não por documento)
+  // ZapSign — restaura o link do portal se já enviado (kit.zapsign_sign_url)
   zapsignStatus.value = kit.zapsign_status ?? null
   if (kit.zapsign_status === 'pending' && kit.zapsign_sign_url) {
     zapsignSignUrl.value = kit.zapsign_sign_url
@@ -3806,7 +3806,7 @@ onMounted(async () => {
                     <v-window-item :value="2">
                       <v-card-text class="px-6 pt-2 pb-2">
                         <p class="text-body-2 text-medium-emphasis mb-4">
-                          Compartilhe o link abaixo com o cliente. Ele abrirá todos os documentos em sequência para assinar de uma vez.
+                          Compartilhe o link abaixo com o cliente. Ele abre um portal que conduz o cliente por cada documento, assinados um a um.
                         </p>
 
                         <!-- Link único destacado -->
