@@ -2,14 +2,23 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { usePermissoesStore } from '@/stores/permissoes'
-import type { Permissao } from '@/services/permissoes'
+import type { Permissao, CapacidadeDireta } from '@/services/permissoes'
+import { getCapacidadesDiretas, setCapacidadeDireta } from '@/services/permissoes'
+import { usePermissions } from '@/composables/usePermissions'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { friendlyError } from '@/utils/errorMessages'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SidePanel from '@/components/SidePanel.vue'
 
 const store = usePermissoesStore()
-const { showSuccess } = useSnackbar()
+const { showSuccess, showError } = useSnackbar()
+const { can } = usePermissions()
+const podeEditarPerms = computed(() => can('permissoes.editar'))
+
+// Capacidades sensíveis atribuídas diretamente por usuário (fora de perfil).
+const capsDiretas = ref<CapacidadeDireta[]>([])
+const loadingDiretas = ref(false)
+const buscaUsuarioDireta = ref('')
 
 const search = ref('')
 const dialog = ref(false)
@@ -74,8 +83,43 @@ const filteredAgrupadas = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([store.fetchList(), store.fetchCatalog()])
+  await Promise.all([store.fetchList(), store.fetchCatalog(), carregarDiretas()])
 })
+
+async function carregarDiretas () {
+  loadingDiretas.value = true
+  try {
+    capsDiretas.value = await getCapacidadesDiretas()
+  } catch (error: any) {
+    showError(friendlyError(error, 'permissoes', 'list'))
+  } finally {
+    loadingDiretas.value = false
+  }
+}
+
+function usuariosFiltrados (cap: CapacidadeDireta) {
+  const q = buscaUsuarioDireta.value.trim().toLowerCase()
+  if (!q) return cap.usuarios
+  return cap.usuarios.filter(u =>
+    u.nome.toLowerCase().includes(q) || u.username.toLowerCase().includes(q),
+  )
+}
+
+async function toggleDireta (
+  cap: CapacidadeDireta,
+  usuario: CapacidadeDireta['usuarios'][number],
+  valor: boolean | null,
+) {
+  const novo = !!valor
+  try {
+    await setCapacidadeDireta(cap.codigo, usuario.id, novo)
+    usuario.concedida = novo
+    showSuccess(novo ? `Acesso concedido a ${usuario.nome}.` : `Acesso removido de ${usuario.nome}.`)
+  } catch (error: any) {
+    // Falha: usuario.concedida não muda, então o switch volta ao estado anterior.
+    showError(friendlyError(error, 'permissoes', 'update'))
+  }
+}
 
 function resetForm () {
   form.nome = ''
@@ -341,6 +385,66 @@ function remove (p: Permissao) {
       </v-card-text>
     </v-card>
 
+    <!-- Acesso especial por usuário (capacidades sensíveis, fora de perfil) -->
+    <v-card v-if="capsDiretas.length" class="mt-6">
+      <v-card-text>
+        <div class="d-flex align-center ga-2 mb-1">
+          <v-icon color="secondary" icon="mdi-account-key-outline" />
+          <h2 class="text-h6 font-weight-bold text-primary">Acesso especial por usuário</h2>
+        </div>
+        <p class="text-body-2 text-medium-emphasis mb-4">
+          Capacidades sensíveis concedidas diretamente a usuários — independem de perfil e
+          <strong>não são herdadas por administradores</strong>. Marque quem pode acessar.
+        </p>
+
+        <v-text-field
+          v-model="buscaUsuarioDireta"
+          class="mb-3"
+          clearable
+          density="compact"
+          hide-details
+          placeholder="Buscar usuário por nome ou login..."
+          prepend-inner-icon="mdi-magnify"
+          style="max-width: 360px"
+        />
+
+        <v-progress-linear v-if="loadingDiretas" color="primary" indeterminate />
+
+        <div v-for="cap in capsDiretas" :key="cap.codigo" class="mb-5">
+          <div class="d-flex align-center flex-wrap ga-2 mb-2">
+            <v-chip color="secondary" size="small" variant="tonal">{{ cap.recurso }} · {{ cap.acao }}</v-chip>
+            <span class="text-caption text-medium-emphasis">{{ cap.descricao }}</span>
+          </div>
+          <div class="diretas-lista">
+            <div
+              v-for="u in usuariosFiltrados(cap)"
+              :key="u.id"
+              class="diretas-usuario d-flex align-center py-1 px-3"
+            >
+              <v-switch
+                color="primary"
+                density="compact"
+                :disabled="!podeEditarPerms"
+                hide-details
+                :model-value="u.concedida"
+                @update:model-value="toggleDireta(cap, u, $event)"
+              />
+              <div class="ml-3">
+                <div class="text-body-2 font-weight-medium">
+                  {{ u.nome }}
+                  <v-chip v-if="u.is_admin" class="ml-1" color="warning" size="x-small" variant="tonal">Admin</v-chip>
+                </div>
+                <div class="text-caption text-medium-emphasis">@{{ u.username }}</div>
+              </div>
+            </div>
+            <div v-if="usuariosFiltrados(cap).length === 0" class="text-caption text-medium-emphasis py-2 px-3">
+              Nenhum usuário encontrado.
+            </div>
+          </div>
+        </div>
+      </v-card-text>
+    </v-card>
+
     <!-- Form (criar/editar) -->
     <SidePanel v-model="dialog" :width="780">
       <template #header>
@@ -509,5 +613,19 @@ function remove (p: Permissao) {
   max-height: 60vh;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+.diretas-lista {
+  border: 1px solid rgba(15, 43, 70, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diretas-usuario:not(:last-child) {
+  border-bottom: 1px solid rgba(15, 43, 70, 0.06);
+}
+
+.diretas-usuario:hover {
+  background: rgba(15, 43, 70, 0.03);
 }
 </style>

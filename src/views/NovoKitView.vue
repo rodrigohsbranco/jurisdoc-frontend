@@ -6,7 +6,9 @@ import { useKitsStore, clienteToCadastro } from '@/stores/kits'
 import { useClientesStore, type Cliente } from '@/stores/clientes'
 import { useTemplatesStore } from '@/stores/templates'
 import { useAdvogadosStore } from '@/stores/advogados'
-import { acaoFromAPI, enviarParaAssinatura, type AcaoAPI, type DocumentoAPI, type ZapSignDocInfo } from '@/services/kits'
+import { acaoFromAPI, enviarParaAssinatura, updateKit, type AcaoAPI, type DocumentoAPI, type ZapSignDocInfo } from '@/services/kits'
+import { applyCurrencyMask, formatCurrency, parseCurrency } from '@/composables/useCurrencyMask'
+import { numeroParaExtenso } from '@/composables/useNumeroExtenso'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
 import { snapshotKit } from '@/services/clausulas'
 import {
@@ -21,6 +23,7 @@ import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
 import { useCpf } from '@/composables/useCpf'
 import { useCepLookup } from '@/composables/useCepLookup'
+import type { PlaceDetails } from '@/services/maps'
 import { onlyDigits, formatCPF } from '@/utils/formatters'
 import { friendlyError, extractFieldErrors } from '@/utils/errorMessages'
 import SidePanel from '@/components/SidePanel.vue'
@@ -72,7 +75,11 @@ const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
 const { showSuccess, showError, showInfo } = useSnackbar()
-const { can } = usePermissions()
+const { can, canStrict } = usePermissions()
+
+// Honorários iniciais — seção/capacidade sensível (não herdada por admin).
+const podeHonorarios = computed(() => canStrict('kits.honorarios_iniciais'))
+const honorariosIniciais = ref('')  // string mascarada (R$)
 
 // Bancos e tarifas dinâmicos (do banco de dados)
 const bancosOptions = ref<string[]>([])
@@ -240,6 +247,18 @@ watch(() => cad.value.cep, (val) => {
     })
   }
 })
+
+// ── Autocomplete de endereço (Google Places via backend) ──
+function preencherEnderecoPorBusca (d: PlaceDetails) {
+  if (d.rua) cad.value.rua = d.rua
+  if (d.numero) cad.value.numero = d.numero
+  if (d.bairro) cad.value.bairro = d.bairro
+  if (d.cidade) cad.value.cidade = d.cidade
+  if (d.estado) cad.value.estado = d.estado
+  if (d.cep) cad.value.cep = maskCEP(d.cep)
+  if (d.latitude != null) cad.value.latitude = d.latitude
+  if (d.longitude != null) cad.value.longitude = d.longitude
+}
 
 // ── Masks ──
 function maskCPF (v: string) {
@@ -1092,7 +1111,7 @@ async function hidratarEtapaAdvogados () {
     advogadosSnapshot.value = []
     advogadosUfNoUltimoLoad.value = sug.uf_cliente || (cad.value.estado || '').toUpperCase()
   } catch (e: any) {
-    showError('Não foi possível carregar advogados.')
+    showError('Não foi possível carregar procuradores.')
     console.error(e)
   } finally {
     advogadosLoading.value = false
@@ -1122,7 +1141,7 @@ function onAdvDragEnd () {
 
 async function salvarAdvogadosESeguir () {
   if (!kitId.value) {
-    showError('Salve o cliente primeiro para definir os advogados.')
+    showError('Salve o cliente primeiro para definir os procuradores.')
     return
   }
   advogadosSavingNext.value = true
@@ -1132,8 +1151,12 @@ async function salvarAdvogadosESeguir () {
     advogadosSnapshot.value = res.advogados_snapshot
     advogadosWarnings.value = res.warnings || []
     advogadosUfNoUltimoLoad.value = (cad.value.estado || '').toUpperCase()
+    // Persiste honorários iniciais (só quem tem a capacidade envia o campo).
+    if (podeHonorarios.value) {
+      await updateKit(kitId.value, { honorarios_iniciais: parseCurrency(honorariosIniciais.value) })
+    }
     if (advogadosWarnings.value.length === 0) {
-      showSuccess('Advogados salvos.')
+      showSuccess('Procuradores salvos.')
     }
     irParaEtapa('kit-final')
   } catch (e: any) {
@@ -1152,7 +1175,7 @@ async function recalcularAdvogadosPorMudancaUf () {
     await saveAdvogadosSnapshot(kitId.value, [])
     advogadosSnapshot.value = []
     await hidratarEtapaAdvogados()
-    showSuccess('Advogados recalculados pela nova UF.')
+    showSuccess('Procuradores recalculados pela nova UF.')
   } catch (e: any) {
     showError(friendlyError(e, 'kits', 'update'))
   }
@@ -1200,6 +1223,21 @@ function qualificarAdvogado (a: { nome_completo: string, nacionalidade: string, 
   let texto = `${a.nome_completo}, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${advogadoInscrito(a.genero)} na ${a.numero_oab}`
   if (a.escritorio_nome) {
     texto += `, neste ato representando o escritório ${a.escritorio_nome}, pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ${a.escritorio_cnpj}`
+  }
+  return texto
+}
+
+// Marcadores invisíveis (Private Use Area) para negrito por trecho. O backend
+// (common/bold_markers.py) quebra os runs nesses marcadores no render.
+const NEGRITO_INICIO = String.fromCharCode(0xE000)
+const NEGRITO_FIM = String.fromCharCode(0xE001)
+function marcarNegrito (t: string) { return `${NEGRITO_INICIO}${t}${NEGRITO_FIM}` }
+
+// Igual a qualificarAdvogado, com marcadores de negrito (nome/OAB/escritório/CNPJ).
+function qualificarAdvogadoMarcado (a: { nome_completo: string, nacionalidade: string, estado_civil: string, genero?: string, numero_oab: string, escritorio_nome?: string, escritorio_cnpj?: string }) {
+  let texto = `${marcarNegrito(a.nome_completo)}, ${a.nacionalidade}, ${a.estado_civil}, advogado, ${advogadoInscrito(a.genero)} na ${marcarNegrito(a.numero_oab)}`
+  if (a.escritorio_nome) {
+    texto += `, neste ato representando o escritório ${marcarNegrito(a.escritorio_nome)}, pessoa jurídica de direito privado, inscrito no CNPJ sob o nº ${marcarNegrito(a.escritorio_cnpj || '')}`
   }
   return texto
 }
@@ -1383,7 +1421,7 @@ async function montarContexto (): Promise<Record<string, any>> {
   }
 
   if (naoSocios.length > 0) {
-    advogados_estado = naoSocios.map(qualificarAdvogado).join('; e ')
+    advogados_estado = naoSocios.map(qualificarAdvogadoMarcado).join('; e ')
   }
 
   // A unidade de apoio deve corresponder ao estado da ação (UF do cliente):
@@ -1504,7 +1542,29 @@ async function montarContexto (): Promise<Record<string, any>> {
     // (variação por UF do cliente ou cai no padrão). Vazio se kit ainda
     // não foi salvo — fluxo só renderiza depois que o kit tem id.
     clausula_porcentagem: await resolverClausulaPorcentagem(),
+    honorarios_iniciais: montarTextoHonorarios(),
+    // "pelos" (minúsculo) quando há cláusula de honorários; "Pelos" quando não há.
+    honorarios_pelos: temHonorariosIniciais() ? 'Também pelos' : 'Pelos',
   }
+}
+
+function temHonorariosIniciais (): boolean {
+  const valor = parseCurrency(honorariosIniciais.value)
+  return !!valor && valor > 0
+}
+
+/** Cláusula de honorários iniciais para o contrato. Vazio se não houver valor. */
+function montarTextoHonorarios (): string {
+  if (!temHonorariosIniciais()) return ''
+  const valor = parseCurrency(honorariosIniciais.value)!
+  const money = formatCurrency(valor)
+  const extenso = numeroParaExtenso(valor)
+  return `O(A) CONTRATANTE pagará honorários iniciais destinados à análise técnica, `
+    + `levantamento bancário, organização documental e encaminhamento das medidas `
+    + `judiciais e/ou extrajudiciais cabíveis relacionadas aos contratos/empréstimos `
+    + `não reconhecidos, no importe de R$ ${money} (${extenso}). Ademais, O(A) CONTRATANTE `
+    + `autoriza que referido valor seja compensado/descontado de eventual crédito, `
+    + `prestação de contas, acordo ou alvará existente em seu favor junto ao CONTRATADO`
 }
 
 /** Congela e retorna o texto da cláusula de porcentagem para este kit. */
@@ -2074,7 +2134,7 @@ async function avancarComPersistencia () {
   if (etapaAtual.value === 'advogados') {
     saving.value = true
     try {
-      savingMessage.value = 'Salvando advogados...'
+      savingMessage.value = 'Salvando procuradores...'
       await salvarAdvogadosESeguir()
     } finally {
       saving.value = false
@@ -2203,6 +2263,11 @@ onMounted(async () => {
   const kit = await kitsStore.getDetail(kitId.value)
   if (!kit) return
 
+  // Honorários iniciais só vêm na resposta se o usuário tiver a capacidade.
+  if (podeHonorarios.value) {
+    honorariosIniciais.value = formatCurrency(kit.honorarios_iniciais ?? '')
+  }
+
   tipoKit.value = kit.tipo || 'bancario'
   clienteId.value = kit.cliente
   clienteEncontrado.value = true
@@ -2293,7 +2358,7 @@ onMounted(async () => {
           <v-avatar :class="['step-icon', etapaAtual === 'advogados' ? 'step-icon--active' : (etapaIndex > etapas.indexOf('advogados') ? 'step-icon--done' : '')]" size="44">
             <v-icon :icon="etapaIndex > etapas.indexOf('advogados') ? 'mdi-check' : 'mdi-account-tie-outline'" />
           </v-avatar>
-          <span class="step-label">Advogados</span>
+          <span class="step-label">Procuradores</span>
         </div>
         <div :class="['step-line', etapaAtual === 'kit-final' ? 'step-line--done' : '']" />
         <div class="step">
@@ -2847,7 +2912,15 @@ onMounted(async () => {
               <MapaLocalCliente
                 v-model:latitude="cad.latitude"
                 v-model:longitude="cad.longitude"
-              />
+              >
+                <template #apos-acoes>
+                  <label class="field-label">Buscar endereço</label>
+                  <EnderecoAutocomplete @select="preencherEnderecoPorBusca" />
+                  <p class="text-medium-emphasis mt-1 mb-0" style="font-size: .75rem;">
+                    Digite o endereço e selecione uma sugestão para preencher os campos e marcar o local no mapa.
+                  </p>
+                </template>
+              </MapaLocalCliente>
 
               <!-- Fotos da residência -->
               <h2 class="section-title mt-8">Fotos da Residência</h2>
@@ -3313,10 +3386,10 @@ onMounted(async () => {
 
             <!-- ═══════════════ STEP: ADVOGADOS ═══════════════ -->
             <v-window-item value="advogados">
-              <h2 class="section-title">Advogados do Kit</h2>
+              <h2 class="section-title">Procuradores do Kit</h2>
               <v-divider class="mb-3" />
               <p class="text-body-2 text-medium-emphasis mb-4">
-                Selecione os advogados que vão constar no contrato e procuração.
+                Selecione os procuradores que vão constar no contrato e procuração.
                 A pré-seleção segue a regra padrão (sócios da UF + não-sócios que atuam
                 no tipo de ação). Você pode remover ou adicionar livremente.
               </p>
@@ -3334,7 +3407,7 @@ onMounted(async () => {
 
               <div v-if="advogadosLoading" class="text-center py-8">
                 <v-progress-circular color="primary" indeterminate size="36" />
-                <div class="mt-2 text-body-2 text-medium-emphasis">Carregando advogados...</div>
+                <div class="mt-2 text-body-2 text-medium-emphasis">Carregando procuradores...</div>
               </div>
 
               <!-- Mobile: tabs -->
@@ -3359,7 +3432,7 @@ onMounted(async () => {
                       prepend-inner-icon="mdi-magnify"
                     />
                     <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
-                      Nenhum advogado disponível.
+                      Nenhum procurador disponível.
                     </div>
                     <div
                       v-for="adv in advogadosDisponiveis"
@@ -3388,7 +3461,7 @@ onMounted(async () => {
                   </v-window-item>
                   <v-window-item value="selecionados">
                     <div v-if="!advogadosSelecionados.length" class="empty-coluna">
-                      Nenhum advogado selecionado.
+                      Nenhum procurador selecionado.
                     </div>
                     <div
                       v-for="adv in advogadosSelecionados"
@@ -3437,7 +3510,7 @@ onMounted(async () => {
                       prepend-inner-icon="mdi-magnify"
                     />
                     <div v-if="!advogadosDisponiveis.length" class="empty-coluna">
-                      Nenhum advogado disponível.
+                      Nenhum procurador disponível.
                     </div>
                     <draggable
                       :list="advogadosDisponiveis"
@@ -3484,7 +3557,7 @@ onMounted(async () => {
                   </div>
                   <div class="adv-coluna__body">
                     <div v-if="!advogadosSelecionados.length" class="empty-coluna">
-                      Arraste um advogado pra cá ou use o botão "+".
+                      Arraste um procurador pra cá ou use o botão "+".
                     </div>
                     <draggable
                       :list="advogadosSelecionados"
@@ -3523,6 +3596,29 @@ onMounted(async () => {
                   </div>
                 </div>
               </div>
+
+              <!-- Honorários — seção sensível (só visível com a capacidade
+                   kits.honorarios_iniciais; admin sem a permissão também não vê). -->
+              <template v-if="podeHonorarios">
+                <h2 class="section-title mt-8">Honorários</h2>
+                <v-divider class="mb-3" />
+                <v-row dense class="mb-2">
+                  <v-col cols="12" md="4">
+                    <label class="field-label">Honorários iniciais</label>
+                    <v-text-field
+                      :model-value="honorariosIniciais"
+                      class="compact-input"
+                      density="compact"
+                      hide-details="auto"
+                      inputmode="numeric"
+                      placeholder="0,00"
+                      prefix="R$"
+                      variant="outlined"
+                      @update:model-value="honorariosIniciais = applyCurrencyMask($event)"
+                    />
+                  </v-col>
+                </v-row>
+              </template>
             </v-window-item>
 
             <!-- ═══════════════ STEP 3: KIT FINAL ═══════════════ -->
@@ -4021,7 +4117,7 @@ onMounted(async () => {
           UF do cliente foi alterada
         </v-card-title>
         <v-card-text>
-          Você alterou a UF do cliente após ter escolhido os advogados deste kit.
+          Você alterou a UF do cliente após ter escolhido os procuradores deste kit.
           Deseja recalcular a seleção com base na nova UF, ou manter a seleção atual?
         </v-card-text>
         <v-card-actions class="pa-4">

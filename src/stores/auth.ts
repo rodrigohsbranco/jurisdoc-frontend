@@ -157,6 +157,12 @@ export const useAuthStore = defineStore("auth", {
       return this.capacidades.includes(codigo);
     },
 
+    // Checagem ESTRITA: sem bypass de admin. Para capacidades sensíveis que o
+    // admin também precisa ter concedidas explicitamente (ex.: honorários iniciais).
+    canStrict(codigo: string): boolean {
+      return this.capacidades.includes(codigo);
+    },
+
     _applyUserPayload(raw: any) {
       const snap = normalizeUser(raw);
       this.user = snap;
