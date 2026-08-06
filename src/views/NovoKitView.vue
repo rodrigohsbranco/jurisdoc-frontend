@@ -10,6 +10,7 @@ import { acaoFromAPI, enviarParaAssinatura, updateKit, type AcaoAPI, type Docume
 import { applyCurrencyMask, formatCurrency, parseCurrency } from '@/composables/useCurrencyMask'
 import { numeroParaExtenso } from '@/composables/useNumeroExtenso'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
+import { extrairDocumentosIA, type DadosExtraidosIA, type TipoLeituraIA } from '@/services/ia'
 import { snapshotKit } from '@/services/clausulas'
 import {
   type AdvogadoSnapshot,
@@ -74,7 +75,7 @@ const documentosAssinados = ref<DocumentoAPI[]>([])
 const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
-const { showSuccess, showError, showInfo } = useSnackbar()
+const { showSuccess, showError, showInfo, showWarning } = useSnackbar()
 const { can, canStrict } = usePermissions()
 
 // Honorários iniciais — seção/capacidade sensível (não herdada por admin).
@@ -236,7 +237,12 @@ const { isValidCPF } = useCpf()
 const { cepLoading: buscandoCep, lookupCEP } = useCepLookup()
 
 // ── CEP lookup ──
+// Suprimido durante o preenchimento por IA: ali o endereço vem do comprovante,
+// e o ViaCEP sobrescreveria rua/bairro/cidade/UF depois (a busca é assíncrona).
+const suprimirBuscaCep = ref(false)
+
 watch(() => cad.value.cep, (val) => {
+  if (suprimirBuscaCep.value) return
   const digits = val.replace(/\D/g, '')
   if (digits.length === 8) {
     lookupCEP(digits, (data) => {
@@ -500,6 +506,119 @@ async function removeComprovante (doc: DocPessoal) {
     cad.value.comprovantesResidencia = data.comprovantes_residencia || []
   } catch (e: any) {
     console.error('Erro ao remover comprovante:', e)
+  }
+}
+
+// ── Leitura de documentos por IA ──
+// Lê os arquivos já enviados do cliente e pré-preenche o formulário. O operador
+// revisa e salva normalmente — o preenchimento manual continua funcionando igual.
+const iaLoading = ref<Record<TipoLeituraIA, boolean>>({
+  identidade: false,
+  comprovante_residencia: false,
+})
+
+const podeLerIdentidade = computed(() => !!clienteId.value && docsPessoais.value.length > 0)
+const podeLerEndereco = computed(() => !!clienteId.value && cad.value.comprovantesResidencia.length > 0)
+
+/** Preenche os campos pessoais. Retorna os rótulos do que foi preenchido. */
+function aplicarDadosIdentidade (dados: DadosExtraidosIA): string[] {
+  const preenchidos: string[] = []
+
+  if (dados.nome_completo) {
+    cad.value.nome = dados.nome_completo
+    preenchidos.push('nome')
+  }
+  if (dados.data_nascimento) {
+    cad.value.dataNascimento = dados.data_nascimento
+    preenchidos.push('data de nascimento')
+  }
+  if (dados.genero) {
+    cad.value.genero = dados.genero
+    preenchidos.push('gênero')
+  }
+  if (dados.nacionalidade) {
+    if (dados.nacionalidade.startsWith('brasile')) {
+      cad.value.nacionalidadeTipo = 'brasileiro'
+      cad.value.nacionalidade = ''
+    } else {
+      cad.value.nacionalidadeTipo = 'outro'
+      cad.value.nacionalidade = dados.nacionalidade
+    }
+    preenchidos.push('nacionalidade')
+  }
+  // CPF não é preenchido: o campo é travado e pertence ao cadastro do cliente.
+  // A divergência é apenas sinalizada em lerDocumentosPorIA.
+  return preenchidos
+}
+
+/** Preenche os campos de endereço. Retorna os rótulos do que foi preenchido. */
+function aplicarDadosEndereco (dados: DadosExtraidosIA): string[] {
+  const preenchidos: string[] = []
+
+  if (dados.logradouro) {
+    cad.value.rua = dados.logradouro
+    preenchidos.push('rua')
+  }
+  if (dados.numero) {
+    cad.value.numero = dados.numero
+    preenchidos.push('número')
+  }
+  if (dados.complemento) {
+    cad.value.complemento = dados.complemento
+    preenchidos.push('complemento')
+  }
+  if (dados.bairro) {
+    cad.value.bairro = dados.bairro
+    preenchidos.push('bairro')
+  }
+  if (dados.cidade) {
+    cad.value.cidade = dados.cidade
+    preenchidos.push('cidade')
+  }
+  if (dados.uf) {
+    cad.value.estado = dados.uf
+    preenchidos.push('estado')
+  }
+  if (dados.cep) {
+    cad.value.cep = maskCEP(dados.cep)
+    preenchidos.push('CEP')
+  }
+  return preenchidos
+}
+
+async function lerDocumentosPorIA (tipo: TipoLeituraIA) {
+  if (!clienteId.value || iaLoading.value[tipo]) return
+
+  iaLoading.value[tipo] = true
+  try {
+    const { dados_extraidos: dados } = await extrairDocumentosIA(clienteId.value, tipo)
+
+    let preenchidos: string[]
+    if (tipo === 'identidade') {
+      preenchidos = aplicarDadosIdentidade(dados)
+    } else {
+      // O endereço vem do comprovante — evita o ViaCEP sobrescrever depois
+      suprimirBuscaCep.value = true
+      preenchidos = aplicarDadosEndereco(dados)
+      await nextTick()
+      suprimirBuscaCep.value = false
+    }
+
+    if (!preenchidos.length) {
+      showWarning('A IA não conseguiu identificar nenhum campo. Confira a nitidez dos arquivos ou preencha manualmente.')
+      return
+    }
+
+    showSuccess(`Campos preenchidos pela IA: ${preenchidos.join(', ')}. Confira antes de salvar.`)
+
+    // Documento de outra pessoa é o erro mais caro aqui — avisa, mas não bloqueia
+    if (tipo === 'identidade' && dados.cpf && dados.cpf !== onlyDigits(cad.value.cpf)) {
+      showWarning(`Atenção: o CPF do documento (${formatCPF(dados.cpf)}) é diferente do CPF do cliente. Confirme se o arquivo enviado é da pessoa certa.`)
+    }
+  } catch (e: any) {
+    showError(friendlyError(e))
+  } finally {
+    iaLoading.value[tipo] = false
   }
 }
 
@@ -2499,6 +2618,23 @@ onMounted(async () => {
                 </div>
               </v-alert>
 
+              <!-- Como preencher: manual ou por IA -->
+              <v-alert
+                class="mb-6"
+                color="primary"
+                icon="mdi-lightbulb-on-outline"
+                variant="tonal"
+              >
+                <div class="text-body-2">
+                  <strong>Você pode preencher este cadastro de duas formas:</strong>
+                  digitando os dados manualmente, como sempre, ou enviando os documentos do
+                  cliente e usando a <strong>leitura por IA</strong> para preencher os campos
+                  automaticamente. Há um botão de leitura em <em>Documentos pessoais</em>
+                  (dados pessoais) e outro em <em>Comprovante de residência</em> (endereço).
+                  Os dados lidos pela IA sempre devem ser conferidos antes de salvar.
+                </div>
+              </v-alert>
+
               <!-- Dados Pessoais -->
               <h2 class="section-title">Dados Pessoais</h2>
               <v-divider class="mb-5" />
@@ -2866,6 +3002,25 @@ onMounted(async () => {
                     <span class="upload-zone__hint">PDF, DOC, DOCX, JPG ou PNG — múltiplos arquivos</span>
                   </template>
                 </div>
+
+                <!-- Leitura por IA dos documentos pessoais -->
+                <div class="ia-box mt-3">
+                  <v-btn
+                    color="primary"
+                    :disabled="!podeLerIdentidade"
+                    :loading="iaLoading.identidade"
+                    prepend-icon="mdi-text-recognition"
+                    variant="flat"
+                    @click="lerDocumentosPorIA('identidade')"
+                  >
+                    Ler documentos com IA
+                  </v-btn>
+                  <span class="ia-box__hint">
+                    {{ podeLerIdentidade
+                      ? 'Preenche nome, data de nascimento, gênero e nacionalidade a partir do RG ou CNH enviado.'
+                      : 'Envie ao menos um documento pessoal para habilitar a leitura por IA.' }}
+                  </span>
+                </div>
               </div>
 
               <!-- Endereço -->
@@ -2989,6 +3144,25 @@ onMounted(async () => {
                   <span class="upload-zone__title">Clique ou arraste para enviar</span>
                   <span class="upload-zone__hint">PDF, DOC, DOCX, JPG ou PNG — múltiplos arquivos</span>
                 </template>
+              </div>
+
+              <!-- Leitura por IA do comprovante de residência -->
+              <div class="ia-box mb-4">
+                <v-btn
+                  color="primary"
+                  :disabled="!podeLerEndereco"
+                  :loading="iaLoading.comprovante_residencia"
+                  prepend-icon="mdi-map-marker-radius-outline"
+                  variant="flat"
+                  @click="lerDocumentosPorIA('comprovante_residencia')"
+                >
+                  Ler endereço com IA
+                </v-btn>
+                <span class="ia-box__hint">
+                  {{ podeLerEndereco
+                    ? 'Preenche o endereço do cliente a partir do comprovante enviado.'
+                    : 'Envie ao menos um comprovante de residência para habilitar a leitura por IA.' }}
+                </span>
               </div>
 
               <label class="field-label">O comprovante de residência está em nome do cliente? *</label>
@@ -4524,6 +4698,22 @@ onMounted(async () => {
 .upload-zone__hint {
   font-size: 0.8rem;
   color: #8b91a0;
+}
+
+/* Bloco de leitura por IA (documentos pessoais / comprovante de residência) */
+.ia-box {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ia-box__hint {
+  flex: 1;
+  min-width: 220px;
+  font-size: 0.8rem;
+  color: #8b91a0;
+  line-height: 1.35;
 }
 
 .upload-zone__file {
