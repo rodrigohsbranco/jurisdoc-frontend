@@ -49,3 +49,25 @@ export async function extrairDocumentosIA (
   )
   return data
 }
+
+/**
+ * Lê por IA arquivos enviados na hora, sem cliente cadastrado ainda.
+ *
+ * Usado no cadastro de cliente novo, onde não existe registro para anexar os
+ * documentos. Os arquivos servem apenas para a leitura — nada é gravado.
+ */
+export async function extrairDocumentosIAUpload (
+  files: File[],
+  tipo: TipoLeituraIA,
+): Promise<LeituraIAResponse> {
+  const fd = new FormData()
+  fd.append('tipo', tipo)
+  files.forEach(f => fd.append('files', f))
+
+  const { data } = await api.post<LeituraIAResponse>(
+    '/api/cadastro/clientes/ia/extrair-documentos/',
+    fd,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 },
+  )
+  return data
+}

@@ -19,6 +19,8 @@ export type Cliente = {
   se_crianca_adolescente?: boolean
 
   // Dados civis
+  data_nascimento?: string | null   // YYYY-MM-DD
+  genero?: string | null            // 'masculino' | 'feminino'
   nacionalidade?: string | null
   estado_civil?: string | null
   profissao?: string | null
@@ -26,6 +28,7 @@ export type Cliente = {
   // Endereço
   logradouro?: string | null
   numero?: string | null
+  complemento?: string | null
   bairro?: string | null
   cidade?: string | null
   cep?: string | null

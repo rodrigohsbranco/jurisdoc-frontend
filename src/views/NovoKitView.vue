@@ -10,7 +10,7 @@ import { acaoFromAPI, enviarParaAssinatura, updateKit, type AcaoAPI, type Docume
 import { applyCurrencyMask, formatCurrency, parseCurrency } from '@/composables/useCurrencyMask'
 import { numeroParaExtenso } from '@/composables/useNumeroExtenso'
 import { listBancos, listTarifas, listAssociacoes, type AssociacaoKit } from '@/services/bancosETarifas'
-import { extrairDocumentosIA, type DadosExtraidosIA, type TipoLeituraIA } from '@/services/ia'
+import { extrairDocumentosIA, extrairDocumentosIAUpload, type DadosExtraidosIA, type TipoLeituraIA } from '@/services/ia'
 import { snapshotKit } from '@/services/clausulas'
 import {
   type AdvogadoSnapshot,
@@ -224,6 +224,114 @@ async function drawerLookupCEP () {
     drawerForm.value.cidade = data.cidade || drawerForm.value.cidade || ''
     drawerForm.value.uf = data.uf || drawerForm.value.uf || ''
   })
+}
+
+// ── Drawer: leitura de documentos por IA ──
+// Aqui o cliente ainda não existe, então não há onde anexar os arquivos: eles
+// são enviados direto para leitura e descartados depois. Os documentos "de
+// verdade" continuam sendo anexados na etapa de cadastro do kit.
+const drawerIaLoading = ref<Record<TipoLeituraIA, boolean>>({
+  identidade: false,
+  comprovante_residencia: false,
+})
+
+function aplicarDadosIdentidadeDrawer (dados: DadosExtraidosIA): string[] {
+  const preenchidos: string[] = []
+  const f = drawerForm.value
+
+  if (dados.nome_completo) {
+    f.nome_completo = dados.nome_completo
+    preenchidos.push('nome')
+  }
+  if (dados.rg) {
+    f.rg = dados.rg
+    preenchidos.push('RG')
+  }
+  if (dados.orgao_expedidor) {
+    f.orgao_expedidor = dados.orgao_expedidor
+    preenchidos.push('órgão expedidor')
+  }
+  if (dados.nacionalidade) {
+    f.nacionalidade = dados.nacionalidade
+    preenchidos.push('nacionalidade')
+  }
+  // Sem campo visível no drawer, mas são dados do cliente: salvam junto e
+  // aparecem para conferência na etapa de cadastro do kit.
+  if (dados.data_nascimento) {
+    f.data_nascimento = dados.data_nascimento
+    preenchidos.push('data de nascimento')
+  }
+  if (dados.genero) {
+    f.genero = dados.genero
+    preenchidos.push('gênero')
+  }
+  return preenchidos
+}
+
+function aplicarDadosEnderecoDrawer (dados: DadosExtraidosIA): string[] {
+  const preenchidos: string[] = []
+  const f = drawerForm.value
+
+  if (dados.cep) {
+    f.cep = maskCEP(dados.cep)
+    preenchidos.push('CEP')
+  }
+  if (dados.logradouro) {
+    f.logradouro = dados.logradouro
+    preenchidos.push('logradouro')
+  }
+  if (dados.numero) {
+    f.numero = dados.numero
+    preenchidos.push('número')
+  }
+  if (dados.complemento) {
+    f.complemento = dados.complemento
+    preenchidos.push('complemento')
+  }
+  if (dados.bairro) {
+    f.bairro = dados.bairro
+    preenchidos.push('bairro')
+  }
+  if (dados.cidade) {
+    f.cidade = dados.cidade
+    preenchidos.push('cidade')
+  }
+  if (dados.uf) {
+    f.uf = dados.uf.toUpperCase()
+    preenchidos.push('UF')
+  }
+  return preenchidos
+}
+
+async function onSelectDrawerIaFiles (tipo: TipoLeituraIA, e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''  // permite reselecionar o mesmo arquivo
+  if (!files.length || drawerIaLoading.value[tipo]) return
+
+  drawerIaLoading.value[tipo] = true
+  try {
+    const { dados_extraidos: dados } = await extrairDocumentosIAUpload(files, tipo)
+
+    const preenchidos = tipo === 'identidade'
+      ? aplicarDadosIdentidadeDrawer(dados)
+      : aplicarDadosEnderecoDrawer(dados)
+
+    if (!preenchidos.length) {
+      showWarning('A IA não conseguiu identificar nenhum campo. Confira a nitidez dos arquivos ou preencha manualmente.')
+      return
+    }
+
+    showSuccess(`Campos preenchidos pela IA: ${preenchidos.join(', ')}. Confira antes de salvar.`)
+
+    if (tipo === 'identidade' && dados.cpf && dados.cpf !== onlyDigits(drawerForm.value.cpf || '')) {
+      showWarning(`Atenção: o CPF do documento (${formatCPF(dados.cpf)}) é diferente do CPF informado. Confirme se o arquivo é da pessoa certa.`)
+    }
+  } catch (err: any) {
+    showError(friendlyError(err))
+  } finally {
+    drawerIaLoading.value[tipo] = false
+  }
 }
 
 // ── Cadastro state ──
@@ -4215,6 +4323,32 @@ onMounted(async () => {
       <v-tabs-window v-model="drawerTab">
         <!-- Tab: Dados Pessoais -->
         <v-tabs-window-item value="pessoal">
+          <!-- Leitura por IA (documento de identidade) -->
+          <div class="ia-box ia-box--drawer mt-4 mb-4">
+            <v-btn
+              color="primary"
+              :loading="drawerIaLoading.identidade"
+              prepend-icon="mdi-text-recognition"
+              variant="flat"
+              @click="($refs.drawerIaIdentidadeInput as HTMLInputElement)?.click()"
+            >
+              Ler documento com IA
+            </v-btn>
+            <input
+              ref="drawerIaIdentidadeInput"
+              accept="image/*,.pdf"
+              hidden
+              multiple
+              type="file"
+              @change="onSelectDrawerIaFiles('identidade', $event)"
+            >
+            <span class="ia-box__hint">
+              Selecione o RG ou a CNH para preencher os campos automaticamente.
+              Os arquivos servem só para a leitura — anexe os documentos do cliente
+              na etapa seguinte do kit.
+            </span>
+          </div>
+
           <v-form @submit.prevent="salvarClienteDrawer">
             <v-row dense>
               <v-col cols="12" md="8">
@@ -4244,6 +4378,31 @@ onMounted(async () => {
 
         <!-- Tab: Endereço -->
         <v-tabs-window-item value="endereco">
+          <!-- Leitura por IA (comprovante de residência) -->
+          <div class="ia-box ia-box--drawer mt-4 mb-4">
+            <v-btn
+              color="primary"
+              :loading="drawerIaLoading.comprovante_residencia"
+              prepend-icon="mdi-map-marker-radius-outline"
+              variant="flat"
+              @click="($refs.drawerIaEnderecoInput as HTMLInputElement)?.click()"
+            >
+              Ler endereço com IA
+            </v-btn>
+            <input
+              ref="drawerIaEnderecoInput"
+              accept="image/*,.pdf"
+              hidden
+              multiple
+              type="file"
+              @change="onSelectDrawerIaFiles('comprovante_residencia', $event)"
+            >
+            <span class="ia-box__hint">
+              Selecione um comprovante de residência (conta de luz, água, telefone)
+              para preencher o endereço automaticamente.
+            </span>
+          </div>
+
           <v-form @submit.prevent="salvarClienteDrawer">
             <v-row dense>
               <v-col cols="12" md="3">
@@ -4714,6 +4873,14 @@ onMounted(async () => {
   font-size: 0.8rem;
   color: #8b91a0;
   line-height: 1.35;
+}
+
+/* Variante do drawer de novo cliente: destacada, pois abre a aba */
+.ia-box--drawer {
+  padding: 12px;
+  background: #f7f9fb;
+  border: 1px solid #e3e7ec;
+  border-radius: 8px;
 }
 
 .upload-zone__file {
