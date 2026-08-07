@@ -23,6 +23,9 @@ export type User = {
   avatar?: string | null
   is_admin: boolean
   is_active: boolean
+  /** Login no app FlowALR com as mesmas credenciais do JurisDoc (exige is_admin). */
+  acesso_app?: boolean
+  acesso_app_liberado_em?: string | null
   permissao?: number | null
   permissao_detalhe?: PermissaoLeve | null
   capacidades?: string[]

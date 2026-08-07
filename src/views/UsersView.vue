@@ -49,6 +49,7 @@ type FormState = {
   endereco: EnderecoUser;
   is_admin: boolean;
   is_active: boolean;
+  acesso_app: boolean;
   permissao: number | null;
   password: string;
   avatar?: File | null;
@@ -101,6 +102,7 @@ function emptyForm (): FormState {
     endereco: {},
     is_admin: false,
     is_active: true,
+    acesso_app: false,
     permissao: null,
     password: "",
     avatar: null,
@@ -148,6 +150,7 @@ function openEdit (u: User) {
     endereco: (u.endereco as EnderecoUser) || {},
     is_admin: !!u.is_admin,
     is_active: !!u.is_active,
+    acesso_app: !!u.acesso_app,
     permissao: u.permissao ?? null,
     password: "",
     avatar: null,
@@ -194,6 +197,7 @@ async function save () {
       endereco: form.value.endereco,
       is_admin: form.value.is_admin,
       is_active: form.value.is_active,
+      acesso_app: form.value.acesso_app,
       permissao: form.value.permissao,
     };
     if (form.value.avatar instanceof File) payload.avatar = form.value.avatar;
@@ -275,6 +279,7 @@ function permissaoNomeDe (u: User) {
 
 watch(() => form.value.is_admin, val => {
   if (val) form.value.permissao = null; // admin não precisa de perfil
+  else form.value.acesso_app = false;   // acesso ao app é privilégio de admin
 });
 </script>
 
@@ -636,6 +641,21 @@ watch(() => form.value.is_admin, val => {
             label="Ativo"
           />
         </div>
+
+        <!-- Acesso ao app FlowALR (SSO) -->
+        <v-switch
+          v-model="form.acesso_app"
+          class="mt-2"
+          color="primary"
+          density="compact"
+          :disabled="!form.is_admin"
+          hide-details="auto"
+          :hint="form.is_admin
+            ? 'O usuário entra no app com o mesmo login e senha do JurisDoc. Não é criada senha separada — trocar a senha aqui vale para os dois sistemas.'
+            : 'Disponível apenas para administradores.'"
+          label="Liberar acesso ao app FlowALR"
+          persistent-hint
+        />
 
         <!-- Senha (somente create) -->
         <template v-if="!editing">
