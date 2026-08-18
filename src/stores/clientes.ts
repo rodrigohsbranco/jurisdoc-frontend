@@ -39,6 +39,8 @@ export type Cliente = {
 
   // Status
   is_active?: boolean
+  /** 'jurisdoc' (cadastrado pelo escritório) | 'app_cliente' (pré-cadastro do app) */
+  origem?: 'jurisdoc' | 'app_cliente'
 
   // Auditoria
   criado_em?: string

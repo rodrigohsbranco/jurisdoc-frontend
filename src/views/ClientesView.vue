@@ -543,7 +543,18 @@ const cpfStatusIcon = computed(() => {
                 <span class="text-caption font-weight-bold">{{ getInitials(item.nome_completo) }}</span>
               </v-avatar>
               <div>
-                <div class="text-body-2 font-weight-medium">{{ item.nome_completo }}</div>
+                <div class="d-flex align-center ga-2">
+                  <span class="text-body-2 font-weight-medium">{{ item.nome_completo }}</span>
+                  <v-chip
+                    v-if="item.origem === 'app_cliente'"
+                    color="secondary"
+                    prepend-icon="mdi-cellphone-check"
+                    size="x-small"
+                    variant="tonal"
+                  >
+                    Pré-cadastro do app
+                  </v-chip>
+                </div>
                 <div v-if="repsCount(item.id) > 0" class="text-caption text-medium-emphasis">
                   {{ repsCount(item.id) }} representante{{ repsCount(item.id) > 1 ? 's' : '' }}
                 </div>
