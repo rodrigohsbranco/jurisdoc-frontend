@@ -1,5 +1,5 @@
 import api, { fetchAllPages, type PaginatedResponse } from '@/services/api'
-import type { KitAcao, KitStatus, KitTipo, UploadedDoc } from '@/types/kits'
+import type { KitAcao, KitEsteiraStatus, KitStatus, KitTipo, UploadedDoc, ViaAssinatura } from '@/types/kits'
 
 export interface KitListItem {
   id: number
@@ -15,6 +15,12 @@ export interface KitListItem {
   app_criado_por_nome: string
   notificacao_enviada: boolean
   notificacao_enviada_em: string | null
+  via_assinatura: ViaAssinatura
+  status_esteira: KitEsteiraStatus
+  status_esteira_display: string
+  entrou_esteira_em: string | null
+  assumido_em: string | null
+  baixado_em: string | null
   criado_em: string
   atualizado_em: string
 }
@@ -34,6 +40,12 @@ export interface KitDetail {
   zapsign_doc_token: string | null
   zapsign_sign_url: string | null
   zapsign_status: string | null
+  via_assinatura: ViaAssinatura
+  status_esteira: KitEsteiraStatus
+  status_esteira_display: string
+  entrou_esteira_em: string | null
+  assumido_em: string | null
+  baixado_em: string | null
   criado_em: string
   atualizado_em: string
 }
@@ -159,6 +171,45 @@ export async function assinarKit (id: number): Promise<KitDetail> {
 
 export async function mudarStatus (id: number, status: KitStatus): Promise<KitDetail> {
   const { data } = await api.post<KitDetail>(`${BASE}${id}/mudar-status/`, { status })
+  return data
+}
+
+// ── Funil de assinatura ──
+
+/** Grava a via escolhida na etapa final (digital ou presencial). */
+export async function definirViaAssinatura (id: number, via: ViaAssinatura): Promise<KitDetail> {
+  const { data } = await api.patch<KitDetail>(`${BASE}${id}/`, { via_assinatura: via })
+  return data
+}
+
+/** Anexa digitalizações do kit assinado à mão. Os envios acumulam. */
+export async function uploadDocumentosAssinados (id: number, arquivos: File[]): Promise<KitDetail> {
+  const fd = new FormData()
+  for (const arquivo of arquivos) fd.append('arquivos', arquivo)
+  const { data } = await api.post<KitDetail>(`${BASE}${id}/documento-assinado/`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+/** Remove uma digitalização específica pelo id do DocumentoKit. */
+export async function removerDocumentoAssinado (id: number, documentoId: number): Promise<KitDetail> {
+  const { data } = await api.delete<KitDetail>(
+    `${BASE}${id}/documento-assinado/`,
+    { params: { documento_id: documentoId } },
+  )
+  return data
+}
+
+// ── Esteira ──
+
+export async function fetchEsteira (params: {
+  page?: number
+  page_size?: number
+  status_esteira?: KitEsteiraStatus | ''
+  search?: string
+}): Promise<PaginatedResponse<KitListItem>> {
+  const { data } = await api.get<PaginatedResponse<KitListItem>>(`${BASE}esteira/`, { params })
   return data
 }
 

@@ -32,7 +32,9 @@ import {
   TIPOS_ACAO,
   TIPOS_COM_CONTRATO,
   TIPOS_KIT,
+  ESTEIRA_MAP,
   UF_LIST,
+  VIAS_ASSINATURA,
   emptyAcao,
   emptyCadastro,
   emptyTelefone,
@@ -41,7 +43,9 @@ import {
   type KitCadastro,
   type KitEtapa,
   type KitTipo,
+  type KitEsteiraStatus,
   type TipoAcao,
+  type ViaAssinatura,
 } from '@/types/kits'
 
 const etapaAtual = ref<KitEtapa>('cliente')
@@ -72,6 +76,17 @@ const zapsignDocumentos = ref<ZapSignDocInfo[]>([])
 const zapsignCopied = ref(false)
 const zapsignVerificandoStatus = ref(false)
 const documentosAssinados = ref<DocumentoAPI[]>([])
+
+// ── Funil de assinatura ──
+// A via é persistida no kit: o operador pode sair da tela e voltar sem perder a
+// escolha, e é ela que faz o backend exigir a digitalização antes de assinar.
+const viaAssinatura = ref<ViaAssinatura>('')
+const statusEsteira = ref<KitEsteiraStatus>('em_producao')
+const viaSalvando = ref(false)
+const docPresencialFiles = ref<File[]>([])
+const docsPresenciais = ref<DocumentoAPI[]>([])
+const uploadPresencialLoading = ref(false)
+
 const clienteId = ref<number | null>(null)
 const acoesExistentes = ref<AcaoAPI[]>([])
 const clientesStore = useClientesStore()
@@ -2272,6 +2287,13 @@ async function fetchProcuracaoMultipla () {
 // e ~1 core; rodar 5 em paralelo arrisca OOM em VPS pequenos.
 watch(etapaAtual, async (val) => {
   if (val === 'kit-final' && cad.value.nome) {
+    // Cliente analfabeto assina a rogo, presencialmente — a via presencial vem
+    // pré-marcada, mas o operador pode trocar (nem todo presencial é analfabeto,
+    // nem todo analfabeto está sem quem assine digitalmente por ele).
+    if (!viaAssinatura.value && isAnalfabeto.value) {
+      viaAssinatura.value = 'presencial'
+    }
+
     await resolveKitTemplates()
     for (const t of kitTemplatesVisiveis.value) {
       await fetchDocBlob(t.id, t.key)
@@ -2400,12 +2422,90 @@ async function finalizarKit () {
 
 async function marcarAssinado () {
   if (!kitId.value) return
+
+  // O backend recusa mesmo assim; barrar aqui evita a viagem e dá uma mensagem
+  // no lugar certo da tela.
+  if (viaAssinatura.value === 'presencial' && !docsPresenciais.value.length) {
+    showWarning('Anexe o kit assinado digitalizado antes de marcar como assinado.')
+    return
+  }
+
   saving.value = true
   try {
-    await kitsStore.assinar(kitId.value)
+    const kit = await kitsStore.assinar(kitId.value)
     cad.value.status = 'assinado'
+    statusEsteira.value = kit.status_esteira
+    showSuccess('Kit assinado e disponibilizado para a esteira.')
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'update'))
   } finally {
     saving.value = false
+  }
+}
+
+// ── Funil: escolha da via ──
+
+const isPresencial = computed(() => viaAssinatura.value === 'presencial')
+
+async function escolherVia (via: ViaAssinatura) {
+  if (viaAssinatura.value === via || !kitId.value) {
+    viaAssinatura.value = via
+    return
+  }
+  const anterior = viaAssinatura.value
+  viaAssinatura.value = via
+  viaSalvando.value = true
+  try {
+    await kitsStore.definirVia(kitId.value, via)
+  } catch (e: any) {
+    viaAssinatura.value = anterior
+    showError(friendlyError(e, 'kits', 'update'))
+  } finally {
+    viaSalvando.value = false
+  }
+}
+
+/** Separa as digitalizações do restante dos documentos do kit. */
+function sincronizarDocsPresenciais (documentos: DocumentoAPI[]) {
+  docsPresenciais.value = documentos.filter(d => d.tipo === 'assinado_presencial')
+}
+
+function nomeArquivo (caminho: string) {
+  return caminho.split('/').pop() || caminho
+}
+
+async function subirDocsPresenciais () {
+  const arquivos = docPresencialFiles.value
+  if (!arquivos.length || !kitId.value) return
+
+  uploadPresencialLoading.value = true
+  try {
+    const kit = await kitsStore.subirDocumentosAssinados(kitId.value, arquivos)
+    sincronizarDocsPresenciais(kit.documentos || [])
+    docPresencialFiles.value = []
+    showSuccess(
+      arquivos.length === 1
+        ? 'Documento assinado anexado.'
+        : `${arquivos.length} documentos assinados anexados.`,
+    )
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'create'))
+  } finally {
+    uploadPresencialLoading.value = false
+  }
+}
+
+async function removerDocPresencial (documentoId: number) {
+  if (!kitId.value) return
+  uploadPresencialLoading.value = true
+  try {
+    const kit = await kitsStore.removerDocumentoAssinado(kitId.value, documentoId)
+    sincronizarDocsPresenciais(kit.documentos || [])
+    showInfo('Documento assinado removido.')
+  } catch (e: any) {
+    showError(friendlyError(e, 'kits', 'delete'))
+  } finally {
+    uploadPresencialLoading.value = false
   }
 }
 
@@ -2523,8 +2623,17 @@ onMounted(async () => {
   if (kit.status === 'assinado') {
     const signed = (kit.documentos || []).filter(d => d.zapsign_status === 'signed')
     const legacy = (kit.documentos || []).filter(d => d.tipo === 'assinado_zapsign')
-    documentosAssinados.value = signed.length ? signed : legacy
+    const presencial = (kit.documentos || []).filter(d => d.tipo === 'assinado_presencial')
+    documentosAssinados.value = presencial.length
+      ? presencial
+      : (signed.length ? signed : legacy)
   }
+
+  // Funil: via já escolhida antes, ou sugestão pela condição do cliente. A
+  // sugestão não é gravada — só marca a opção; quem confirma é o operador.
+  viaAssinatura.value = kit.via_assinatura || ''
+  statusEsteira.value = kit.status_esteira || 'em_producao'
+  sincronizarDocsPresenciais(kit.documentos || [])
 
   // Preencher ações
   acoesExistentes.value = kit.acoes || []
@@ -3931,9 +4040,19 @@ onMounted(async () => {
                     Baixar tudo (.pdf)
                   </v-btn>
                 </div>
-                <v-chip v-if="cad.status === 'assinado'" color="success" prepend-icon="mdi-check-circle" variant="tonal">
-                  Assinado
-                </v-chip>
+                <div class="d-flex align-center ga-2">
+                  <v-chip v-if="cad.status === 'assinado'" color="success" prepend-icon="mdi-check-circle" variant="tonal">
+                    Assinado
+                  </v-chip>
+                  <v-chip
+                    v-if="cad.status === 'assinado'"
+                    :color="ESTEIRA_MAP[statusEsteira].color"
+                    :prepend-icon="ESTEIRA_MAP[statusEsteira].icon"
+                    variant="tonal"
+                  >
+                    {{ ESTEIRA_MAP[statusEsteira].label }}
+                  </v-chip>
+                </div>
               </div>
               <v-divider class="mb-5" />
 
@@ -4058,31 +4177,175 @@ onMounted(async () => {
                 </v-list>
               </div>
 
-              <!-- Botões de assinatura -->
-              <div v-if="cad.status !== 'assinado'" class="d-flex justify-center align-center ga-3 mt-6 flex-wrap">
-                <v-chip
-                  v-if="zapsignStatus === 'pending'"
-                  color="warning"
-                  prepend-icon="mdi-clock-outline"
-                  variant="tonal"
-                >
-                  Aguardando assinatura no ZapSign
-                </v-chip>
+              <!-- Funil de assinatura: escolha da via e o caminho de cada uma -->
+              <div v-if="cad.status !== 'assinado'" class="mt-8">
+                <v-divider class="mb-5" />
+                <h2 class="section-title mb-1">Como este kit será assinado?</h2>
+                <p class="text-body-2 text-medium-emphasis mb-4">
+                  <template v-if="isAnalfabeto">
+                    O cliente está cadastrado como analfabeto — a assinatura é a rogo, presencial.
+                    Você pode trocar se for o caso.
+                  </template>
+                  <template v-else>
+                    Escolha o caminho da assinatura antes de fechar o kit.
+                  </template>
+                </p>
 
-                <v-btn
-                  color="primary"
-                  :disabled="saving"
-                  prepend-icon="mdi-draw"
-                  size="large"
-                  variant="tonal"
-                  @click="abrirDialogZapSign"
-                >
-                  {{ zapsignStatus === 'pending' ? 'Ver links ZapSign' : 'Gerar Assinatura pelo ZapSign' }}
-                </v-btn>
+                <v-row class="mb-2" dense>
+                  <v-col v-for="op in VIAS_ASSINATURA" :key="op.value" cols="12" md="6">
+                    <v-card
+                      :color="viaAssinatura === op.value ? 'primary' : undefined"
+                      :variant="viaAssinatura === op.value ? 'tonal' : 'outlined'"
+                      class="cursor-pointer h-100"
+                      :disabled="viaSalvando"
+                      rounded="lg"
+                      @click="escolherVia(op.value)"
+                    >
+                      <v-card-text class="d-flex align-center ga-3 py-4">
+                        <v-icon :icon="op.icon" size="28" />
+                        <div class="flex-1-1">
+                          <div class="font-weight-medium text-body-1">{{ op.label }}</div>
+                          <div class="text-body-2 text-medium-emphasis">{{ op.desc }}</div>
+                        </div>
+                        <v-icon
+                          :color="viaAssinatura === op.value ? 'primary' : 'default'"
+                          :icon="viaAssinatura === op.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'"
+                        />
+                      </v-card-text>
+                    </v-card>
+                  </v-col>
+                </v-row>
 
-                <v-btn color="success" :disabled="saving" prepend-icon="mdi-pen" size="large" variant="tonal" @click="marcarAssinado">
-                  Marcar como Assinado
-                </v-btn>
+                <!-- Via digital -->
+                <div v-if="viaAssinatura === 'zapsign'" class="d-flex justify-center align-center ga-3 mt-4 flex-wrap">
+                  <v-chip
+                    v-if="zapsignStatus === 'pending'"
+                    color="warning"
+                    prepend-icon="mdi-clock-outline"
+                    variant="tonal"
+                  >
+                    Aguardando assinatura no ZapSign
+                  </v-chip>
+
+                  <v-btn
+                    color="primary"
+                    :disabled="saving"
+                    prepend-icon="mdi-draw"
+                    size="large"
+                    variant="tonal"
+                    @click="abrirDialogZapSign"
+                  >
+                    {{ zapsignStatus === 'pending' ? 'Ver links ZapSign' : 'Gerar Assinatura pelo ZapSign' }}
+                  </v-btn>
+                </div>
+
+                <!-- Via presencial -->
+                <div v-else-if="viaAssinatura === 'presencial'" class="mt-4">
+                  <v-alert class="mb-4" icon="mdi-printer-outline" type="info" variant="tonal">
+                    <div class="text-body-2">
+                      Baixe o kit acima, imprima e colha a assinatura.
+                      <template v-if="isAnalfabeto">
+                        A assinatura é a rogo — o rogado e as testemunhas já constam nos documentos.
+                      </template>
+                      Depois digitalize as peças e anexe aqui — pode enviar vários arquivos,
+                      de uma vez ou aos poucos.
+                    </div>
+                  </v-alert>
+
+                  <!-- Já anexados -->
+                  <v-list
+                    v-if="docsPresenciais.length"
+                    border
+                    class="mb-4"
+                    density="compact"
+                    lines="two"
+                    rounded="lg"
+                  >
+                    <v-list-subheader>
+                      {{ docsPresenciais.length }}
+                      {{ docsPresenciais.length === 1 ? 'documento anexado' : 'documentos anexados' }}
+                    </v-list-subheader>
+                    <v-list-item
+                      v-for="doc in docsPresenciais"
+                      :key="doc.id"
+                      prepend-icon="mdi-file-check-outline"
+                      :title="nomeArquivo(doc.arquivo)"
+                    >
+                      <v-list-item-subtitle>
+                        Anexado em {{ new Date(doc.gerado_em).toLocaleString('pt-BR') }}
+                      </v-list-item-subtitle>
+                      <template #append>
+                        <div class="d-flex ga-2">
+                          <v-btn
+                            color="primary"
+                            density="compact"
+                            :href="doc.arquivo"
+                            prepend-icon="mdi-open-in-new"
+                            size="small"
+                            target="_blank"
+                            variant="tonal"
+                          >
+                            Ver
+                          </v-btn>
+                          <v-btn
+                            color="error"
+                            density="compact"
+                            icon="mdi-delete-outline"
+                            :loading="uploadPresencialLoading"
+                            size="small"
+                            variant="text"
+                            @click="removerDocPresencial(doc.id)"
+                          />
+                        </div>
+                      </template>
+                    </v-list-item>
+                  </v-list>
+
+                  <!-- Anexar mais -->
+                  <div class="d-flex align-start ga-3 flex-wrap">
+                    <v-file-input
+                      v-model="docPresencialFiles"
+                      accept="application/pdf,image/*"
+                      chips
+                      class="flex-1-1"
+                      clearable
+                      counter
+                      density="compact"
+                      hide-details
+                      :label="docsPresenciais.length ? 'Anexar mais documentos' : 'Kit assinado digitalizado'"
+                      multiple
+                      prepend-icon=""
+                      prepend-inner-icon="mdi-paperclip"
+                      show-size
+                      variant="outlined"
+                    />
+                    <v-btn
+                      color="primary"
+                      :disabled="!docPresencialFiles.length"
+                      :loading="uploadPresencialLoading"
+                      prepend-icon="mdi-upload"
+                      size="large"
+                      variant="tonal"
+                      @click="subirDocsPresenciais"
+                    >
+                      Anexar
+                    </v-btn>
+                  </div>
+                </div>
+
+                <!-- Fecho: comum às duas vias -->
+                <div v-if="viaAssinatura" class="d-flex justify-center mt-6">
+                  <v-btn
+                    color="success"
+                    :disabled="saving || (isPresencial && !docsPresenciais.length)"
+                    prepend-icon="mdi-pen"
+                    size="large"
+                    variant="tonal"
+                    @click="marcarAssinado"
+                  >
+                    Marcar como Assinado
+                  </v-btn>
+                </div>
               </div>
 
               <!-- Dialog ZapSign: 2 passos (configurar → links) -->

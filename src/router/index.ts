@@ -79,6 +79,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Editar Kit', requiresCapability: 'pagina.kits' },
       },
       {
+        path: 'esteira',
+        name: 'esteira',
+        component: () => import('../views/EsteiraView.vue'),
+        meta: { title: 'Esteira', requiresCapability: 'esteira.visualizar' },
+      },
+      {
         path: 'notificacoes-extrajudiciais',
         name: 'notificacoes-extrajudiciais',
         component: () => import('../views/NotificacoesExtrajudiciaisView.vue'),

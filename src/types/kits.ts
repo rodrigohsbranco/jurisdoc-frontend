@@ -2,6 +2,20 @@ export type KitTipo = 'bancario' | 'previdenciario' | 'marketing'
 
 export type KitStatus = 'rascunho' | 'acoes' | 'finalizado' | 'assinado'
 
+/** Via pela qual a assinatura do kit é colhida. Vazio até o operador escolher. */
+export type ViaAssinatura = '' | 'zapsign' | 'presencial'
+
+/**
+ * Eixo independente do `status`: onde o kit está na fila de saída consumida
+ * pela aplicação externa.
+ *
+ *   em_producao → kit ainda sendo montado; não existe para a esteira
+ *   aguardando  → assinado e disponível para a aplicação externa assumir
+ *   na_esteira  → a aplicação externa assumiu e está processando
+ *   concluido   → a aplicação externa baixou
+ */
+export type KitEsteiraStatus = 'em_producao' | 'aguardando' | 'na_esteira' | 'concluido'
+
 export type KitEtapa = 'cliente' | 'localizacao' | 'acoes' | 'advogados' | 'kit-final'
 
 export type TipoAcao =
@@ -195,6 +209,28 @@ export const STATUS_MAP: Record<KitStatus, { label: string; color: string }> = {
   finalizado: { label: 'Finalizado', color: 'warning' },
   assinado: { label: 'Assinado', color: 'success' },
 }
+
+export const ESTEIRA_MAP: Record<KitEsteiraStatus, { label: string; color: string; icon: string }> = {
+  em_producao: { label: 'Em produção', color: 'grey', icon: 'mdi-progress-wrench' },
+  aguardando: { label: 'Aguardando esteira', color: 'warning', icon: 'mdi-clock-outline' },
+  na_esteira: { label: 'Na esteira', color: 'primary', icon: 'mdi-tray-full' },
+  concluido: { label: 'Concluído', color: 'success', icon: 'mdi-check-circle-outline' },
+}
+
+export const VIAS_ASSINATURA: { value: Exclude<ViaAssinatura, ''>; label: string; icon: string; desc: string }[] = [
+  {
+    value: 'zapsign',
+    label: 'Assinatura digital',
+    icon: 'mdi-draw',
+    desc: 'O cliente recebe um link e assina pelo ZapSign, de onde estiver.',
+  },
+  {
+    value: 'presencial',
+    label: 'Assinatura presencial',
+    icon: 'mdi-file-sign',
+    desc: 'O kit é impresso e assinado à mão. Depois você anexa a digitalização aqui.',
+  },
+]
 
 // --- Factories ---
 

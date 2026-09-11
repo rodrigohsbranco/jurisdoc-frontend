@@ -4,14 +4,18 @@ import {
   assinarKit,
   createAcao,
   createKit,
+  definirViaAssinatura,
   deleteAcao,
   deleteKit,
   finalizarKit,
+  fetchEsteira as fetchEsteiraApi,
   fetchKitStats,
   getKit,
   listKits,
   mudarStatus,
+  removerDocumentoAssinado as removerDocumentoAssinadoApi,
   updateAcao,
+  uploadDocumentosAssinados,
   updateKit,
   type AcaoAPI,
   type KitDetail,
@@ -21,7 +25,7 @@ import {
 import api from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
 import { formatCPF, formatCEP } from '@/utils/formatters'
-import type { KitAcao, KitCadastro, KitStatus, KitTelefone, KitTipo } from '@/types/kits'
+import type { KitAcao, KitCadastro, KitEsteiraStatus, KitStatus, KitTelefone, KitTipo, ViaAssinatura } from '@/types/kits'
 import { emptyCadastro, emptyAcao, emptyTelefone } from '@/types/kits'
 
 export const useKitsStore = defineStore('kits', {
@@ -32,6 +36,7 @@ export const useKitsStore = defineStore('kits', {
     pageSize: 8,
     stats: { total: 0, rascunho: 0, em_andamento: 0, pendentes: 0, assinados: 0 } as KitStats,
     loading: false,
+    loadingMutation: false,
     error: '' as string,
   }),
 
@@ -154,6 +159,57 @@ export const useKitsStore = defineStore('kits', {
         const result = await assinarKit(id)
         await Promise.all([this.fetchList(), this.fetchStats()])
         return result
+      } catch (e: any) {
+        this.error = friendlyError(e)
+        throw e
+      }
+    },
+
+    async definirVia (id: number, via: ViaAssinatura) {
+      this.error = ''
+      try {
+        return await definirViaAssinatura(id, via)
+      } catch (e: any) {
+        this.error = friendlyError(e)
+        throw e
+      }
+    },
+
+    async subirDocumentosAssinados (id: number, arquivos: File[]) {
+      this.error = ''
+      this.loadingMutation = true
+      try {
+        return await uploadDocumentosAssinados(id, arquivos)
+      } catch (e: any) {
+        this.error = friendlyError(e)
+        throw e
+      } finally {
+        this.loadingMutation = false
+      }
+    },
+
+    async removerDocumentoAssinado (id: number, documentoId: number) {
+      this.error = ''
+      this.loadingMutation = true
+      try {
+        return await removerDocumentoAssinadoApi(id, documentoId)
+      } catch (e: any) {
+        this.error = friendlyError(e)
+        throw e
+      } finally {
+        this.loadingMutation = false
+      }
+    },
+
+    async fetchEsteira (params: {
+      page?: number
+      page_size?: number
+      status_esteira?: KitEsteiraStatus | ''
+      search?: string
+    }) {
+      this.error = ''
+      try {
+        return await fetchEsteiraApi(params)
       } catch (e: any) {
         this.error = friendlyError(e)
         throw e
