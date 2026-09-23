@@ -19,7 +19,7 @@ import {
   saveSnapshot as saveAdvogadosSnapshot,
 } from '@/services/kitAdvogados'
 import draggable from 'vuedraggable'
-import api from '@/services/api'
+import api, { DOC_REQUEST_TIMEOUT, extractBlobErrorDetail } from '@/services/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { usePermissions } from '@/composables/usePermissions'
 import { useCpf } from '@/composables/useCpf'
@@ -1235,6 +1235,21 @@ const pdfBlobs = ref<Record<string, Blob>>({})
 const docxBlobs = ref<Record<string, Blob>>({})
 const pdfBlobUrls = ref<Record<string, string>>({})
 const procuracaoActionDocxBlobs = ref<Blob[] | null>(null)
+// Pré-visualização da procuração mostra UMA ação por vez. Renderizar as N de
+// uma vez custa ~12MB e ~1s por ação (fontes embutidas no template), o que em
+// kits grandes travava a aba inteira. O PDF com todas continua disponível no
+// botão de download, gerado sob demanda.
+const procuracaoIndex = ref(0)
+const procuracaoPdfCompleto = ref<Blob | null>(null)
+const mostraSeletorProcuracao = computed(() =>
+  tipoKit.value !== 'previdenciario' && acoes.value.length > 1,
+)
+const procuracaoOpcoes = computed(() => acoes.value.map((acao, i) => {
+  const banco = (acao.nomeBanco === 'Outro' ? acao.bancoOutro : acao.nomeBanco) || 'Sem banco'
+  const tipo = TIPOS_ACAO.find(t => t.value === acao.tipoAcao)?.label || acao.tipoAcao
+  const contrato = acao.numeroContrato ? ` — contrato ${acao.numeroContrato}` : ''
+  return { value: i, title: `${i + 1}. ${banco}${contrato}`, subtitle: tipo }
+}))
 const docLoading = ref<Record<string, boolean>>({})
 const iframeLoading = ref<Record<string, boolean>>({})
 const docErrors = ref<Record<string, string>>({})
@@ -1859,7 +1874,7 @@ async function fetchDocBlob (templateId: number, key: string) {
   // Procuração bancária tem lógica especial: uma página por ação
   // Procuração previdenciária é documento único (sem ações)
   if (key === 'procuracao' && tipoKit.value !== 'previdenciario') {
-    await fetchProcuracaoMultipla()
+    await fetchProcuracaoPreview()
     return
   }
 
@@ -2006,6 +2021,21 @@ async function downloadDoc (key: string) {
 }
 
 async function downloadPdf (key: string) {
+  // A aba mostra uma procuração por vez; o download traz o kit com todas.
+  if (key === 'procuracao' && tipoKit.value !== 'previdenciario') {
+    pdfLoading.value[key] = true
+    try {
+      const completo = await ensureProcuracaoPdfCompleto()
+      if (completo) triggerBlobDownload(completo, `${baseNomeDownloadDoc(key)}.pdf`)
+    } catch (e: any) {
+      console.error('Erro ao baixar as procurações:', e)
+      showError(await extractBlobErrorDetail(e))
+    } finally {
+      pdfLoading.value[key] = false
+    }
+    return
+  }
+
   const blob = pdfBlobs.value[key]
   if (!blob) return
   triggerBlobDownload(blob, `${baseNomeDownloadDoc(key)}.pdf`)
@@ -2089,7 +2119,7 @@ async function downloadAllPdf () {
     const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
       responseType: 'blob',
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
+      timeout: DOC_REQUEST_TIMEOUT,
     })
 
     triggerBlobDownload(data as Blob, `${baseNomeKitCompleto()}.pdf`)
@@ -2215,69 +2245,102 @@ async function montarContextoProcuracao (acao: KitAcao): Promise<Record<string, 
   }
 }
 
-async function fetchProcuracaoMultipla () {
+/** Pré-visualização: renderiza apenas a ação atualmente selecionada. */
+async function fetchProcuracaoPreview () {
   const key = 'procuracao'
   if (!procuracaoTemplateId.value) {
     docErrors.value[key] = '__NOT_FOUND__'
     return
   }
+  if (acoes.value.length === 0) return
+
+  if (procuracaoIndex.value > acoes.value.length - 1) procuracaoIndex.value = 0
+
   docLoading.value[key] = true
   docErrors.value[key] = ''
-  // Invalida caches do .docx — o preview foi regerado
+  // O preview mudou de ação: os caches do documento completo não valem mais
   delete docxBlobs.value[key]
   procuracaoActionDocxBlobs.value = null
+  procuracaoPdfCompleto.value = null
 
   try {
-    // Caminho rápido: 1 ação -> render-pdf direto. skipPageNumbering: cada
-    // procuração é um documento autônomo, "Página X de Y" não faz sentido.
-    if (acoes.value.length === 1) {
-      const ctx = await montarContextoProcuracao(acoes.value[0])
-      const result = await templatesStore.renderPdf(procuracaoTemplateId.value, {
-        context: ctx,
-        filename: baseNomeDownloadDoc('procuracao'),
-        skipPageNumbering: true,
-      })
-      pdfBlobs.value[key] = result.blob
-      // Não cacheia o .docx por ação aqui; downloadDoc o gerará sob demanda.
-      procuracaoActionDocxBlobs.value = null
-      return
-    }
-
-    // N ações: renderiza .docx por ação (cacheado para reuso no Word) e
-    // envia tudo para compose-to-pdf, que devolve o PDF combinado.
-    const actionBlobs: Blob[] = []
-    for (const acao of acoes.value) {
-      const ctx = await montarContextoProcuracao(acao)
-      const result = await templatesStore.render(procuracaoTemplateId.value, {
-        context: ctx,
-        filename: baseNomeDownloadDoc('procuracao'),
-        skipPageNumbering: true,
-      })
-      actionBlobs.push(result.blob)
-    }
-    procuracaoActionDocxBlobs.value = actionBlobs
-
-    const fd = new FormData()
-    actionBlobs.forEach((b, i) => fd.append('files', b, `proc_${i}.docx`))
-    fd.append('filename', baseNomeDownloadDoc('procuracao'))
-    fd.append('skip_page_numbering', 'true')
-    const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
-      responseType: 'blob',
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
+    // skipPageNumbering: cada procuração é um documento autônomo,
+    // "Página X de Y" não faz sentido.
+    const ctx = await montarContextoProcuracao(acoes.value[procuracaoIndex.value])
+    const result = await templatesStore.renderPdf(procuracaoTemplateId.value, {
+      context: ctx,
+      filename: baseNomeDownloadDoc('procuracao'),
+      skipPageNumbering: true,
     })
-    pdfBlobs.value[key] = data as Blob
+    pdfBlobs.value[key] = result.blob
   } catch (e: any) {
-    console.error('Erro ao gerar procurações:', e)
+    console.error('Erro ao gerar procuração:', e)
     if (e?.response?.status === 404) {
       docErrors.value[key] = '__NOT_FOUND__'
     } else {
-      const msg = e?.response?.data?.detail || e?.message || 'Erro desconhecido'
-      docErrors.value[key] = `Não foi possível gerar as procurações: ${msg}`
+      const msg = await extractBlobErrorDetail(e)
+      docErrors.value[key] = `Não foi possível gerar a procuração: ${msg}`
     }
   } finally {
     docLoading.value[key] = false
   }
+}
+
+/** Navega entre as procurações do kit e re-renderiza o preview. */
+async function irParaProcuracao (indice: number) {
+  const total = acoes.value.length
+  if (total === 0) return
+  const alvo = Math.min(Math.max(indice, 0), total - 1)
+  if (alvo === procuracaoIndex.value && pdfBlobs.value.procuracao) return
+  procuracaoIndex.value = alvo
+  await fetchProcuracaoPreview()
+  await nextTick()
+  await renderBlobToContainer('procuracao')
+}
+
+/**
+ * PDF com TODAS as procurações, para download. Mantém o caminho de sempre
+ * (um .docx por ação, compostos em um único PDF pelo backend) — só deixou de
+ * rodar automaticamente ao abrir a aba.
+ */
+async function ensureProcuracaoPdfCompleto (): Promise<Blob | null> {
+  if (procuracaoPdfCompleto.value) return procuracaoPdfCompleto.value
+  if (!procuracaoTemplateId.value) return null
+
+  if (acoes.value.length === 1) {
+    const ctx = await montarContextoProcuracao(acoes.value[0])
+    const result = await templatesStore.renderPdf(procuracaoTemplateId.value, {
+      context: ctx,
+      filename: baseNomeDownloadDoc('procuracao'),
+      skipPageNumbering: true,
+    })
+    procuracaoPdfCompleto.value = result.blob
+    return result.blob
+  }
+
+  const actionBlobs: Blob[] = []
+  for (const acao of acoes.value) {
+    const ctx = await montarContextoProcuracao(acao)
+    const result = await templatesStore.render(procuracaoTemplateId.value, {
+      context: ctx,
+      filename: baseNomeDownloadDoc('procuracao'),
+      skipPageNumbering: true,
+    })
+    actionBlobs.push(result.blob)
+  }
+  procuracaoActionDocxBlobs.value = actionBlobs
+
+  const fd = new FormData()
+  actionBlobs.forEach((b, i) => fd.append('files', b, `proc_${i}.docx`))
+  fd.append('filename', baseNomeDownloadDoc('procuracao'))
+  fd.append('skip_page_numbering', 'true')
+  const { data } = await api.post('/api/templates/compose-to-pdf/', fd, {
+    responseType: 'blob',
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: DOC_REQUEST_TIMEOUT,
+  })
+  procuracaoPdfCompleto.value = data as Blob
+  return procuracaoPdfCompleto.value
 }
 
 // ── Watchers ──
@@ -4132,6 +4195,40 @@ onMounted(async () => {
                         >
                           Atualizar
                         </v-btn>
+                      </div>
+                      <!-- Procurações: uma por vez. O PDF com todas sai pelo botão .pdf -->
+                      <div
+                        v-if="t.key === 'procuracao' && mostraSeletorProcuracao"
+                        class="d-flex align-center ga-2 mb-3"
+                      >
+                        <v-btn
+                          :disabled="procuracaoIndex === 0 || docLoading[t.key]"
+                          icon="mdi-chevron-left"
+                          size="small"
+                          variant="text"
+                          @click="irParaProcuracao(procuracaoIndex - 1)"
+                        />
+                        <v-select
+                          density="compact"
+                          hide-details
+                          item-title="title"
+                          item-value="value"
+                          :items="procuracaoOpcoes"
+                          :loading="docLoading[t.key]"
+                          :model-value="procuracaoIndex"
+                          variant="outlined"
+                          @update:model-value="irParaProcuracao($event)"
+                        />
+                        <v-btn
+                          :disabled="procuracaoIndex >= acoes.length - 1 || docLoading[t.key]"
+                          icon="mdi-chevron-right"
+                          size="small"
+                          variant="text"
+                          @click="irParaProcuracao(procuracaoIndex + 1)"
+                        />
+                        <span class="text-caption text-medium-emphasis text-no-wrap">
+                          {{ procuracaoIndex + 1 }} de {{ acoes.length }}
+                        </span>
                       </div>
                       <div class="docx-container-wrapper">
                         <div :ref="(el: any) => { docxContainers[t.key] = el }" class="docx-container" />

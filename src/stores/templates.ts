@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import api, { fetchAllPages } from '@/services/api'
+import api, { DOC_REQUEST_TIMEOUT, fetchAllPages } from '@/services/api'
 import { friendlyError } from '@/utils/errorMessages'
 
 // Tipos básicos
@@ -264,7 +264,7 @@ export const useTemplatesStore = defineStore('templates', {
         const res = await api.post(url, body, {
           responseType: 'blob',
           validateStatus: (status) => status < 500, // aceita 400 para extrair detail
-          ...(format === 'pdf' ? { timeout: 120000 } : {}),
+          ...(format === 'pdf' ? { timeout: DOC_REQUEST_TIMEOUT } : {}),
         })
         if (res.status === 400) {
           const errorText = await (res.data as Blob).text()

@@ -13,6 +13,35 @@ const api = axios.create({
   withCredentials: false,
 });
 
+/**
+ * Teto para operações que passam pelo LibreOffice (render-pdf, compose-to-pdf).
+ * Precisa ser >= LIBREOFFICE_TIMEOUT do backend, senão o navegador desiste
+ * antes de o servidor terminar e o trabalho é jogado fora.
+ */
+export const DOC_REQUEST_TIMEOUT = 300_000;
+
+/**
+ * Extrai o `detail` do DRF de uma resposta de erro com responseType 'blob'.
+ * Sem isso o corpo do erro chega como Blob e a mensagem vira o genérico
+ * "Request failed with status code 400".
+ */
+export async function extractBlobErrorDetail(error: any): Promise<string> {
+  const data = error?.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      try {
+        return JSON.parse(text).detail || text;
+      } catch {
+        return text;
+      }
+    } catch {
+      /* cai no fallback abaixo */
+    }
+  }
+  return data?.detail || error?.message || "Erro desconhecido";
+}
+
 export type PaginatedResponse<T> = {
   count: number;
   next: string | null;
